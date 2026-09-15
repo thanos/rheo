@@ -1,4 +1,4 @@
-# Rheo Livebook Demo
+# Rheo Livebook Demo (v0.3.0)
 
 ```elixir
 Mix.install(
@@ -8,7 +8,6 @@ Mix.install(
   ],
   config: [
     rheo: [
-      mongo_url: System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_livebook"),
       start_on_application: false,
       clock: Rheo.Clock.Frozen,
       default_lease_ms: 5_000,
@@ -20,35 +19,31 @@ Mix.install(
 
 ## Prerequisites
 
-1. Start MongoDB from the repo root: `docker compose up -d`
-2. Open this notebook from the repo (`notebooks/rheo_demo.livemd`) so `Mix.install` can resolve `{:rheo, path: ...}`
-3. Evaluate cells top to bottom
+1. Open this notebook from the repo (`notebooks/rheo_demo.livemd`) so `Mix.install` can resolve `{:rheo, path: ...}`
+2. Evaluate cells top to bottom
+3. **No Docker required** — this demo uses `Rheo.Backend.ETS` by default
 
-Rheo is an embedded Elixir/OTP library: durable consumer groups over a searchable
-event log. Delivery is **at-least-once** — use event IDs for idempotency.
+Rheo **v0.3.0** is an embedded Elixir/OTP library: consumer groups over a
+searchable event log (Mongo durable, ETS ephemeral). Delivery is
+**at-least-once** — use event IDs for idempotency.
 
 ---
 
-## 1. Start Rheo
+## 1. Start Rheo (ETS)
 
 ```elixir
-url = Application.fetch_env!(:rheo, :mongo_url)
-
-{:ok, _} = Application.ensure_all_started(:mongodb_driver)
-
-case Rheo.start_link(url: url, name: Rheo.Mongo) do
+case Rheo.start_link(backend: Rheo.Backend.ETS) do
   {:ok, _} -> :ok
   {:error, {:already_started, _}} -> :ok
-end
-
-# Fresh demo database state
-for coll <- ["streams", "events", "groups", "deliveries"] do
-  Mongo.delete_many(Rheo.Mongo, coll, %{})
 end
 
 :ok = Rheo.ensure_indexes()
 :ok = Rheo.ping()
 ```
+
+> Optional Mongo path: start Docker (`docker compose up -d`), then
+> `Rheo.start_link(url: System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_livebook"))`
+> and clear collections before continuing.
 
 ---
 
