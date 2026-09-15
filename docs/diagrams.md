@@ -5,16 +5,19 @@
 ```mermaid
 flowchart TB
   subgraph app [Application]
-    RheoSup[Rheo Supervisor]
-    Risk[RiskConsumer]
-    Surv[SurveillanceConsumer]
+    RheoInst[Rheo Instance]
+    Risk[RiskConsumer bridge]
+    Surv[SurveillanceConsumer bridge]
   end
-  RheoSup --> MongoTop[Mongo topology]
-  Risk --> API[Rheo API]
-  Surv --> API
-  API --> Backend[Rheo.Backend.Mongo]
-  Backend --> MongoTop
-  MongoTop --> DB[(MongoDB)]
+  RheoInst --> BackendChild[Backend handle]
+  RheoInst --> GroupSup[Rheo.GroupSupervisor]
+  GroupSup --> GroupRisk[Rheo.Group risk]
+  GroupSup --> GroupSurv[Rheo.Group surveillance]
+  Risk --> GroupSup
+  Surv --> GroupSup
+  GroupRisk --> BackendChild
+  GroupSurv --> BackendChild
+  BackendChild --> DB[(MongoDB)]
 ```
 
 ## OTP supervision
@@ -22,11 +25,16 @@ flowchart TB
 ```mermaid
 flowchart TB
   AppSup[Application Supervisor]
-  AppSup --> RheoSup[Rheo]
-  AppSup --> C1[RiskConsumer 1]
-  AppSup --> C2[RiskConsumer 2]
-  AppSup --> C3[SurveillanceConsumer 1]
-  RheoSup --> Topo[Mongo]
+  AppSup --> RheoInst[Rheo Instance]
+  AppSup --> C1[RiskConsumer]
+  RheoInst --> Reg[Registry]
+  RheoInst --> Mongo[Mongo handle]
+  RheoInst --> Inst[Rheo.Instance]
+  RheoInst --> Tasks[Task.Supervisor]
+  RheoInst --> GS[Rheo.GroupSupervisor]
+  C1 --> GS
+  GS --> G1[Rheo.Group]
+  G1 --> Tasks
 ```
 
 ## Lease lifecycle
@@ -35,29 +43,10 @@ flowchart TB
 stateDiagram-v2
   [*] --> available: materialize
   available --> leased: fetch
+  leased --> leased: renew
   leased --> acked: ack
   leased --> available: nack_or_expire
   leased --> rejected: reject_or_max_attempts
   acked --> [*]
   rejected --> [*]
-```
-
-## Failure / redelivery
-
-```mermaid
-sequenceDiagram
-  participant A as ConsumerA
-  participant R as Rheo
-  participant M as MongoDB
-  participant B as ConsumerB
-  A->>R: fetch
-  R->>M: lease L1
-  A--xA: crash
-  Note over M: L1 expires
-  B->>R: fetch
-  R->>M: lease L2
-  A->>R: ack L1
-  R-->>A: stale_lease
-  B->>R: ack L2
-  R->>M: status acked
 ```

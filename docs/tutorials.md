@@ -1,6 +1,6 @@
 # Tutorials
 
-Medium-oriented tutorial notes that track the Rheo implementation:
+Medium-oriented tutorial notes for Rheo **v0.2.0**:
 
 1. [Why put consumer groups in front of a database?](tutorials/01-why-consumer-groups-on-a-database.md)
 2. [What is a consumer group?](tutorials/02-what-is-a-consumer-group.md)
@@ -10,5 +10,8 @@ Medium-oriented tutorial notes that track the Rheo implementation:
 6. [MongoDB as a searchable event log](tutorials/06-mongodb-searchable-event-log.md)
 7. [Killing consumers on purpose](tutorials/07-killing-consumers.md)
 8. [Searching the stream](tutorials/08-searching-the-stream.md)
+9. [Why Rheo 0.2 broke its 0.1 API](tutorials/09-why-rheo-0-2-broke-its-0-1-api.md)
 
 Hands-on walkthrough: [Livebook demo](../notebooks/rheo_demo.livemd).
+
+Migration: [0.1 → 0.2](migrations/0.1-to-0.2.md).

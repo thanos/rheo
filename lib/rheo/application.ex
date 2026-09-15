@@ -2,8 +2,8 @@ defmodule Rheo.Application do
   @moduledoc """
   OTP application entry for Rheo.
 
-  By default Rheo does **not** auto-start a Mongo topology. Host applications
-  should supervise `{Rheo, opts}` themselves.
+  By default Rheo does **not** auto-start a backend. Host applications should
+  supervise `{Rheo, opts}` themselves.
 
   Set `config :rheo, start_on_application: true` and `:mongo_url` only when you
   intentionally want Rheo to start under this application callback.
@@ -33,7 +33,7 @@ defmodule Rheo.Application do
   defp rheo_opts do
     []
     |> put_opt(:url, Application.get_env(:rheo, :mongo_url))
-    |> put_opt(:name, Application.get_env(:rheo, :topology))
+    |> put_opt(:name, Application.get_env(:rheo, :name, Rheo))
   end
 
   defp put_opt(opts, _key, nil), do: opts

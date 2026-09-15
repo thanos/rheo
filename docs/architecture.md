@@ -1,23 +1,24 @@
 # Architecture
 
-Rheo is an embedded Elixir/OTP library. Durable truth lives in MongoDB. OTP owns
-process lifecycle and concurrency, not consumer-group correctness.
+Rheo **v0.2.0** is an embedded Elixir/OTP library. Durable truth lives in the
+backend (MongoDB first). OTP owns process lifecycle and concurrency, not
+consumer-group correctness.
 
 ```text
 Application Supervision Tree
         |
-        +-- Rheo (Supervisor)
-        |     |
-        |     +-- Mongo topology
+        +-- Rheo (named instance Supervisor)
+        |     +-- Registry
+        |     +-- Backend handle (e.g. Mongo)
+        |     +-- Rheo.Instance
+        |     +-- Task.Supervisor
+        |     +-- Rheo.GroupSupervisor
+        |           +-- Rheo.Group {stream, "risk"}
+        |           |     +-- worker Tasks
+        |           +-- Rheo.Group {stream, "surveillance"}
         |
-        +-- RiskConsumer (Rheo.Consumer)
-        +-- SurveillanceConsumer (Rheo.Consumer)
-                 |
-                 v
-           Rheo.Backend.Mongo
-                 |
-                 v
-              MongoDB
+        +-- RiskConsumer (bridge → Group)
+        +-- SurveillanceConsumer (bridge → Group)
 ```
 
 ## Core invariant
@@ -38,20 +39,22 @@ At-least-once with lease fencing:
 
 1. `fetch` claims work with a unique `lease_id`
 2. `ack` succeeds only if the lease token still matches
-3. Expired leases become eligible for redelivery
-4. Stale consumers cannot ACK a newer lease
+3. Inflight leases are renewed by `Rheo.Group` (~half `lease_ms`)
+4. Expired leases become eligible for redelivery
+5. Stale consumers cannot ACK a newer lease
 
-## Demand
+## Demand and concurrency
 
-MVP consumers bound outstanding work with `:max_demand` / fetch `limit`.
-Rheo does not reimplement GenStage.
+`Rheo.Group` bounds outstanding leases with `:max_demand` and parallel handlers
+with `:concurrency`. Durable ACK state stays in the backend.
 
 ## Backend boundary
 
-`Rheo.Backend` defines the operations Rheo uses. `Rheo.Backend.Mongo` is the only
-MVP implementation.
+`Rheo.Backend` defines operations over an opaque `handle`. `Rheo.Backend.Mongo`
+is the first implementation. Queries use portable `%Rheo.Query{}`.
 
 ## Try it
 
 - CLI: `mix rheo.demo`
 - Interactive: [notebooks/rheo_demo.livemd](../notebooks/rheo_demo.livemd)
+- Migration: [migrations/0.1-to-0.2.md](migrations/0.1-to-0.2.md)

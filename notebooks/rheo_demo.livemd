@@ -1,4 +1,4 @@
-# Rheo Livebook Demo
+# Rheo Livebook Demo (v0.2.0)
 
 ```elixir
 Mix.install(
@@ -24,8 +24,9 @@ Mix.install(
 2. Open this notebook from the repo (`notebooks/rheo_demo.livemd`) so `Mix.install` can resolve `{:rheo, path: ...}`
 3. Evaluate cells top to bottom
 
-Rheo is an embedded Elixir/OTP library: durable consumer groups over a searchable
-event log. Delivery is **at-least-once** — use event IDs for idempotency.
+Rheo **v0.2.0** is an embedded Elixir/OTP library: durable consumer groups over a
+searchable event log. Delivery is **at-least-once** — use event IDs for
+idempotency.
 
 ---
 
@@ -36,7 +37,7 @@ url = Application.fetch_env!(:rheo, :mongo_url)
 
 {:ok, _} = Application.ensure_all_started(:mongodb_driver)
 
-case Rheo.start_link(url: url, name: Rheo.Mongo) do
+case Rheo.start_link(url: url) do
   {:ok, _} -> :ok
   {:error, {:already_started, _}} -> :ok
 end
@@ -185,6 +186,9 @@ Kino.Layout.grid(
 
 ## 6. Idiomatic `Rheo.Consumer`
 
+`use Rheo.Consumer` starts a bridge that joins a local `Rheo.Group` with real
+`concurrency` and lease renewal.
+
 ```elixir
 defmodule Livebook.RiskConsumer do
   use Rheo.Consumer, stream: "market-events", group: "risk"
@@ -209,6 +213,7 @@ end
     group: "risk",
     agent: agent,
     name: Livebook.RiskConsumer,
+    concurrency: 4,
     max_demand: 10,
     poll_ms: 100
   )
@@ -226,6 +231,7 @@ seen = Agent.get(agent, &Enum.reverse/1)
 * **Immutable log** — consumption never deletes events
 * **Independent groups** — risk and surveillance progress separately
 * **Leases + fencing** — stale ACKs fail; expired work is redelivered (at-least-once)
+* **Group runtime** — local `Rheo.Group` owns demand, concurrency, and renewals
 * **Search** — investigate history with `Rheo.query/2` after processing
 * **OTP** — supervise `{Rheo, ...}` and `Rheo.Consumer` in your app
 
