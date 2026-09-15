@@ -80,7 +80,7 @@ defmodule Rheo do
   def init(opts) do
     rheo = Keyword.get(opts, :name, __MODULE__)
     {backend_mod, backend_opts} = resolve_backend_opts(opts)
-    handle = Keyword.get(backend_opts, :name) || Rheo.Names.backend_handle(rheo)
+    handle = Keyword.get(backend_opts, :name) || default_backend_handle(rheo, backend_mod)
     backend_opts = Keyword.put(backend_opts, :name, handle)
 
     children = [
@@ -581,4 +581,7 @@ defmodule Rheo do
         {Rheo.Backend.Mongo, Keyword.drop(opts, [:backend, :name])}
     end
   end
+
+  defp default_backend_handle(rheo, Rheo.Backend.ETS), do: Module.concat(rheo, ETS)
+  defp default_backend_handle(rheo, _), do: Rheo.Names.backend_handle(rheo)
 end

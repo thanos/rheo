@@ -6,9 +6,10 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](LICENSE)
 
-**v0.2.0** — Durable consumer-group semantics over searchable databases.
-The first backend is **MongoDB**. Rheo is an Elixir/OTP library you embed in
-your supervision tree, not a standalone messaging server.
+**v0.3.0** — Durable consumer-group semantics over searchable databases.
+Backends today: **MongoDB** (durable) and **ETS** (ephemeral, zero-infra).
+Rheo is an Elixir/OTP library you embed in your supervision tree, not a
+standalone messaging server.
 
 **Delivery guarantee:** at-least-once. Duplicates are possible after failures —
 use stable event IDs for idempotency.
@@ -30,7 +31,8 @@ clients, exactly-once claims) or when a simple job queue is enough.
 
 | Approach | Strengths | Trade-offs |
 |---|---|---|
-| **Rheo + MongoDB** | Searchable history + durable groups in one store; embeds in OTP | At-least-once only; Mongo is the first backend |
+| **Rheo + MongoDB** | Searchable history + durable groups in one store; embeds in OTP | At-least-once only |
+| **Rheo + ETS** | Same API with no Docker/DB; great for tests and Livebook | Ephemeral — data dies with the owner process |
 | **Kafka / Pulsar** | Huge throughput, mature ops, many languages | Separate cluster; history search is not the primary model |
 | **RabbitMQ / NATS** | Classic messaging, routing | Not an immutable searchable event log |
 | **Oban / Broadway alone** | Great job/pipeline DX on Elixir | Different problem: jobs/pipelines, not durable consumer groups over an event log |
@@ -48,7 +50,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.2.0"}
+    {:rheo, "~> 0.3.0"}
   ]
 end
 ```
@@ -59,18 +61,30 @@ Then fetch deps:
 mix deps.get
 ```
 
-Rheo needs a MongoDB URL (or another backend once available). A typical app
-config:
+Choose a backend:
 
 ```elixir
-# config/runtime.exs
-config :rheo,
-  mongo_url: System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo")
+# Zero-infra (tests, Livebook, ephemeral apps)
+{Rheo, name: MyRheo, backend: Rheo.Backend.ETS}
+
+# Durable MongoDB
+{Rheo, name: MyRheo, backend: {Rheo.Backend.Mongo, url: "mongodb://localhost:27017/rheo"}}
 ```
 
 ## Quick start
 
-Start Rheo and a consumer in your supervision tree:
+### ETS (no Docker)
+
+```elixir
+children = [
+  {Rheo, name: MyRheo, backend: Rheo.Backend.ETS},
+  {MyApp.RiskConsumer, rheo: MyRheo, concurrency: 8, max_demand: 100}
+]
+
+Supervisor.start_link(children, strategy: :one_for_one)
+```
+
+### MongoDB
 
 ```elixir
 children = [
@@ -124,8 +138,8 @@ Rheo.query("market-events", type: "curve_update", currency: "EUR")
 ```
 
 Interactive walkthrough: open [notebooks/rheo_demo.livemd](notebooks/rheo_demo.livemd)
-in [Livebook](https://livebook.dev) (with Mongo running). Or from a clone:
-`mix rheo.demo`.
+in [Livebook](https://livebook.dev). The notebook defaults to **ETS** (no Docker).
+CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
 
 Upgrading from 0.1? See the [0.1 → 0.2 migration guide](docs/migrations/0.1-to-0.2.md).
 
@@ -136,6 +150,7 @@ Upgrading from 0.1? See the [0.1 → 0.2 migration guide](docs/migrations/0.1-to
 - [Tutorials](docs/tutorials.md)
 - [ADRs](docs/adr.md)
 - [Livebook demo](notebooks/rheo_demo.livemd)
+- [Article 10: Prove it with ETS](docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md)
 - [0.1 → 0.2 migration](docs/migrations/0.1-to-0.2.md)
 - [Changelog](CHANGELOG.md)
 - [Roadmap](docs/roadmap.md)
@@ -215,8 +230,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | Version | Focus |
 |---|---|
 | **0.1.0** | MVP: Mongo event log, leases/ACK, competing consumers, query, `Rheo.Consumer` |
-| **0.2.0** (current) | `Rheo.Group` runtime, real concurrency, lease renewal, multi-instance handles, portable `Rheo.Query`, persistence-error semantics |
-| **0.3.0** | ETS backend + backend conformance |
+| **0.2.0** | `Rheo.Group` runtime, real concurrency, lease renewal, multi-instance handles, portable `Rheo.Query`, persistence-error semantics |
+| **0.3.0** (current) | `Rheo.Backend.ETS`, capabilities, backend conformance suite, Docker-free demo |
 | **0.4.0** | Search/replay ergonomics and event lineage |
 | **0.5.0** | Partitioning and ordered consume within a partition |
 | **0.6.0** | PostgreSQL (or second durable) backend |
@@ -238,10 +253,11 @@ MIT — see [LICENSE](LICENSE).
 For contributors working on Rheo itself (not application consumers):
 
 ```bash
-docker compose up -d
 mix deps.get
 mix test
 mix rheo.demo
+# Mongo demo:
+docker compose up -d && RHEO_BACKEND=mongo mix rheo.demo
 ```
 
 Quality gates:
@@ -269,10 +285,9 @@ Unit-only (excludes Mongo):
 mix test.unit
 ```
 
-Livebook from a clone:
+Livebook from a clone (ETS by default — no Docker):
 
 ```bash
-docker compose up -d
 livebook server notebooks/rheo_demo.livemd
 ```
 

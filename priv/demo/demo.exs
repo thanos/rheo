@@ -1,28 +1,43 @@
 # Rheo demo
 #
-# Run: docker compose up -d && mix rheo.demo
+# Docker-free (ETS):
+#   mix rheo.demo
+#
+# Mongo:
+#   docker compose up -d && RHEO_BACKEND=mongo mix rheo.demo
 
 Mix.ensure_application!(:logger)
 
-url = System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_demo")
-Application.put_env(:rheo, :mongo_url, url)
+backend = System.get_env("RHEO_BACKEND", "ets")
 Application.put_env(:rheo, :clock, Rheo.Clock.System)
 Application.put_env(:rheo, :start_on_application, false)
 
-{:ok, _} = Application.ensure_all_started(:mongodb_driver)
+case backend do
+  "mongo" ->
+    url = System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_demo")
+    Application.put_env(:rheo, :mongo_url, url)
+    {:ok, _} = Application.ensure_all_started(:mongodb_driver)
 
-case Rheo.start_link(url: url) do
-  {:ok, _} -> :ok
-  {:error, {:already_started, _}} -> :ok
+    case Rheo.start_link(url: url) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
+    Enum.each(["streams", "events", "groups", "deliveries"], fn coll ->
+      _ = Mongo.delete_many(Rheo.Mongo, coll, %{})
+    end)
+
+  _ ->
+    case Rheo.start_link(backend: Rheo.Backend.ETS) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
 end
-
-Enum.each(["streams", "events", "groups", "deliveries"], fn coll ->
-  _ = Mongo.delete_many(Rheo.Mongo, coll, %{})
-end)
 
 :ok = Rheo.ensure_indexes()
 
 stream = "market-events"
+IO.puts("==> backend=#{backend}")
 IO.puts("==> creating stream #{stream}")
 :ok = Rheo.create_stream(stream)
 :ok = Rheo.create_group(stream, "risk")
@@ -79,9 +94,9 @@ IO.puts("==> querying historical event after consumption")
   Rheo.query(stream,
     type: "curve_update",
     currency: target.payload["currency"],
-    curve: target.payload["curve"],
-    limit: 5
+    limit: 200
   )
 
-IO.puts("    found #{length(found)} matching events (sample id=#{hd(found).id})")
-IO.puts("==> demo complete")
+match = Enum.find(found, &(&1.id == target.id))
+IO.puts("    found target id=#{match && match.id} seq=#{match && match.sequence}")
+IO.puts("==> done")

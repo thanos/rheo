@@ -23,10 +23,36 @@ defmodule Rheo.Backend do
   @typedoc "Backend-specific options (keyword list)."
   @type opts :: keyword()
 
+  @typedoc """
+  Declared backend capabilities.
+
+  Required keys for v0.3+: `:durable`, `:distributed`, `:atomic_compare_and_set`,
+  `:notifications`, `:change_feed`, `:secondary_indexes`, `:batch_writes`,
+  `:ordered_range_scan`.
+  """
+  @type capabilities :: %{
+          optional(atom()) => boolean(),
+          durable: boolean(),
+          distributed: boolean(),
+          atomic_compare_and_set: boolean(),
+          notifications: boolean(),
+          change_feed: boolean(),
+          secondary_indexes: boolean(),
+          batch_writes: boolean(),
+          ordered_range_scan: boolean()
+        }
+
   @doc """
   Returns a child spec that starts backend resources under a Rheo instance.
   """
   @callback child_spec(opts()) :: Supervisor.child_spec()
+
+  @doc """
+  Returns static capability flags for this backend module.
+
+  Used for documentation and conformance gating — not to weaken fencing.
+  """
+  @callback capabilities() :: capabilities()
 
   @doc "Creates indexes / schema needed for correct operation."
   @callback ensure_indexes(handle()) :: :ok | {:error, term()}

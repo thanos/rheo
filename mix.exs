@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.3.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -43,7 +43,10 @@ defmodule Rheo.MixProject do
           "docs/adr/008-mongodb-schema-and-indexes.md",
           "docs/adr/009-local-consumer-group-runtime.md",
           "docs/adr/010-backend-handle-and-instance-model.md",
+          "docs/adr/011-backend-capabilities.md",
+          "docs/adr/012-backend-conformance-suite.md",
           "docs/adr/013-portable-query-model.md",
+          "docs/adr/014-ets-backend.md",
           "docs/migrations/0.1-to-0.2.md",
           "CHANGELOG.md",
           "docs/tutorials.md",
@@ -56,6 +59,7 @@ defmodule Rheo.MixProject do
           "docs/tutorials/07-killing-consumers.md",
           "docs/tutorials/08-searching-the-stream.md",
           "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
+          "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
           "notebooks/rheo_demo.livemd"
         ],
         groups_for_extras: [
@@ -79,7 +83,10 @@ defmodule Rheo.MixProject do
             "docs/adr/008-mongodb-schema-and-indexes.md",
             "docs/adr/009-local-consumer-group-runtime.md",
             "docs/adr/010-backend-handle-and-instance-model.md",
-            "docs/adr/013-portable-query-model.md"
+            "docs/adr/011-backend-capabilities.md",
+            "docs/adr/012-backend-conformance-suite.md",
+            "docs/adr/013-portable-query-model.md",
+            "docs/adr/014-ets-backend.md"
           ],
           Tutorials: [
             "docs/tutorials.md",
@@ -91,7 +98,8 @@ defmodule Rheo.MixProject do
             "docs/tutorials/06-mongodb-searchable-event-log.md",
             "docs/tutorials/07-killing-consumers.md",
             "docs/tutorials/08-searching-the-stream.md",
-            "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md"
+            "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
+            "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md"
           ]
         ]
       ],
@@ -157,7 +165,7 @@ defmodule Rheo.MixProject do
   end
 
   defp description do
-    "Durable consumer-group semantics over searchable databases (MongoDB first)."
+    "Durable consumer-group semantics over searchable databases (MongoDB + ETS)."
   end
 
   defp package do

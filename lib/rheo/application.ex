@@ -5,8 +5,9 @@ defmodule Rheo.Application do
   By default Rheo does **not** auto-start a backend. Host applications should
   supervise `{Rheo, opts}` themselves.
 
-  Set `config :rheo, start_on_application: true` and `:mongo_url` only when you
-  intentionally want Rheo to start under this application callback.
+  Set `config :rheo, start_on_application: true` when you intentionally want Rheo
+  to start under this application callback. For Mongo, also set `:mongo_url`.
+  For ETS, set `config :rheo, backend: Rheo.Backend.ETS` (no URL required).
   """
 
   use Application
@@ -26,14 +27,34 @@ defmodule Rheo.Application do
   end
 
   defp start_rheo? do
-    Application.get_env(:rheo, :start_on_application, false) and
-      not is_nil(Application.get_env(:rheo, :mongo_url))
+    Application.get_env(:rheo, :start_on_application, false) and backend_configured?()
+  end
+
+  defp backend_configured? do
+    case Application.get_env(:rheo, :backend) do
+      Rheo.Backend.ETS -> true
+      {Rheo.Backend.ETS, _} -> true
+      _ -> not is_nil(Application.get_env(:rheo, :mongo_url))
+    end
   end
 
   defp rheo_opts do
     []
-    |> put_opt(:url, Application.get_env(:rheo, :mongo_url))
     |> put_opt(:name, Application.get_env(:rheo, :name, Rheo))
+    |> put_backend()
+  end
+
+  defp put_backend(opts) do
+    case Application.get_env(:rheo, :backend) do
+      nil ->
+        put_opt(opts, :url, Application.get_env(:rheo, :mongo_url))
+
+      {mod, backend_opts} when is_list(backend_opts) ->
+        Keyword.put(opts, :backend, {mod, backend_opts})
+
+      mod when is_atom(mod) ->
+        Keyword.put(opts, :backend, mod)
+    end
   end
 
   defp put_opt(opts, _key, nil), do: opts

@@ -91,6 +91,20 @@ defmodule Rheo.Backend.Mongo do
   def topology_name, do: default_handle()
 
   @impl true
+  def capabilities do
+    %{
+      durable: true,
+      distributed: false,
+      atomic_compare_and_set: true,
+      notifications: false,
+      change_feed: false,
+      secondary_indexes: true,
+      batch_writes: true,
+      ordered_range_scan: true
+    }
+  end
+
+  @impl true
   def ping(topo) do
     case client().command(topo, ping: 1) do
       {:ok, _} -> :ok

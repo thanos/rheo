@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.2.0**.
+Current release: **v0.3.0**.
 
 ## Done in 0.1.0
 
@@ -23,13 +23,21 @@ Current release: **v0.2.0**.
 - Explicit persistence-error telemetry / settle semantics
 - Migration guide + Article 9
 
-## Next (0.3+)
+## Done in 0.3.0
 
-- ETS backend + conformance suite
-- Search/replay API
+- `Rheo.Backend.ETS` (ephemeral, per-instance tables)
+- Backend capabilities map
+- Shared conformance suite (ETS always; Mongo tagged)
+- Docker-free demo / Livebook path
+- ADRs 011, 012, 014 + Article 10
+
+## Next (0.4+)
+
+- Search/replay API and event lineage
 - Partitions / frontier
-- Additional durable backends
+- Additional durable backends (Ecto family)
 - Broadway interop (evaluate)
+- Mnesia (later)
 
 ## Explicitly deferred
 

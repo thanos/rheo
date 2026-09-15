@@ -12,4 +12,7 @@ Architectural decision records for Rheo:
 8. [MongoDB schema and indexes](adr/008-mongodb-schema-and-indexes.md)
 9. [Local consumer group runtime](adr/009-local-consumer-group-runtime.md)
 10. [Backend handle and instance model](adr/010-backend-handle-and-instance-model.md)
+11. [Backend capabilities](adr/011-backend-capabilities.md)
+12. [Backend conformance suite](adr/012-backend-conformance-suite.md)
 13. [Portable query model](adr/013-portable-query-model.md)
+14. [ETS backend](adr/014-ets-backend.md)

@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-15
+
+### Added
+
+- `Rheo.Backend.ETS` — ephemeral per-instance ETS backend (no Docker)
+- Backend `capabilities/0` callback; Mongo and ETS implementations
+- Backend conformance suite (`Rheo.BackendContract`) for ETS and Mongo
+- ADRs 011, 012, 014; tutorial article 10
+- Docker-free `mix rheo.demo` (default ETS; `RHEO_BACKEND=mongo` for Mongo)
+
+### Changed
+
+- Application auto-start can use `config :rheo, backend: Rheo.Backend.ETS`
+- Livebook demo defaults to ETS
+
 ## [0.2.0] - 2026-09-15
 
 ### Added

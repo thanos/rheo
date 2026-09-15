@@ -228,6 +228,7 @@ defmodule Rheo.GroupUnitTest do
     {:ok, event} = Rheo.append(stream, %{type: "stale_ack"})
     parent = self()
     handler_id = "ack-fail-#{System.unique_integer()}"
+    lease_handler = "lease-#{System.unique_integer()}"
 
     :ok =
       :telemetry.attach(
@@ -239,7 +240,23 @@ defmodule Rheo.GroupUnitTest do
         nil
       )
 
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    :ok =
+      :telemetry.attach(
+        lease_handler,
+        [:rheo, :lease],
+        fn _e, %{count: c}, meta, _ ->
+          if c > 0 and meta[:stream] == stream, do: send(parent, :group_leased)
+        end,
+        nil
+      )
+
+    on_exit(fn ->
+      :telemetry.detach(handler_id)
+      :telemetry.detach(lease_handler)
+    end)
+
+    # Long lease_ms keeps renew from firing during the steal window; Frozen expires it.
+    lease_ms = 30_000
 
     {:ok, group_pid} =
       Rheo.GroupSupervisor.start_group(Rheo,
@@ -247,13 +264,13 @@ defmodule Rheo.GroupUnitTest do
         group: "risk",
         module: SlowAckConsumer,
         poll_ms: 20,
-        lease_ms: 200,
+        lease_ms: lease_ms,
         max_demand: 1,
         concurrency: 1
       )
 
-    Process.sleep(80)
-    Frozen.advance(300)
+    assert_receive :group_leased, 2_000
+    Frozen.advance(lease_ms + 1)
 
     assert {:ok, [_]} =
              Rheo.fetch(stream, "risk", limit: 1, consumer_id: "stealer", lease_ms: 500)
@@ -305,6 +322,7 @@ defmodule Rheo.GroupUnitTest do
     {:ok, event} = Rheo.append(stream, %{type: "renew_fail"})
     parent = self()
     handler_id = "renew-#{System.unique_integer()}"
+    lease_handler = "lease-renew-#{System.unique_integer()}"
 
     :ok =
       :telemetry.attach(
@@ -316,7 +334,20 @@ defmodule Rheo.GroupUnitTest do
         nil
       )
 
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    :ok =
+      :telemetry.attach(
+        lease_handler,
+        [:rheo, :lease],
+        fn _e, %{count: c}, meta, _ ->
+          if c > 0 and meta[:stream] == stream, do: send(parent, :group_leased)
+        end,
+        nil
+      )
+
+    on_exit(fn ->
+      :telemetry.detach(handler_id)
+      :telemetry.detach(lease_handler)
+    end)
 
     {:ok, group_pid} =
       Rheo.GroupSupervisor.start_group(Rheo,
@@ -328,11 +359,19 @@ defmodule Rheo.GroupUnitTest do
         max_demand: 1
       )
 
-    Process.sleep(80)
+    assert_receive :group_leased, 2_000
     Frozen.advance(250)
 
-    assert {:ok, [_]} =
-             Rheo.fetch(stream, "risk", limit: 1, consumer_id: "stealer", lease_ms: 500)
+    wait_until(fn ->
+      case Rheo.fetch(stream, "risk", limit: 1, consumer_id: "stealer", lease_ms: 500) do
+        {:ok, [_]} ->
+          true
+
+        {:ok, []} ->
+          Frozen.advance(250)
+          false
+      end
+    end)
 
     assert_receive {:renew, :stale_lease}, 2_000
     :ok = DynamicSupervisor.terminate_child(Rheo.Names.group_supervisor(Rheo), group_pid)
@@ -396,6 +435,7 @@ defmodule Rheo.GroupUnitTest do
     {:ok, event} = Rheo.append(stream, %{type: "nack_fail"})
     parent = self()
     handler_id = "retry-err-#{System.unique_integer()}"
+    lease_handler = "lease-nack-#{System.unique_integer()}"
 
     :ok =
       :telemetry.attach(
@@ -407,7 +447,22 @@ defmodule Rheo.GroupUnitTest do
         nil
       )
 
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    :ok =
+      :telemetry.attach(
+        lease_handler,
+        [:rheo, :lease],
+        fn _e, %{count: c}, meta, _ ->
+          if c > 0 and meta[:stream] == stream, do: send(parent, :group_leased)
+        end,
+        nil
+      )
+
+    on_exit(fn ->
+      :telemetry.detach(handler_id)
+      :telemetry.detach(lease_handler)
+    end)
+
+    lease_ms = 30_000
 
     {:ok, group_pid} =
       Rheo.GroupSupervisor.start_group(Rheo,
@@ -415,12 +470,12 @@ defmodule Rheo.GroupUnitTest do
         group: "risk",
         module: SlowRetryConsumer,
         poll_ms: 20,
-        lease_ms: 200,
+        lease_ms: lease_ms,
         max_demand: 1
       )
 
-    Process.sleep(80)
-    Frozen.advance(300)
+    assert_receive :group_leased, 2_000
+    Frozen.advance(lease_ms + 1)
 
     assert {:ok, [_]} =
              Rheo.fetch(stream, "risk", limit: 1, consumer_id: "stealer", lease_ms: 500)
@@ -435,6 +490,7 @@ defmodule Rheo.GroupUnitTest do
     {:ok, event} = Rheo.append(stream, %{type: "reject_fail"})
     parent = self()
     handler_id = "reject-err-#{System.unique_integer()}"
+    lease_handler = "lease-rej-#{System.unique_integer()}"
 
     :ok =
       :telemetry.attach(
@@ -446,7 +502,22 @@ defmodule Rheo.GroupUnitTest do
         nil
       )
 
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    :ok =
+      :telemetry.attach(
+        lease_handler,
+        [:rheo, :lease],
+        fn _e, %{count: c}, meta, _ ->
+          if c > 0 and meta[:stream] == stream, do: send(parent, :group_leased)
+        end,
+        nil
+      )
+
+    on_exit(fn ->
+      :telemetry.detach(handler_id)
+      :telemetry.detach(lease_handler)
+    end)
+
+    lease_ms = 30_000
 
     {:ok, group_pid} =
       Rheo.GroupSupervisor.start_group(Rheo,
@@ -454,12 +525,12 @@ defmodule Rheo.GroupUnitTest do
         group: "risk",
         module: SlowRejectConsumer,
         poll_ms: 20,
-        lease_ms: 200,
+        lease_ms: lease_ms,
         max_demand: 1
       )
 
-    Process.sleep(80)
-    Frozen.advance(300)
+    assert_receive :group_leased, 2_000
+    Frozen.advance(lease_ms + 1)
 
     assert {:ok, [_]} =
              Rheo.fetch(stream, "risk", limit: 1, consumer_id: "stealer", lease_ms: 500)

@@ -1,8 +1,8 @@
 # Architecture
 
-Rheo **v0.2.0** is an embedded Elixir/OTP library. Durable truth lives in the
-backend (MongoDB first). OTP owns process lifecycle and concurrency, not
-consumer-group correctness.
+Rheo **v0.3.0** is an embedded Elixir/OTP library. Durable truth lives in the
+backend (MongoDB for production; ETS for ephemeral/zero-infra use). OTP owns
+process lifecycle and concurrency, not consumer-group correctness.
 
 ```text
 Application Supervision Tree
@@ -50,8 +50,9 @@ with `:concurrency`. Durable ACK state stays in the backend.
 
 ## Backend boundary
 
-`Rheo.Backend` defines operations over an opaque `handle`. `Rheo.Backend.Mongo`
-is the first implementation. Queries use portable `%Rheo.Query{}`.
+`Rheo.Backend` defines operations over an opaque `handle`, plus
+`capabilities/0`. Implementations: `Rheo.Backend.Mongo` and `Rheo.Backend.ETS`.
+Queries use portable `%Rheo.Query{}`. A shared conformance suite exercises both.
 
 ## Try it
 
