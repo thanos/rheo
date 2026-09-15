@@ -40,13 +40,14 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
+      # Package contents come from mix.exs; prod compile is a sanity check only.
       - name: Compile
         run: mix compile --warnings-as-errors
         env:
           MIX_ENV: prod
 
+      # ex_doc is only: :dev — hex.publish builds docs and needs the default (dev) env.
       - name: Publish to Hex
         run: mix hex.publish --yes
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-          MIX_ENV: prod
