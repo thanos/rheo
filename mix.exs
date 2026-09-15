@@ -28,9 +28,59 @@ defmodule Rheo.MixProject do
         source_ref: "v#{@version}",
         extras: [
           "README.md",
+          "LICENSE",
           "docs/architecture.md",
           "docs/roadmap.md",
+          "docs/diagrams.md",
+          "docs/adr.md",
+          "docs/adr/001-at-least-once-delivery.md",
+          "docs/adr/002-events-immutable-consumer-state-separate.md",
+          "docs/adr/003-mongodb-first-backend.md",
+          "docs/adr/004-lease-and-fencing-model.md",
+          "docs/adr/005-backend-boundary.md",
+          "docs/adr/006-rheo-as-embedded-otp-library.md",
+          "docs/adr/007-demand-and-backpressure.md",
+          "docs/adr/008-mongodb-schema-and-indexes.md",
+          "docs/tutorials.md",
+          "docs/tutorials/01-why-consumer-groups-on-a-database.md",
+          "docs/tutorials/02-what-is-a-consumer-group.md",
+          "docs/tutorials/03-why-ack-is-harder.md",
+          "docs/tutorials/04-rheo-as-otp-library.md",
+          "docs/tutorials/05-demand-and-backpressure.md",
+          "docs/tutorials/06-mongodb-searchable-event-log.md",
+          "docs/tutorials/07-killing-consumers.md",
+          "docs/tutorials/08-searching-the-stream.md",
           "notebooks/rheo_demo.livemd"
+        ],
+        groups_for_extras: [
+          Guides: [
+            "docs/architecture.md",
+            "docs/roadmap.md",
+            "docs/diagrams.md",
+            "notebooks/rheo_demo.livemd"
+          ],
+          ADRs: [
+            "docs/adr.md",
+            "docs/adr/001-at-least-once-delivery.md",
+            "docs/adr/002-events-immutable-consumer-state-separate.md",
+            "docs/adr/003-mongodb-first-backend.md",
+            "docs/adr/004-lease-and-fencing-model.md",
+            "docs/adr/005-backend-boundary.md",
+            "docs/adr/006-rheo-as-embedded-otp-library.md",
+            "docs/adr/007-demand-and-backpressure.md",
+            "docs/adr/008-mongodb-schema-and-indexes.md"
+          ],
+          Tutorials: [
+            "docs/tutorials.md",
+            "docs/tutorials/01-why-consumer-groups-on-a-database.md",
+            "docs/tutorials/02-what-is-a-consumer-group.md",
+            "docs/tutorials/03-why-ack-is-harder.md",
+            "docs/tutorials/04-rheo-as-otp-library.md",
+            "docs/tutorials/05-demand-and-backpressure.md",
+            "docs/tutorials/06-mongodb-searchable-event-log.md",
+            "docs/tutorials/07-killing-consumers.md",
+            "docs/tutorials/08-searching-the-stream.md"
+          ]
         ]
       ],
       package: package(),

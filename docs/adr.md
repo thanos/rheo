@@ -1,0 +1,12 @@
+# ADRs
+
+Architectural decision records for Rheo:
+
+1. [At-least-once delivery](adr/001-at-least-once-delivery.md)
+2. [Events immutable, consumer state separate](adr/002-events-immutable-consumer-state-separate.md)
+3. [MongoDB first backend](adr/003-mongodb-first-backend.md)
+4. [Lease and fencing model](adr/004-lease-and-fencing-model.md)
+5. [Backend boundary](adr/005-backend-boundary.md)
+6. [Rheo as embedded OTP library](adr/006-rheo-as-embedded-otp-library.md)
+7. [Demand and backpressure](adr/007-demand-and-backpressure.md)
+8. [MongoDB schema and indexes](adr/008-mongodb-schema-and-indexes.md)

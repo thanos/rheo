@@ -122,8 +122,9 @@ Still out of scope through 1.0 unless demand forces it: standalone Rheo server, 
 - [Livebook demo](notebooks/rheo_demo.livemd) — interactive end-to-end walkthrough
 - [Architecture](docs/architecture.md)
 - [Roadmap](docs/roadmap.md)
-- [ADRs](docs/adr/)
-- [Tutorials](docs/tutorials/)
+- [ADRs](docs/adr.md)
+- [Tutorials](docs/tutorials.md)
+- [License](LICENSE)
 
 ## License
 
