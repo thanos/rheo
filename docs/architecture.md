@@ -1,8 +1,8 @@
 # Architecture
 
-Rheo is an embedded Elixir/OTP library. Durable truth lives in the backend
-(MongoDB first). OTP owns process lifecycle and concurrency, not consumer-group
-correctness.
+Rheo **v0.2.0** is an embedded Elixir/OTP library. Durable truth lives in the
+backend (MongoDB first). OTP owns process lifecycle and concurrency, not
+consumer-group correctness.
 
 ```text
 Application Supervision Tree

@@ -1,4 +1,4 @@
-# Rheo Livebook Demo
+# Rheo Livebook Demo (v0.2.0)
 
 ```elixir
 Mix.install(
@@ -24,8 +24,9 @@ Mix.install(
 2. Open this notebook from the repo (`notebooks/rheo_demo.livemd`) so `Mix.install` can resolve `{:rheo, path: ...}`
 3. Evaluate cells top to bottom
 
-Rheo is an embedded Elixir/OTP library: durable consumer groups over a searchable
-event log. Delivery is **at-least-once** — use event IDs for idempotency.
+Rheo **v0.2.0** is an embedded Elixir/OTP library: durable consumer groups over a
+searchable event log. Delivery is **at-least-once** — use event IDs for
+idempotency.
 
 ---
 

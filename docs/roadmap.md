@@ -1,5 +1,7 @@
 # Roadmap
 
+Current release: **v0.2.0**.
+
 ## Done in 0.1.0
 
 - Mongo-backed immutable event log

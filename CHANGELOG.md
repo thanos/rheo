@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.2.0
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.0] - 2026-09-15
 
 ### Added
 
@@ -24,6 +29,6 @@
 - Event document decoding removed from `Rheo.Event`; use
   `Rheo.Backend.Mongo.Codec.event_from_doc/1`
 
-## 0.1.0
+## [0.1.0]
 
 Initial Mongo-backed MVP: streams, groups, leases, Consumer, docs, Livebook.
