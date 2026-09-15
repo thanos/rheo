@@ -2,8 +2,8 @@ defmodule Rheo.Backend.Mongo do
   @moduledoc """
   MongoDB implementation of `Rheo.Backend`.
 
-  Prefer the `Rheo` facade for application code. Use this module when you need
-  the topology name or to embed the Mongo child spec directly.
+  Prefer the `Rheo` facade for application code. The opaque handle is the Mongo
+  process name (or pid) started via `child_spec/1`.
 
   ## Collections
 
@@ -15,7 +15,7 @@ defmodule Rheo.Backend.Mongo do
   ## Supervision example
 
       children = [
-        Rheo.Backend.Mongo.child_spec(url: "mongodb://localhost:27017/rheo", name: Rheo.Mongo)
+        {Rheo, name: MyRheo, backend: {Rheo.Backend.Mongo, url: "mongodb://localhost:27017/rheo"}}
       ]
 
   Callback semantics are documented on `Rheo.Backend`.
@@ -23,7 +23,9 @@ defmodule Rheo.Backend.Mongo do
 
   @behaviour Rheo.Backend
 
-  alias Rheo.{Clock, Event, Id, Lease, Telemetry}
+  alias Rheo.Backend.Mongo.Client
+  alias Rheo.Backend.Mongo.Codec
+  alias Rheo.{Clock, Event, Id, Lease, Query, Telemetry}
 
   @streams "streams"
   @events "events"
@@ -31,13 +33,13 @@ defmodule Rheo.Backend.Mongo do
   @deliveries "deliveries"
 
   @doc """
-  Child spec for the Mongo topology process.
+  Child spec for the Mongo connection process (backend handle).
 
   ## Arguments
 
     * `opts` — keyword options:
       * `:url` — Mongo URL (default: `Application.get_env(:rheo, :mongo_url)`)
-      * `:name` — topology name (default: `topology_name/0`)
+      * `:name` — handle / process name (default: `default_handle/0`)
       * `:pool_size` — pool size (default `5`)
       * plus other options accepted by `Mongo.start_link/1`
 
@@ -57,7 +59,7 @@ defmodule Rheo.Backend.Mongo do
   def child_spec(opts) do
     mongo_opts =
       opts
-      |> Keyword.put_new(:name, topology_name())
+      |> Keyword.put_new(:name, default_handle())
       |> Keyword.put_new_lazy(:url, fn -> Application.fetch_env!(:rheo, :mongo_url) end)
       |> Keyword.put_new(:pool_size, 5)
 
@@ -70,23 +72,27 @@ defmodule Rheo.Backend.Mongo do
   end
 
   @doc """
-  Returns the configured Mongo topology process name.
+  Default Mongo handle name for the `Rheo` instance.
 
   ## Examples
 
-      iex> Rheo.Backend.Mongo.topology_name()
+      iex> Rheo.Backend.Mongo.default_handle()
       Rheo.Mongo
 
   ## Returns
 
-  A process name atom (default `Rheo.Mongo`), from `Application.get_env(:rheo, :topology)`.
+  A process name atom (default `Rheo.Mongo`).
   """
-  @spec topology_name() :: atom()
-  def topology_name, do: Application.get_env(:rheo, :topology, Rheo.Mongo)
+  @spec default_handle() :: atom()
+  def default_handle, do: Application.get_env(:rheo, :topology, Rheo.Mongo)
+
+  @doc false
+  @deprecated "Use default_handle/0"
+  def topology_name, do: default_handle()
 
   @impl true
   def ping(topo) do
-    case Mongo.command(topo, ping: 1) do
+    case client().command(topo, ping: 1) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -132,7 +138,7 @@ defmodule Rheo.Backend.Mongo do
       "created_at" => Clock.utc_now()
     }
 
-    case Mongo.insert_one(topo, @streams, doc) do
+    case client().insert_one(topo, @streams, doc) do
       {:ok, _} ->
         :ok = ensure_indexes(topo)
         Telemetry.execute([:rheo, :stream, :create], %{count: 1}, %{stream: stream})
@@ -161,7 +167,7 @@ defmodule Rheo.Backend.Mongo do
       "created_at" => Clock.utc_now()
     }
 
-    case Mongo.insert_one(topo, @groups, doc) do
+    case client().insert_one(topo, @groups, doc) do
       {:ok, _} ->
         Telemetry.execute([:rheo, :group, :create], %{count: 1}, %{stream: stream, group: group})
         :ok
@@ -205,8 +211,8 @@ defmodule Rheo.Backend.Mongo do
         build_event_doc(stream, partition, start_seq + idx, payload, now, opts)
       end)
 
-    case Mongo.insert_many(topo, @events, docs, ordered: true) do
-      {:ok, _} -> {:ok, Enum.map(docs, &Event.from_doc/1)}
+    case client().insert_many(topo, @events, docs, ordered: true) do
+      {:ok, _} -> {:ok, Enum.map(docs, &Codec.event_from_doc/1)}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -225,23 +231,22 @@ defmodule Rheo.Backend.Mongo do
 
     events =
       topo
-      |> Mongo.find(@events, filter, sort: %{"sequence" => 1}, limit: limit)
-      |> Enum.map(&Event.from_doc/1)
+      |> then(&client().find(&1, @events, filter, sort: %{"sequence" => 1}, limit: limit))
+      |> Enum.map(&Codec.event_from_doc/1)
 
     {:ok, events}
   end
 
   @impl true
-  def query(topo, stream, opts \\ []) do
-    Telemetry.span([:rheo, :query], %{stream: stream}, fn ->
-      filter = build_query_filter(stream, opts)
-      limit = Keyword.get(opts, :limit, 100)
-      sort = Keyword.get(opts, :sort, %{"sequence" => 1})
+  def query(topo, %Query{} = query) do
+    Telemetry.span([:rheo, :query], %{stream: query.stream}, fn ->
+      filter = build_query_filter(query)
+      sort = order_to_sort(query.order_by)
 
       events =
         topo
-        |> Mongo.find(@events, filter, sort: sort, limit: limit)
-        |> Enum.map(&Event.from_doc/1)
+        |> then(&client().find(&1, @events, filter, sort: sort, limit: query.limit))
+        |> Enum.map(&Codec.event_from_doc/1)
 
       {:ok, events}
     end)
@@ -298,6 +303,37 @@ defmodule Rheo.Backend.Mongo do
         fetch_until(topo, stream, group, consumer_id, lease_ms, limit, now, acc ++ batch)
       end
     end
+  end
+
+  @impl true
+  def renew(topo, %Lease{} = lease, opts \\ []) do
+    Telemetry.span([:rheo, :lease, :renew], %{stream: lease.stream, group: lease.group}, fn ->
+      lease_ms =
+        Keyword.get(opts, :lease_ms, Application.get_env(:rheo, :default_lease_ms, 30_000))
+
+      now = Clock.utc_now()
+      expires_at = DateTime.add(now, lease_ms, :millisecond)
+
+      update = %{
+        "$set" => %{
+          "expires_at" => expires_at,
+          "renewed_at" => now
+        }
+      }
+
+      case client().find_one_and_update(topo, @deliveries, lease_filter(lease), update,
+             return_document: :after
+           ) do
+        {:ok, %Mongo.FindAndModifyResult{value: nil}} ->
+          {:error, :stale_lease}
+
+        {:ok, %Mongo.FindAndModifyResult{value: _}} ->
+          {:ok, %{lease | expires_at: expires_at}}
+
+        {:error, reason} ->
+          {:error, map_backend_error(reason)}
+      end
+    end)
   end
 
   @impl true
@@ -375,12 +411,12 @@ defmodule Rheo.Backend.Mongo do
   end
 
   defp mutate_lease(topo, lease, update) do
-    case Mongo.find_one_and_update(topo, @deliveries, lease_filter(lease), update,
+    case client().find_one_and_update(topo, @deliveries, lease_filter(lease), update,
            return_document: :after
          ) do
       {:ok, %Mongo.FindAndModifyResult{value: nil}} -> {:error, :stale_lease}
       {:ok, %Mongo.FindAndModifyResult{value: _}} -> :ok
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, map_backend_error(reason)}
     end
   end
 
@@ -395,7 +431,7 @@ defmodule Rheo.Backend.Mongo do
   end
 
   defp allocate_sequences(topo, stream, count) do
-    case Mongo.find_one_and_update(
+    case client().find_one_and_update(
            topo,
            @streams,
            %{"name" => stream},
@@ -460,11 +496,11 @@ defmodule Rheo.Backend.Mongo do
 
   defp insert_delivery_docs(topo, stream, group, next_seq, events) do
     docs = Enum.map(events, &delivery_doc(stream, group, &1))
-    _ = ignore_duplicate(Mongo.insert_many(topo, @deliveries, docs, ordered: false))
+    _ = ignore_duplicate(client().insert_many(topo, @deliveries, docs, ordered: false))
     last_seq = List.last(events).sequence
 
     _ =
-      Mongo.find_one_and_update(
+      client().find_one_and_update(
         topo,
         @groups,
         %{"stream" => stream, "name" => group, "next_sequence" => next_seq},
@@ -536,7 +572,7 @@ defmodule Rheo.Backend.Mongo do
       "$inc" => %{"attempt" => 1}
     }
 
-    case Mongo.find_one_and_update(topo, @deliveries, filter, update,
+    case client().find_one_and_update(topo, @deliveries, filter, update,
            sort: %{"sequence" => 1},
            return_document: :after
          ) do
@@ -555,7 +591,7 @@ defmodule Rheo.Backend.Mongo do
   defp to_lease(topo, stream, group, consumer_id, lease_id, expires_at, now, delivery) do
     event_id = delivery["event_id"] || delivery[:event_id]
 
-    case Mongo.find_one(topo, @events, %{"_id" => event_id}) do
+    case client().find_one(topo, @events, %{"_id" => event_id}) do
       nil ->
         {:error, {:event_missing, event_id}}
 
@@ -569,7 +605,7 @@ defmodule Rheo.Backend.Mongo do
            stream: stream,
            group: group,
            event_id: event_id,
-           event: Event.from_doc(event_doc),
+           event: Codec.event_from_doc(event_doc),
            consumer_id: consumer_id,
            attempt: attempt,
            leased_at: now,
@@ -589,52 +625,70 @@ defmodule Rheo.Backend.Mongo do
   end
 
   defp fetch_stream(topo, stream) do
-    case Mongo.find_one(topo, @streams, %{"name" => stream}) do
+    case client().find_one(topo, @streams, %{"name" => stream}) do
       nil -> {:error, :stream_not_found}
       doc -> {:ok, doc}
     end
   end
 
   defp fetch_group(topo, stream, group) do
-    case Mongo.find_one(topo, @groups, %{"stream" => stream, "name" => group}) do
+    case client().find_one(topo, @groups, %{"stream" => stream, "name" => group}) do
       nil -> {:error, :group_not_found}
       doc -> {:ok, doc}
     end
   end
 
-  defp build_query_filter(stream, opts) do
-    Enum.reduce(opts, %{"stream" => stream}, &apply_query_opt/2)
+  defp build_query_filter(%Query{} = query) do
+    base = %{"stream" => query.stream}
+
+    base
+    |> then(fn acc -> Enum.reduce(query.where, acc, &apply_where_opt/2) end)
+    |> then(fn acc ->
+      if query.from, do: put_in_range(acc, "timestamp", "$gte", query.from), else: acc
+    end)
+    |> then(fn acc ->
+      if query.to, do: put_in_range(acc, "timestamp", "$lte", query.to), else: acc
+    end)
   end
 
-  defp apply_query_opt({:type, type}, acc), do: Map.put(acc, "type", type)
-  defp apply_query_opt({:key, key}, acc), do: Map.put(acc, "key", key)
-  defp apply_query_opt({:partition, p}, acc), do: Map.put(acc, "partition", p)
-  defp apply_query_opt({:currency, c}, acc), do: Map.put(acc, "payload.currency", c)
-  defp apply_query_opt({:curve, c}, acc), do: Map.put(acc, "payload.curve", c)
+  defp apply_where_opt({:type, type}, acc), do: Map.put(acc, "type", type)
+  defp apply_where_opt({:key, key}, acc), do: Map.put(acc, "key", key)
+  defp apply_where_opt({:partition, p}, acc), do: Map.put(acc, "partition", p)
+  defp apply_where_opt({:currency, c}, acc), do: Map.put(acc, "payload.currency", c)
+  defp apply_where_opt({:curve, c}, acc), do: Map.put(acc, "payload.curve", c)
 
-  defp apply_query_opt({:correlation_id, id}, acc),
+  defp apply_where_opt({:correlation_id, id}, acc),
     do: Map.put(acc, "metadata.correlation_id", id)
 
-  defp apply_query_opt({:producer, p}, acc), do: Map.put(acc, "metadata.producer", p)
+  defp apply_where_opt({:producer, p}, acc), do: Map.put(acc, "metadata.producer", p)
 
-  defp apply_query_opt({:from, %DateTime{} = dt}, acc),
-    do: put_in_range(acc, "timestamp", "$gte", dt)
-
-  defp apply_query_opt({:to, %DateTime{} = dt}, acc),
-    do: put_in_range(acc, "timestamp", "$lte", dt)
-
-  defp apply_query_opt({:limit, _}, acc), do: acc
-  defp apply_query_opt({:sort, _}, acc), do: acc
-
-  defp apply_query_opt({field, value}, acc) when is_atom(field),
+  defp apply_where_opt({field, value}, acc) when is_atom(field),
     do: Map.put(acc, "payload.#{field}", value)
 
-  defp apply_query_opt(_, acc), do: acc
+  defp apply_where_opt(_, acc), do: acc
+
+  defp order_to_sort(order_by) when is_list(order_by) do
+    Map.new(order_by, fn
+      {field, :asc} -> {Atom.to_string(field), 1}
+      {field, :desc} -> {Atom.to_string(field), -1}
+      {field, 1} -> {to_string(field), 1}
+      {field, -1} -> {to_string(field), -1}
+    end)
+  end
+
+  defp order_to_sort(_), do: %{"sequence" => 1}
 
   defp put_in_range(acc, field, op, value) do
     existing = Map.get(acc, field, %{})
     Map.put(acc, field, Map.put(existing, op, value))
   end
+
+  defp map_backend_error(%DBConnection.ConnectionError{}), do: :backend_unavailable
+
+  defp map_backend_error(%Mongo.Error{code: code}) when code in [6, 7, 89],
+    do: :backend_unavailable
+
+  defp map_backend_error(reason), do: reason
 
   defp create_index(topo, coll, keys, opts) do
     index = [
@@ -643,8 +697,14 @@ defmodule Rheo.Backend.Mongo do
       unique: Keyword.get(opts, :unique, false)
     ]
 
-    Mongo.create_indexes(topo, coll, [index])
+    case client().create_indexes(topo, coll, [index]) do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
+
+  defp client, do: Client.current()
 
   defp get_value(%Mongo.FindAndModifyResult{value: value}), do: value
   defp get_value(_), do: nil

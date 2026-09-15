@@ -10,3 +10,6 @@ Architectural decision records for Rheo:
 6. [Rheo as embedded OTP library](adr/006-rheo-as-embedded-otp-library.md)
 7. [Demand and backpressure](adr/007-demand-and-backpressure.md)
 8. [MongoDB schema and indexes](adr/008-mongodb-schema-and-indexes.md)
+9. [Local consumer group runtime](adr/009-local-consumer-group-runtime.md)
+10. [Backend handle and instance model](adr/010-backend-handle-and-instance-model.md)
+13. [Portable query model](adr/013-portable-query-model.md)

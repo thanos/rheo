@@ -53,7 +53,7 @@ defmodule Rheo.ConsumerTest do
          stream: stream,
          group: "risk",
          agent: agent,
-         name: :"risk-#{System.unique_integer()}",
+         id: :"risk-#{System.unique_integer()}",
          poll_ms: 50}
       )
 
@@ -73,7 +73,7 @@ defmodule Rheo.ConsumerTest do
          stream: stream,
          group: "risk",
          agent: agent,
-         name: :"retry-#{System.unique_integer()}",
+         id: :"retry-#{System.unique_integer()}",
          poll_ms: 50,
          max_demand: 1}
       )
@@ -82,6 +82,27 @@ defmodule Rheo.ConsumerTest do
       actions = Agent.get(agent, & &1)
       {:ack, e.id} in actions and {:retry, e.id} in actions
     end)
+  end
+
+  test "second consumer joins already-started group", %{stream: stream, agent: agent} do
+    {:ok, _} = Rheo.append_batch(stream, [%{type: "x"}])
+
+    id1 = :"join-a-#{System.unique_integer()}"
+    id2 = :"join-b-#{System.unique_integer()}"
+
+    {:ok, _} =
+      start_supervised(
+        {RiskConsumer, stream: stream, group: "risk", agent: agent, id: id1, poll_ms: 50}
+      )
+
+    {:ok, _} =
+      start_supervised(
+        {RiskConsumer, stream: stream, group: "risk", agent: agent, id: id2, poll_ms: 50}
+      )
+
+    wait_until(fn -> Agent.get(agent, & &1) != [] end)
+    assert :ok = stop_supervised(id2)
+    assert :ok = stop_supervised(id1)
   end
 
   defp wait_until(fun, attempts \\ 50) do

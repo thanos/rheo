@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -41,6 +41,11 @@ defmodule Rheo.MixProject do
           "docs/adr/006-rheo-as-embedded-otp-library.md",
           "docs/adr/007-demand-and-backpressure.md",
           "docs/adr/008-mongodb-schema-and-indexes.md",
+          "docs/adr/009-local-consumer-group-runtime.md",
+          "docs/adr/010-backend-handle-and-instance-model.md",
+          "docs/adr/013-portable-query-model.md",
+          "docs/migrations/0.1-to-0.2.md",
+          "CHANGELOG.md",
           "docs/tutorials.md",
           "docs/tutorials/01-why-consumer-groups-on-a-database.md",
           "docs/tutorials/02-what-is-a-consumer-group.md",
@@ -50,6 +55,7 @@ defmodule Rheo.MixProject do
           "docs/tutorials/06-mongodb-searchable-event-log.md",
           "docs/tutorials/07-killing-consumers.md",
           "docs/tutorials/08-searching-the-stream.md",
+          "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
           "notebooks/rheo_demo.livemd"
         ],
         groups_for_extras: [
@@ -57,6 +63,8 @@ defmodule Rheo.MixProject do
             "docs/architecture.md",
             "docs/roadmap.md",
             "docs/diagrams.md",
+            "docs/migrations/0.1-to-0.2.md",
+            "CHANGELOG.md",
             "notebooks/rheo_demo.livemd"
           ],
           ADRs: [
@@ -68,7 +76,10 @@ defmodule Rheo.MixProject do
             "docs/adr/005-backend-boundary.md",
             "docs/adr/006-rheo-as-embedded-otp-library.md",
             "docs/adr/007-demand-and-backpressure.md",
-            "docs/adr/008-mongodb-schema-and-indexes.md"
+            "docs/adr/008-mongodb-schema-and-indexes.md",
+            "docs/adr/009-local-consumer-group-runtime.md",
+            "docs/adr/010-backend-handle-and-instance-model.md",
+            "docs/adr/013-portable-query-model.md"
           ],
           Tutorials: [
             "docs/tutorials.md",
@@ -79,7 +90,8 @@ defmodule Rheo.MixProject do
             "docs/tutorials/05-demand-and-backpressure.md",
             "docs/tutorials/06-mongodb-searchable-event-log.md",
             "docs/tutorials/07-killing-consumers.md",
-            "docs/tutorials/08-searching-the-stream.md"
+            "docs/tutorials/08-searching-the-stream.md",
+            "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md"
           ]
         ]
       ],
@@ -124,6 +136,7 @@ defmodule Rheo.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
+      {:mox, "~> 1.1", only: :test},
       {:excoveralls, "~> 0.18", only: :test}
     ]
   end
@@ -131,6 +144,8 @@ defmodule Rheo.MixProject do
   defp aliases do
     [
       "rheo.demo": ["run priv/demo/demo.exs"],
+      "test.unit": ["test", "--exclude", "mongo", "--exclude", "integration"],
+      "test.integration": ["test", "--include", "integration"],
       quality: [
         "format --check-formatted",
         "compile --warnings-as-errors",

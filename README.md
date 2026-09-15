@@ -46,8 +46,8 @@ Or open [notebooks/rheo_demo.livemd](notebooks/rheo_demo.livemd) in [Livebook](h
 
 ```elixir
 children = [
-  {Rheo, url: "mongodb://localhost:27017/rheo"},
-  {MyApp.RiskConsumer, concurrency: 1}
+  {Rheo, name: MyRheo, backend: {Rheo.Backend.Mongo, url: "mongodb://localhost:27017/rheo"}},
+  {MyApp.RiskConsumer, rheo: MyRheo, concurrency: 8, max_demand: 100}
 ]
 
 Supervisor.start_link(children, strategy: :one_for_one)
@@ -58,7 +58,8 @@ defmodule MyApp.RiskConsumer do
   use Rheo.Consumer,
     stream: "market-events",
     group: "risk",
-    max_demand: 10
+    concurrency: 8,
+    max_demand: 100
 
   @impl true
   def handle_event(event, state) do
@@ -90,6 +91,22 @@ mix dialyzer
 mix coveralls
 ```
 
+Mongo-backed tests run by default when Mongo is available (CI and local
+`docker compose up -d`). Heavier end-to-end scenarios are tagged `:integration`
+and excluded unless enabled:
+
+```bash
+RHEO_INTEGRATION=1 mix test
+# or
+mix test.integration
+```
+
+Unit-only (excludes Mongo):
+
+```bash
+mix test.unit
+```
+
 CI tests a compatibility matrix of **Erlang/OTP 27–29** × **Elixir 1.17–1.20**
 (excluding unsupported pairs per the [Elixir compatibility table](https://hexdocs.pm/elixir/compatibility-and-deprecations.html)).
 Format, Credo, Dialyzer, and Coveralls run on Elixir 1.20.2 / OTP 29.
@@ -105,21 +122,23 @@ set repository secrets `COVERALLS_REPO_TOKEN` and `HEX_API_KEY`.
 | Version | Focus |
 |---|---|
 | **0.1.0** | MVP: Mongo event log, leases/ACK, competing consumers, independent groups, query, `Rheo.Consumer`, demo |
-| **0.2.0** | Hardening: richer telemetry, lease observability, retention hooks, query ergonomics |
-| **0.3.0** | Partitioning: key-based partitions, ordered consume within a partition |
-| **0.4.0** | Demand evolution: stronger backpressure, optional GenStage/Broadway interop |
-| **0.5.0** | Second backend: PostgreSQL adapter; tighten `Rheo.Backend` from real portability lessons |
-| **0.6.0** | Mongo push path: change-stream wakeups where they beat polling; keep poll fallback |
-| **0.7.0** | Multi-node: safe concurrent consumers across BEAM nodes via durable Mongo coordination |
-| **0.8.0** | Ops surface: dead-letter inspection APIs, lag metrics, admin-friendly query helpers |
-| **0.9.0** | API freeze candidate: docs, benchmarks, compatibility guarantees, deprecations cleared |
-| **1.0.0** | Stable public API: semantic versioning commitment for `Rheo` / `Rheo.Consumer` / `Rheo.Backend` |
+| **0.2.0** | Architecture cleanup: `Rheo.Group` runtime, real concurrency, lease renewal, multi-instance handles, portable `Rheo.Query`, persistence-error semantics |
+| **0.3.0** | ETS backend + backend conformance (prove the contract is not Mongo-shaped) |
+| **0.4.0** | Search/replay ergonomics and event lineage |
+| **0.5.0** | Partitioning and ordered consume within a partition |
+| **0.6.0** | PostgreSQL (or second durable) backend |
+| **0.7.0** | Mongo push path: change-stream wakeups where they beat polling |
+| **0.8.0** | Ops surface: DLQ inspection, lag metrics, admin query helpers |
+| **0.9.0** | API freeze candidate: docs, benchmarks, compatibility guarantees |
+| **1.0.0** | Stable public API: SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend` |
 
 Still out of scope through 1.0 unless demand forces it: standalone Rheo server, exactly-once claims, K8s operator, auth frameworks, multi-tenancy. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Documentation
 
 - [Livebook demo](notebooks/rheo_demo.livemd) — interactive end-to-end walkthrough
+- [0.1 → 0.2 migration](docs/migrations/0.1-to-0.2.md)
+- [Changelog](CHANGELOG.md)
 - [Architecture](docs/architecture.md)
 - [Roadmap](docs/roadmap.md)
 - [ADRs](docs/adr.md)

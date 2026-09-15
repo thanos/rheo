@@ -10,5 +10,8 @@ Medium-oriented tutorial notes that track the Rheo implementation:
 6. [MongoDB as a searchable event log](tutorials/06-mongodb-searchable-event-log.md)
 7. [Killing consumers on purpose](tutorials/07-killing-consumers.md)
 8. [Searching the stream](tutorials/08-searching-the-stream.md)
+9. [Why Rheo 0.2 broke its 0.1 API](tutorials/09-why-rheo-0-2-broke-its-0-1-api.md)
 
 Hands-on walkthrough: [Livebook demo](../notebooks/rheo_demo.livemd).
+
+Migration: [0.1 → 0.2](migrations/0.1-to-0.2.md).

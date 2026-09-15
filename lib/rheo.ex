@@ -10,11 +10,18 @@ defmodule Rheo do
   ## Supervision
 
       children = [
-        {Rheo, url: "mongodb://localhost:27017/rheo"},
-        {MyApp.RiskConsumer, []}
+        {Rheo, name: MyRheo, backend: {Rheo.Backend.Mongo, url: "mongodb://localhost:27017/rheo"}},
+        {MyApp.RiskConsumer, rheo: MyRheo, concurrency: 8, max_demand: 100}
       ]
 
       Supervisor.start_link(children, strategy: :one_for_one)
+
+  Shorthand (default instance name `Rheo`):
+
+      {Rheo, url: "mongodb://localhost:27017/rheo"}
+
+  Public APIs accept an optional `:rheo` option targeting a named instance
+  (default `Rheo`).
 
   ## Typical low-level flow
 
@@ -30,7 +37,7 @@ defmodule Rheo do
 
   use Supervisor
 
-  alias Rheo.{Event, Lease}
+  alias Rheo.{Event, Instance, Lease, Query}
 
   @typedoc "Name of an event stream."
   @type stream :: String.t()
@@ -39,51 +46,49 @@ defmodule Rheo do
   @type group :: String.t()
 
   @doc """
-  Starts Rheo under a supervisor (usually your application supervisor).
-
-  Options are forwarded to the backend child spec (`Rheo.Backend.Mongo` by
-  default).
+  Starts a Rheo instance supervisor.
 
   ## Options
 
-    * `:url` — MongoDB connection URL (required unless configured globally)
-    * `:name` — Mongo topology process name (default `Rheo.Mongo`)
-    * `:pool_size` — connection pool size (default `5`)
-    * `:backend` — backend module implementing `Rheo.Backend` (default
-      `Rheo.Backend.Mongo`)
-    * `:supervisor_name` — name for this Rheo supervisor (default `Rheo`)
+    * `:name` — instance name (default `Rheo`). Also used as the supervisor name.
+    * `:backend` — `{module, opts}` or module (default `Rheo.Backend.Mongo`).
+      When omitted, remaining options are forwarded to the Mongo backend.
+    * `:url` — MongoDB URL (Mongo backend)
+    * `:pool_size` — Mongo pool size (default `5`)
 
   ## Examples
 
-      iex> name = String.to_atom("mongo_doc_#{System.unique_integer([:positive])}")
-      iex> sup = String.to_atom("rheo_doc_#{System.unique_integer([:positive])}")
+      iex> name = String.to_atom("rheo_doc_#{System.unique_integer([:positive])}")
       iex> url = System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_test")
-      iex> {:ok, pid} = Rheo.start_link(url: url, name: name, supervisor_name: sup)
+      iex> {:ok, pid} = Rheo.start_link(name: name, backend: {Rheo.Backend.Mongo, url: url})
       iex> is_pid(pid)
       true
 
   ## Returns
 
     * `{:ok, pid}` on success
-    * `{:error, {:already_started, pid}}` if `supervisor_name` is taken
+    * `{:error, {:already_started, pid}}` if the instance name is taken
     * `{:error, reason}` on backend start failure
-
-  ## Errors / raises
-
-  Does not raise for normal connection failures; they surface as `{:error, reason}`.
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts \\ []) do
-    Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :supervisor_name, __MODULE__))
+    name = Keyword.get(opts, :name, __MODULE__)
+    Supervisor.start_link(__MODULE__, opts, name: name)
   end
 
   @impl true
   def init(opts) do
-    backend = Keyword.get(opts, :backend, Rheo.Backend.Mongo)
-    backend_opts = Keyword.drop(opts, [:backend, :supervisor_name])
+    rheo = Keyword.get(opts, :name, __MODULE__)
+    {backend_mod, backend_opts} = resolve_backend_opts(opts)
+    handle = Keyword.get(backend_opts, :name) || Rheo.Names.backend_handle(rheo)
+    backend_opts = Keyword.put(backend_opts, :name, handle)
 
     children = [
-      backend.child_spec(backend_opts)
+      {Registry, keys: :unique, name: Rheo.Names.registry(rheo)},
+      backend_mod.child_spec(backend_opts),
+      {Instance, name: rheo, backend: backend_mod, handle: handle},
+      {Task.Supervisor, name: Rheo.Names.task_supervisor(rheo)},
+      {Rheo.GroupSupervisor, rheo: rheo}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
@@ -91,8 +96,10 @@ defmodule Rheo do
 
   @doc false
   def child_spec(opts) do
+    name = Keyword.get(opts, :name, __MODULE__)
+
     %{
-      id: __MODULE__,
+      id: name,
       start: {__MODULE__, :start_link, [opts]},
       type: :supervisor
     }
@@ -105,6 +112,7 @@ defmodule Rheo do
 
     * `stream` — unique stream name (`t:stream/0`)
     * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
       * `:partition_count` — number of partitions (default `1`; MVP consumes
         partition `0` only)
 
@@ -121,14 +129,11 @@ defmodule Rheo do
     * `:ok` when the stream is created
     * `{:error, :already_exists}` when the name is taken
     * `{:error, reason}` on backend failure
-
-  ## Errors / raises
-
-  Does not raise for duplicate names; returns `{:error, :already_exists}`.
   """
   @spec create_stream(stream(), keyword()) :: :ok | {:error, term()}
   def create_stream(stream, opts \\ []) do
-    backend().create_stream(topology(), stream, opts)
+    {backend, handle, opts} = resolve(opts)
+    backend.create_stream(handle, stream, opts)
   end
 
   @doc """
@@ -141,6 +146,7 @@ defmodule Rheo do
     * `stream` — existing stream name
     * `group` — consumer group name
     * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
       * `:max_attempts` — attempts before dead-letter on retry (default from
         application env, typically `5`)
 
@@ -164,7 +170,8 @@ defmodule Rheo do
   """
   @spec create_group(stream(), group(), keyword()) :: :ok | {:error, term()}
   def create_group(stream, group, opts \\ []) do
-    backend().create_group(topology(), stream, group, opts)
+    {backend, handle, opts} = resolve(opts)
+    backend.create_group(handle, stream, group, opts)
   end
 
   @doc """
@@ -182,6 +189,7 @@ defmodule Rheo do
       * `:metadata` / `"metadata"` — merged into `Event.metadata`
       * remaining keys become `Event.payload`
     * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
       * `:id` — explicit event id (default: generated)
       * `:key` — overrides payload key
       * `:metadata` — extra metadata map
@@ -209,14 +217,11 @@ defmodule Rheo do
     * `{:ok, %Rheo.Event{}}`
     * `{:error, :stream_not_found}`
     * `{:error, reason}`
-
-  ## Errors / raises
-
-  Raises `FunctionClauseError` when `payload` is not a map.
   """
   @spec append(stream(), map(), keyword()) :: {:ok, Event.t()} | {:error, term()}
   def append(stream, payload, opts \\ []) when is_map(payload) do
-    backend().append(topology(), stream, payload, opts)
+    {backend, handle, opts} = resolve(opts)
+    backend.append(handle, stream, payload, opts)
   end
 
   @doc """
@@ -247,14 +252,11 @@ defmodule Rheo do
     * `{:ok, [%Rheo.Event{}]}` — possibly empty
     * `{:error, :stream_not_found}`
     * `{:error, reason}`
-
-  ## Errors / raises
-
-  Raises `FunctionClauseError` when `payloads` is not a list.
   """
   @spec append_batch(stream(), [map()], keyword()) :: {:ok, [Event.t()]} | {:error, term()}
   def append_batch(stream, payloads, opts \\ []) when is_list(payloads) do
-    backend().append_batch(topology(), stream, payloads, opts)
+    {backend, handle, opts} = resolve(opts)
+    backend.append_batch(handle, stream, payloads, opts)
   end
 
   @doc """
@@ -264,6 +266,7 @@ defmodule Rheo do
 
     * `stream` — stream name
     * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
       * `:after` — return sequences strictly greater than this (default `0`)
       * `:limit` — max events (default `100`)
       * `:partition` — partition (default `0`)
@@ -286,27 +289,21 @@ defmodule Rheo do
   """
   @spec read(stream(), keyword()) :: {:ok, [Event.t()]} | {:error, term()}
   def read(stream, opts \\ []) do
-    backend().read(topology(), stream, opts)
+    {backend, handle, opts} = resolve(opts)
+    backend.read(handle, stream, opts)
   end
 
   @doc """
   Queries historical events. Consumption never removes events from the log.
 
+  Accepts a `%Rheo.Query{}` or a stream name plus keyword filters (converted via
+  `Rheo.Query.new/2`).
+
   ## Arguments
 
-    * `stream` — stream name
-    * `opts` — filter and control options:
-      * `:type` — match `Event.type`
-      * `:key` — match `Event.key`
-      * `:partition` — partition filter
-      * `:currency` — `payload.currency`
-      * `:curve` — `payload.curve`
-      * `:correlation_id` — `metadata.correlation_id`
-      * `:producer` — `metadata.producer`
-      * `:from` / `:to` — `DateTime.t()` timestamp range (inclusive)
-      * `:limit` — max results (default `100`)
-      * `:sort` — Mongo sort document (default `%{"sequence" => 1}`)
-      * any other atom key — matched as `payload.<key>`
+    * `query_or_stream` — `%Rheo.Query{}` or stream name
+    * `opts` — when the first argument is a stream, filter options (see
+      `Rheo.Query`); always accepts `:rheo`
 
   ## Examples
 
@@ -322,15 +319,27 @@ defmodule Rheo do
       iex> {:ok, [event]} = Rheo.query(stream, type: "curve_update", currency: "EUR")
       iex> event.payload["curve"]
       "EUR-EURIBOR-6M"
+      iex> q = Rheo.Query.new(stream, where: [type: "curve_update", currency: "USD"])
+      iex> {:ok, [usd]} = Rheo.query(q)
+      iex> usd.payload["currency"]
+      "USD"
 
   ## Returns
 
     * `{:ok, [%Rheo.Event{}]}`
     * `{:error, reason}` on backend failure
   """
-  @spec query(stream(), keyword()) :: {:ok, [Event.t()]} | {:error, term()}
-  def query(stream, opts \\ []) do
-    backend().query(topology(), stream, opts)
+  @spec query(Query.t() | stream(), keyword()) :: {:ok, [Event.t()]} | {:error, term()}
+  def query(query_or_stream, opts \\ [])
+
+  def query(%Query{} = query, opts) when is_list(opts) do
+    {backend, handle, _} = resolve(opts)
+    backend.query(handle, query)
+  end
+
+  def query(stream, opts) when is_binary(stream) and is_list(opts) do
+    {rheo_opts, query_opts} = Keyword.split(opts, [:rheo])
+    query(Query.new(stream, query_opts), rheo_opts)
   end
 
   @doc """
@@ -344,6 +353,7 @@ defmodule Rheo do
     * `stream` — stream name
     * `group` — consumer group name
     * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
       * `:limit` — max leases / demand bound (default from config)
       * `:consumer_id` — worker identity (default: generated)
       * `:lease_ms` — lease TTL in milliseconds (default from config)
@@ -368,7 +378,31 @@ defmodule Rheo do
   """
   @spec fetch(stream(), group(), keyword()) :: {:ok, [Lease.t()]} | {:error, term()}
   def fetch(stream, group, opts \\ []) do
-    backend().fetch(topology(), stream, group, opts)
+    {backend, handle, opts} = resolve(opts)
+    backend.fetch(handle, stream, group, opts)
+  end
+
+  @doc """
+  Extends an active lease when `lease_id` still matches.
+
+  ## Arguments
+
+    * `lease` — `%Rheo.Lease{}` from `fetch/3`
+    * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
+      * `:lease_ms` — new TTL from now (default from config)
+
+  ## Returns
+
+    * `{:ok, %Rheo.Lease{}}` with updated `expires_at`
+    * `{:error, :stale_lease}`
+    * `{:error, :backend_unavailable}`
+    * `{:error, reason}`
+  """
+  @spec renew(Lease.t(), keyword()) :: {:ok, Lease.t()} | {:error, term()}
+  def renew(%Lease{} = lease, opts \\ []) do
+    {backend, handle, opts} = resolve(opts)
+    backend.renew(handle, lease, opts)
   end
 
   @doc """
@@ -379,6 +413,7 @@ defmodule Rheo do
   ## Arguments
 
     * `lease` — `%Rheo.Lease{}` returned by `fetch/3`
+    * `opts` — optional `:rheo` instance name
 
   ## Examples
 
@@ -400,8 +435,11 @@ defmodule Rheo do
     * `{:error, :stale_lease}` — lease expired, already ACKed, or replaced
     * `{:error, reason}`
   """
-  @spec ack(Lease.t()) :: :ok | {:error, term()}
-  def ack(%Lease{} = lease), do: backend().ack(topology(), lease)
+  @spec ack(Lease.t(), keyword()) :: :ok | {:error, term()}
+  def ack(%Lease{} = lease, opts \\ []) do
+    {backend, handle, _} = resolve(opts)
+    backend.ack(handle, lease)
+  end
 
   @doc """
   Returns a leased event for retry / redelivery according to group policy.
@@ -413,6 +451,7 @@ defmodule Rheo do
 
     * `lease` — `%Rheo.Lease{}` from `fetch/3`
     * `reason` — any term stored for diagnostics (default `:retry`)
+    * `opts` — optional `:rheo` instance name
 
   ## Examples
 
@@ -433,8 +472,13 @@ defmodule Rheo do
     * `{:error, :stale_lease}`
     * `{:error, reason}`
   """
-  @spec nack(Lease.t(), term()) :: :ok | {:error, term()}
-  def nack(%Lease{} = lease, reason \\ :retry), do: backend().retry(topology(), lease, reason)
+  @spec nack(Lease.t(), term(), keyword()) :: :ok | {:error, term()}
+  def nack(lease, reason \\ :retry, opts \\ [])
+
+  def nack(%Lease{} = lease, reason, opts) when is_list(opts) do
+    {backend, handle, _} = resolve(opts)
+    backend.retry(handle, lease, reason)
+  end
 
   @doc """
   Permanently rejects a leased event for this consumer group (dead-letter).
@@ -445,6 +489,7 @@ defmodule Rheo do
 
     * `lease` — `%Rheo.Lease{}` from `fetch/3`
     * `reason` — any term stored on the delivery (default `:rejected`)
+    * `opts` — optional `:rheo` instance name
 
   ## Examples
 
@@ -464,12 +509,20 @@ defmodule Rheo do
     * `{:error, :stale_lease}`
     * `{:error, reason}`
   """
-  @spec reject(Lease.t(), term()) :: :ok | {:error, term()}
-  def reject(%Lease{} = lease, reason \\ :rejected),
-    do: backend().reject(topology(), lease, reason)
+  @spec reject(Lease.t(), term(), keyword()) :: :ok | {:error, term()}
+  def reject(lease, reason \\ :rejected, opts \\ [])
+
+  def reject(%Lease{} = lease, reason, opts) when is_list(opts) do
+    {backend, handle, _} = resolve(opts)
+    backend.reject(handle, lease, reason)
+  end
 
   @doc """
   Verifies connectivity to the configured backend.
+
+  ## Arguments
+
+    * `opts` — optional `:rheo` instance name
 
   ## Examples
 
@@ -481,11 +534,18 @@ defmodule Rheo do
     * `:ok`
     * `{:error, reason}` when the backend is unreachable
   """
-  @spec ping() :: :ok | {:error, term()}
-  def ping, do: backend().ping(topology())
+  @spec ping(keyword()) :: :ok | {:error, term()}
+  def ping(opts \\ []) do
+    {backend, handle, _} = resolve(opts)
+    backend.ping(handle)
+  end
 
   @doc """
   Ensures backend indexes exist (safe to call repeatedly).
+
+  ## Arguments
+
+    * `opts` — optional `:rheo` instance name
 
   ## Examples
 
@@ -497,14 +557,28 @@ defmodule Rheo do
     * `:ok`
     * `{:error, reason}` on index creation failure
   """
-  @spec ensure_indexes() :: :ok | {:error, term()}
-  def ensure_indexes, do: backend().ensure_indexes(topology())
-
-  defp topology do
-    Application.get_env(:rheo, :topology, Rheo.Mongo)
+  @spec ensure_indexes(keyword()) :: :ok | {:error, term()}
+  def ensure_indexes(opts \\ []) do
+    {backend, handle, _} = resolve(opts)
+    backend.ensure_indexes(handle)
   end
 
-  defp backend do
-    Application.get_env(:rheo, :backend, Rheo.Backend.Mongo)
+  defp resolve(opts) do
+    rheo = Keyword.get(opts, :rheo, __MODULE__)
+    %Instance{backend: backend, handle: handle} = Instance.fetch!(rheo)
+    {backend, handle, Keyword.delete(opts, :rheo)}
+  end
+
+  defp resolve_backend_opts(opts) do
+    case Keyword.get(opts, :backend) do
+      {mod, backend_opts} when is_atom(mod) and is_list(backend_opts) ->
+        {mod, backend_opts}
+
+      mod when is_atom(mod) and not is_nil(mod) ->
+        {mod, Keyword.drop(opts, [:backend, :name])}
+
+      nil ->
+        {Rheo.Backend.Mongo, Keyword.drop(opts, [:backend, :name])}
+    end
   end
 end

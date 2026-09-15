@@ -11,7 +11,7 @@ Application.put_env(:rheo, :start_on_application, false)
 
 {:ok, _} = Application.ensure_all_started(:mongodb_driver)
 
-case Rheo.start_link(url: url, name: Rheo.Mongo) do
+case Rheo.start_link(url: url) do
   {:ok, _} -> :ok
   {:error, {:already_started, _}} -> :ok
 end
