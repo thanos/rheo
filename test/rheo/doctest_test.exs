@@ -1,0 +1,13 @@
+defmodule Rheo.DoctestTest do
+  use ExUnit.Case, async: false
+
+  doctest Rheo
+  doctest Rheo.Event
+  doctest Rheo.Lease
+  doctest Rheo.Id
+  doctest Rheo.Clock
+  doctest Rheo.Clock.System
+  doctest Rheo.Clock.Frozen
+  doctest Rheo.Backend.Mongo
+  doctest Rheo.Telemetry
+end
