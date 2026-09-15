@@ -51,7 +51,7 @@ defmodule Rheo.Backend do
 
   ## Returns
 
-  A `Supervisor.child_spec/0` map.
+  A `t:Supervisor.child_spec/0` map.
 
   ## Example
 
