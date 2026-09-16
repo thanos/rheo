@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.3.0**.
+Current release: **v0.4.0**.
 
 ## Done in 0.1.0
 
@@ -31,9 +31,15 @@ Current release: **v0.3.0**.
 - Docker-free demo / Livebook path
 - ADRs 011, 012, 014 + Article 10
 
-## Next (0.4+)
+## Done in 0.4.0
 
-- Search/replay API and event lineage
+- Query sequence bounds, `query_page` / `stream_query`
+- Replay / reset_group (no event copies); create_group start cursors
+- `Rheo.Event.Lineage` conventions
+- ADR 015 + Article 11
+
+## Next (0.5+)
+
 - Partitions / frontier
 - Additional durable backends (Ecto family)
 - Broadway interop (evaluate)

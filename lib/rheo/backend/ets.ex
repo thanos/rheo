@@ -32,7 +32,8 @@ defmodule Rheo.Backend.ETS do
       change_feed: false,
       secondary_indexes: false,
       batch_writes: true,
-      ordered_range_scan: true
+      ordered_range_scan: true,
+      replay: true
     }
   end
 
@@ -131,6 +132,14 @@ defmodule Rheo.Backend.ETS do
     end)
   end
 
+  @impl true
+  def replay(handle, stream, group, opts \\ []),
+    do: call(handle, {:replay, stream, group, opts})
+
+  @impl true
+  def reset_group(handle, stream, group, opts \\ []),
+    do: call(handle, {:reset_group, stream, group, opts})
+
   defp call(handle, request) do
     GenServer.call(handle, request)
   catch
@@ -184,9 +193,17 @@ defmodule Rheo.Backend.ETS do
           {:error, :already_exists}
 
         true ->
-          :ets.insert(state.groups, {{stream, group}, group_rec(stream, group, opts)})
+          {:ok, next_sequence} = resolve_group_start(state, stream, opts)
 
-          Telemetry.execute([:rheo, :group, :create], %{count: 1}, %{stream: stream, group: group})
+          :ets.insert(
+            state.groups,
+            {{stream, group}, group_rec(stream, group, opts, next_sequence)}
+          )
+
+          Telemetry.execute([:rheo, :group, :create], %{count: 1}, %{
+            stream: stream,
+            group: group
+          })
 
           :ok
       end
@@ -249,6 +266,8 @@ defmodule Rheo.Backend.ETS do
   end
 
   def handle_call({:query, %Query{} = query}, _from, state) do
+    query = Query.apply_cursor(query)
+
     events =
       state.events
       |> :ets.tab2list()
@@ -365,6 +384,59 @@ defmodule Rheo.Backend.ETS do
     reply =
       with {:ok, delivery} <- fetch_active_delivery(state, lease) do
         do_reject(state, lease, delivery, reason)
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:replay, stream, group, opts}, _from, state) do
+    reply =
+      case :ets.lookup(state.groups, {stream, group}) do
+        [] ->
+          {:error, :group_not_found}
+
+        [{key, group_rec}] ->
+          cond do
+            events = Keyword.get(opts, :events) ->
+              reopen_ets_events(state, stream, group, events)
+              :ok
+
+            ids = Keyword.get(opts, :event_ids) ->
+              reopen_ets_deliveries(state, stream, group, ids)
+              :ok
+
+            Keyword.has_key?(opts, :from_sequence) ->
+              next = Keyword.fetch!(opts, :from_sequence) + 1
+              reopen_ets_from_sequence(state, stream, group, next)
+              :ets.insert(state.groups, {key, %{group_rec | next_sequence: next}})
+              :ok
+
+            true ->
+              {:error, :invalid_replay_opts}
+          end
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:reset_group, stream, group, opts}, _from, state) do
+    reply =
+      case :ets.lookup(state.groups, {stream, group}) do
+        [] ->
+          {:error, :group_not_found}
+
+        [{key, group_rec}] ->
+          start_seq = Keyword.get(opts, :start_after, 0) + 1
+
+          state.deliveries
+          |> :ets.tab2list()
+          |> Enum.each(fn
+            {{^stream, ^group, _} = key, _} -> :ets.delete(state.deliveries, key)
+            _ -> :ok
+          end)
+
+          :ets.insert(state.groups, {key, %{group_rec | next_sequence: start_seq}})
+          :ok
       end
 
     {:reply, reply, state}
@@ -552,7 +624,8 @@ defmodule Rheo.Backend.ETS do
   defp match_query?(%Event{} = event, %Query{} = query) do
     event.stream == query.stream and
       Enum.all?(query.where, &match_where?(event, &1)) and
-      in_time_range?(event, query.from, query.to)
+      in_time_range?(event, query.from, query.to) and
+      in_sequence_range?(event, query.after_sequence, query.until_sequence)
   end
 
   defp match_where?(event, {:type, type}), do: event.type == type
@@ -570,8 +643,16 @@ defmodule Rheo.Backend.ETS do
       Map.get(event.metadata, "correlation_id") == id or
         Map.get(event.metadata, :correlation_id) == id
 
+  defp match_where?(event, {:causation_id, id}),
+    do:
+      Map.get(event.metadata, "causation_id") == id or
+        Map.get(event.metadata, :causation_id) == id
+
   defp match_where?(event, {:producer, p}),
     do: Map.get(event.metadata, "producer") == p or Map.get(event.metadata, :producer) == p
+
+  defp match_where?(event, {:schema, s}),
+    do: Map.get(event.metadata, "schema") == s or Map.get(event.metadata, :schema) == s
 
   defp match_where?(event, {field, value}) when is_atom(field) do
     key = Atom.to_string(field)
@@ -579,6 +660,17 @@ defmodule Rheo.Backend.ETS do
   end
 
   defp match_where?(_, _), do: true
+
+  defp in_sequence_range?(_event, nil, nil), do: true
+
+  defp in_sequence_range?(event, after_seq, nil) when is_integer(after_seq),
+    do: event.sequence > after_seq
+
+  defp in_sequence_range?(event, nil, until_seq) when is_integer(until_seq),
+    do: event.sequence <= until_seq
+
+  defp in_sequence_range?(event, after_seq, until_seq),
+    do: in_sequence_range?(event, after_seq, nil) and in_sequence_range?(event, nil, until_seq)
 
   defp in_time_range?(_event, nil, nil), do: true
 
@@ -607,8 +699,6 @@ defmodule Rheo.Backend.ETS do
     end)
   end
 
-  defp sort_events(events, _), do: Enum.sort_by(events, & &1.sequence)
-
   defp stream_rec(stream, opts) do
     %{
       name: stream,
@@ -618,15 +708,129 @@ defmodule Rheo.Backend.ETS do
     }
   end
 
-  defp group_rec(stream, group, opts) do
+  defp group_rec(stream, group, opts, next_sequence) do
     %{
       stream: stream,
       name: group,
-      next_sequence: 1,
+      next_sequence: next_sequence,
       max_attempts:
         Keyword.get(opts, :max_attempts, Application.get_env(:rheo, :default_max_attempts, 5)),
       created_at: Clock.utc_now()
     }
+  end
+
+  defp resolve_group_start(state, stream, opts) do
+    cond do
+      Keyword.has_key?(opts, :start_after) ->
+        {:ok, Keyword.fetch!(opts, :start_after) + 1}
+
+      Keyword.has_key?(opts, :start_at) ->
+        dt = Keyword.fetch!(opts, :start_at)
+
+        events =
+          state.events
+          |> :ets.tab2list()
+          |> Enum.map(fn {_, e} -> e end)
+          |> Enum.filter(fn e ->
+            e.stream == stream and DateTime.compare(e.timestamp, dt) != :lt
+          end)
+          |> Enum.sort_by(& &1.sequence)
+
+        case events do
+          [%{sequence: seq} | _] -> {:ok, seq}
+          [] -> {:ok, 1}
+        end
+
+      true ->
+        {:ok, 1}
+    end
+  end
+
+  defp reopen_ets_from_sequence(state, stream, group, next_sequence) do
+    state.deliveries
+    |> :ets.tab2list()
+    |> Enum.each(fn
+      {{^stream, ^group, _}, delivery} ->
+        if delivery.sequence >= next_sequence do
+          put_delivery(
+            state,
+            Map.merge(delivery, %{
+              status: :available,
+              lease_id: nil,
+              consumer_id: nil,
+              expires_at: nil,
+              reason: :replay,
+              retried_at: Clock.utc_now()
+            })
+          )
+        end
+
+      _ ->
+        :ok
+    end)
+  end
+
+  defp reopen_ets_deliveries(state, stream, group, event_ids) do
+    id_set = MapSet.new(event_ids)
+
+    state.deliveries
+    |> :ets.tab2list()
+    |> Enum.each(fn
+      {{^stream, ^group, event_id}, delivery} ->
+        if MapSet.member?(id_set, event_id) do
+          put_delivery(
+            state,
+            Map.merge(delivery, %{
+              status: :available,
+              lease_id: nil,
+              consumer_id: nil,
+              expires_at: nil,
+              reason: :replay,
+              retried_at: Clock.utc_now()
+            })
+          )
+        end
+
+      _ ->
+        :ok
+    end)
+  end
+
+  defp reopen_ets_events(state, stream, group, events) do
+    Enum.each(events, fn event ->
+      key = {stream, group, event.id}
+
+      delivery =
+        case :ets.lookup(state.deliveries, key) do
+          [{^key, existing}] ->
+            existing
+
+          [] ->
+            %{
+              stream: stream,
+              group: group,
+              event_id: event.id,
+              partition: event.partition,
+              sequence: event.sequence,
+              attempt: 0,
+              created_at: Clock.utc_now()
+            }
+        end
+
+      put_delivery(
+        state,
+        Map.merge(delivery, %{
+          status: :available,
+          lease_id: nil,
+          consumer_id: nil,
+          expires_at: nil,
+          reason: :replay,
+          retried_at: Clock.utc_now(),
+          partition: event.partition,
+          sequence: event.sequence
+        })
+      )
+    end)
   end
 
   defp build_event(stream, partition, sequence, payload, now, opts) do

@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-15
+
+### Added
+
+- Query sequence bounds (`after_sequence` / `until_sequence`) and page cursors
+- `Rheo.query_page/2`, `%Rheo.Page{}`, `Rheo.stream_query/2`
+- `Rheo.replay/3`, `Rheo.reset_group/3` (`confirm: true`); `create_group` `:start_after` / `:start_at`
+- `Rheo.Event.Lineage` metadata helpers
+- Backend `replay/4` + `reset_group/4`; capability `replay: true`
+- ADR 015; tutorial article 11
+
 ## [0.3.0] - 2026-09-15
 
 ### Added

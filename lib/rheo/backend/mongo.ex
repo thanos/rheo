@@ -100,7 +100,8 @@ defmodule Rheo.Backend.Mongo do
       change_feed: false,
       secondary_indexes: true,
       batch_writes: true,
-      ordered_range_scan: true
+      ordered_range_scan: true,
+      replay: true
     }
   end
 
@@ -135,6 +136,7 @@ defmodule Rheo.Backend.Mongo do
        [name: "events_stream_currency_curve"]},
       {@events, %{"stream" => 1, "metadata.correlation_id" => 1},
        [name: "events_stream_correlation"]},
+      {@events, %{"stream" => 1, "metadata.schema" => 1}, [name: "events_stream_schema"]},
       {@groups, %{"stream" => 1, "name" => 1}, [unique: true, name: "groups_stream_name"]},
       {@deliveries, %{"stream" => 1, "group" => 1, "event_id" => 1},
        [unique: true, name: "deliveries_stream_group_event"]},
@@ -173,21 +175,44 @@ defmodule Rheo.Backend.Mongo do
     max_attempts =
       Keyword.get(opts, :max_attempts, Application.get_env(:rheo, :default_max_attempts, 5))
 
-    doc = %{
-      "stream" => stream,
-      "name" => group,
-      "next_sequence" => 1,
-      "max_attempts" => max_attempts,
-      "created_at" => Clock.utc_now()
-    }
+    with {:ok, next_sequence} <- resolve_group_start(topo, stream, opts) do
+      doc = %{
+        "stream" => stream,
+        "name" => group,
+        "next_sequence" => next_sequence,
+        "max_attempts" => max_attempts,
+        "created_at" => Clock.utc_now()
+      }
 
-    case client().insert_one(topo, @groups, doc) do
-      {:ok, _} ->
-        Telemetry.execute([:rheo, :group, :create], %{count: 1}, %{stream: stream, group: group})
-        :ok
+      case client().insert_one(topo, @groups, doc) do
+        {:ok, _} ->
+          Telemetry.execute([:rheo, :group, :create], %{count: 1}, %{stream: stream, group: group})
 
-      {:error, reason} ->
-        already_or_error(reason)
+          :ok
+
+        {:error, reason} ->
+          already_or_error(reason)
+      end
+    end
+  end
+
+  defp resolve_group_start(topo, stream, opts) do
+    cond do
+      Keyword.has_key?(opts, :start_after) ->
+        after_seq = Keyword.fetch!(opts, :start_after)
+        {:ok, after_seq + 1}
+
+      Keyword.has_key?(opts, :start_at) ->
+        dt = Keyword.fetch!(opts, :start_at)
+
+        case query(topo, %Query{stream: stream, from: dt, order_by: [sequence: :asc], limit: 1}) do
+          {:ok, [%{sequence: seq} | _]} -> {:ok, seq}
+          {:ok, []} -> {:ok, 1}
+          {:error, reason} -> {:error, reason}
+        end
+
+      true ->
+        {:ok, 1}
     end
   end
 
@@ -254,6 +279,7 @@ defmodule Rheo.Backend.Mongo do
   @impl true
   def query(topo, %Query{} = query) do
     Telemetry.span([:rheo, :query], %{stream: query.stream}, fn ->
+      query = Query.apply_cursor(query)
       filter = build_query_filter(query)
       sort = order_to_sort(query.order_by)
 
@@ -420,6 +446,147 @@ defmodule Rheo.Backend.Mongo do
 
         error ->
           error
+      end
+    end)
+  end
+
+  @impl true
+  def replay(topo, stream, group, opts \\ []) do
+    with {:ok, _} <- fetch_group(topo, stream, group) do
+      cond do
+        events = Keyword.get(opts, :events) ->
+          reopen_deliveries_with_events(topo, stream, group, events)
+
+        ids = Keyword.get(opts, :event_ids) ->
+          reopen_deliveries(topo, stream, group, ids)
+
+        Keyword.has_key?(opts, :from_sequence) ->
+          from_seq = Keyword.fetch!(opts, :from_sequence)
+          reopen_from_sequence(topo, stream, group, from_seq + 1)
+
+        true ->
+          {:error, :invalid_replay_opts}
+      end
+    end
+  end
+
+  @impl true
+  def reset_group(topo, stream, group, opts \\ []) do
+    with {:ok, _} <- fetch_group(topo, stream, group) do
+      start_seq = Keyword.get(opts, :start_after, 0) + 1
+
+      case client().delete_many(topo, @deliveries, %{"stream" => stream, "group" => group}) do
+        {:ok, _} ->
+          _ =
+            client().find_one_and_update(
+              topo,
+              @groups,
+              %{"stream" => stream, "name" => group},
+              %{"$set" => %{"next_sequence" => start_seq}},
+              return_document: :after
+            )
+
+          :ok
+
+        {:error, reason} ->
+          {:error, map_backend_error(reason)}
+      end
+    end
+  end
+
+  defp reopen_from_sequence(topo, stream, group, next_sequence) do
+    filter = %{
+      "stream" => stream,
+      "group" => group,
+      "sequence" => %{"$gte" => next_sequence}
+    }
+
+    update = %{
+      "$set" => %{
+        "status" => "available",
+        "lease_id" => nil,
+        "consumer_id" => nil,
+        "expires_at" => nil,
+        "reason" => "replay",
+        "retried_at" => Clock.utc_now()
+      }
+    }
+
+    case client().update_many(topo, @deliveries, filter, update, []) do
+      {:ok, _} ->
+        _ =
+          client().find_one_and_update(
+            topo,
+            @groups,
+            %{"stream" => stream, "name" => group},
+            %{"$set" => %{"next_sequence" => next_sequence}},
+            return_document: :after
+          )
+
+        :ok
+
+      {:error, reason} ->
+        {:error, map_backend_error(reason)}
+    end
+  end
+
+  defp reopen_deliveries(_topo, _stream, _group, []), do: :ok
+
+  defp reopen_deliveries(topo, stream, group, event_ids) when is_list(event_ids) do
+    filter = %{
+      "stream" => stream,
+      "group" => group,
+      "event_id" => %{"$in" => event_ids}
+    }
+
+    update = %{
+      "$set" => %{
+        "status" => "available",
+        "lease_id" => nil,
+        "consumer_id" => nil,
+        "expires_at" => nil,
+        "reason" => "replay",
+        "retried_at" => Clock.utc_now()
+      }
+    }
+
+    case client().update_many(topo, @deliveries, filter, update, []) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, map_backend_error(reason)}
+    end
+  end
+
+  # When full event structs are provided, upsert missing delivery rows as available.
+  defp reopen_deliveries_with_events(topo, stream, group, events) when is_list(events) do
+    Enum.reduce_while(events, :ok, fn event, :ok ->
+      filter = %{"stream" => stream, "group" => group, "event_id" => event.id}
+
+      update = %{
+        "$set" => %{
+          "status" => "available",
+          "lease_id" => nil,
+          "consumer_id" => nil,
+          "expires_at" => nil,
+          "reason" => "replay",
+          "retried_at" => Clock.utc_now(),
+          "partition" => event.partition,
+          "sequence" => event.sequence
+        },
+        "$setOnInsert" => %{
+          "stream" => stream,
+          "group" => group,
+          "event_id" => event.id,
+          "attempt" => 0,
+          "created_at" => Clock.utc_now()
+        }
+      }
+
+      case client().find_one_and_update(topo, @deliveries, filter, update,
+             upsert: true,
+             return_document: :after
+           ) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, map_backend_error(reason)}}
       end
     end)
   end
@@ -663,6 +830,16 @@ defmodule Rheo.Backend.Mongo do
     |> then(fn acc ->
       if query.to, do: put_in_range(acc, "timestamp", "$lte", query.to), else: acc
     end)
+    |> then(fn acc ->
+      if query.after_sequence,
+        do: put_in_range(acc, "sequence", "$gt", query.after_sequence),
+        else: acc
+    end)
+    |> then(fn acc ->
+      if query.until_sequence,
+        do: put_in_range(acc, "sequence", "$lte", query.until_sequence),
+        else: acc
+    end)
   end
 
   defp apply_where_opt({:type, type}, acc), do: Map.put(acc, "type", type)
@@ -674,7 +851,15 @@ defmodule Rheo.Backend.Mongo do
   defp apply_where_opt({:correlation_id, id}, acc),
     do: Map.put(acc, "metadata.correlation_id", id)
 
+  defp apply_where_opt({:causation_id, id}, acc),
+    do: Map.put(acc, "metadata.causation_id", id)
+
   defp apply_where_opt({:producer, p}, acc), do: Map.put(acc, "metadata.producer", p)
+
+  defp apply_where_opt({:schema, s}, acc), do: Map.put(acc, "metadata.schema", s)
+
+  defp apply_where_opt({:schema_version, v}, acc),
+    do: Map.put(acc, "metadata.schema_version", v)
 
   defp apply_where_opt({field, value}, acc) when is_atom(field),
     do: Map.put(acc, "payload.#{field}", value)

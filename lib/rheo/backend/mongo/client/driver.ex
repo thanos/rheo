@@ -22,5 +22,12 @@ defmodule Rheo.Backend.Mongo.Client.Driver do
     do: Mongo.find_one_and_update(handle, coll, filter, update, opts)
 
   @impl true
+  def update_many(handle, coll, filter, update, opts),
+    do: Mongo.update_many(handle, coll, filter, update, opts)
+
+  @impl true
+  def delete_many(handle, coll, filter), do: Mongo.delete_many(handle, coll, filter)
+
+  @impl true
   def create_indexes(handle, coll, indexes), do: Mongo.create_indexes(handle, coll, indexes)
 end

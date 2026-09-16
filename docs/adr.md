@@ -16,3 +16,4 @@ Architectural decision records for Rheo:
 12. [Backend conformance suite](adr/012-backend-conformance-suite.md)
 13. [Portable query model](adr/013-portable-query-model.md)
 14. [ETS backend](adr/014-ets-backend.md)
+15. [Replay semantics](adr/015-replay-semantics.md)

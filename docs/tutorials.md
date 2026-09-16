@@ -1,6 +1,6 @@
 # Tutorials
 
-Medium-oriented tutorial notes for Rheo **v0.3.0**:
+Medium-oriented tutorial notes for Rheo **v0.4.0**:
 
 1. [Why put consumer groups in front of a database?](tutorials/01-why-consumer-groups-on-a-database.md)
 2. [What is a consumer group?](tutorials/02-what-is-a-consumer-group.md)
@@ -12,6 +12,7 @@ Medium-oriented tutorial notes for Rheo **v0.3.0**:
 8. [Searching the stream](tutorials/08-searching-the-stream.md)
 9. [Why Rheo 0.2 broke its 0.1 API](tutorials/09-why-rheo-0-2-broke-its-0-1-api.md)
 10. [If Rheo really is database-agnostic, prove it with ETS](tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md)
+11. [Search and replay the event history](tutorials/11-search-and-replay-the-event-history.md)
 
 Hands-on walkthrough: [Livebook demo](../notebooks/rheo_demo.livemd) (ETS by default).
 

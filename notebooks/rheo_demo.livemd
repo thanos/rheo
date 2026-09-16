@@ -1,4 +1,4 @@
-# Rheo Livebook Demo (v0.3.0)
+# Rheo Livebook Demo (v0.4.0)
 
 ```elixir
 Mix.install(
@@ -23,9 +23,11 @@ Mix.install(
 2. Evaluate cells top to bottom
 3. **No Docker required** — this demo uses `Rheo.Backend.ETS` by default
 
-Rheo **v0.3.0** is an embedded Elixir/OTP library: consumer groups over a
+Rheo **v0.4.0** is an embedded Elixir/OTP library: consumer groups over a
 searchable event log (Mongo durable, ETS ephemeral). Delivery is
-**at-least-once** — use event IDs for idempotency.
+**at-least-once** — use event IDs for idempotency. Search with `Rheo.query` /
+`query_page` / `stream_query`; replay with `Rheo.replay` / `reset_group`
+without copying events.
 
 ---
 

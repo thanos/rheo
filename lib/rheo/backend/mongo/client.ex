@@ -25,6 +25,11 @@ defmodule Rheo.Backend.Mongo.Client do
   @callback find_one_and_update(handle(), collection(), filter(), map(), keyword()) ::
               {:ok, term()} | {:error, term()}
 
+  @callback update_many(handle(), collection(), filter(), map(), keyword()) ::
+              {:ok, term()} | {:error, term()}
+
+  @callback delete_many(handle(), collection(), filter()) :: {:ok, term()} | {:error, term()}
+
   @callback create_indexes(handle(), collection(), [keyword()]) ::
               {:ok, term()} | :ok | {:error, term()}
 

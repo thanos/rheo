@@ -37,7 +37,7 @@ defmodule Rheo do
 
   use Supervisor
 
-  alias Rheo.{Event, Instance, Lease, Query}
+  alias Rheo.{Event, Instance, Lease, Query, Telemetry}
 
   @typedoc "Name of an event stream."
   @type stream :: String.t()
@@ -149,6 +149,8 @@ defmodule Rheo do
       * `:rheo` — instance name (default `Rheo`)
       * `:max_attempts` — attempts before dead-letter on retry (default from
         application env, typically `5`)
+      * `:start_after` — exclusive sequence; group begins materializing after this
+      * `:start_at` — `DateTime`; begin at the first event at/after this time
 
   ## Examples
 
@@ -340,6 +342,186 @@ defmodule Rheo do
   def query(stream, opts) when is_binary(stream) and is_list(opts) do
     {rheo_opts, query_opts} = Keyword.split(opts, [:rheo])
     query(Query.new(stream, query_opts), rheo_opts)
+  end
+
+  @doc """
+  Queries one page of historical events.
+
+  Returns `{:ok, %Rheo.Page{}}`. When more results may exist, `page.next_cursor`
+  is set; pass it as `cursor:` on the next call (or embed on `%Rheo.Query{}`).
+  Cursor pagination is defined for ascending sequence order.
+  """
+  @spec query_page(Query.t() | stream(), keyword()) :: {:ok, Rheo.Page.t()} | {:error, term()}
+  def query_page(query_or_stream, opts \\ [])
+
+  def query_page(%Query{} = query, opts) when is_list(opts) do
+    {backend, handle, _} = resolve(opts)
+    query = Query.apply_cursor(query)
+
+    case backend.query(handle, query) do
+      {:ok, events} ->
+        next =
+          if length(events) >= query.limit and events != [] do
+            %{after_sequence: List.last(events).sequence}
+          end
+
+        {:ok, %Rheo.Page{events: events, next_cursor: next}}
+
+      error ->
+        error
+    end
+  end
+
+  def query_page(stream, opts) when is_binary(stream) and is_list(opts) do
+    {rheo_opts, query_opts} = Keyword.split(opts, [:rheo])
+    query_page(Query.new(stream, query_opts), rheo_opts)
+  end
+
+  @doc """
+  Lazily streams query results page by page.
+
+  Each element is a `%Rheo.Event{}`. Uses `query_page/2` internally.
+  """
+  @spec stream_query(Query.t() | stream(), keyword()) :: Enumerable.t()
+  def stream_query(query_or_stream, opts \\ []) do
+    query =
+      case query_or_stream do
+        %Query{} = q -> q
+        stream when is_binary(stream) -> Query.new(stream, Keyword.drop(opts, [:rheo]))
+      end
+
+    rheo_opts = Keyword.take(opts, [:rheo])
+
+    Stream.resource(
+      fn -> query end,
+      fn
+        :done ->
+          {:halt, :done}
+
+        %Query{} = q ->
+          case query_page(q, rheo_opts) do
+            {:ok, %Rheo.Page{events: [], next_cursor: _}} ->
+              {:halt, :done}
+
+            {:ok, %Rheo.Page{events: events, next_cursor: nil}} ->
+              {events, :done}
+
+            {:ok, %Rheo.Page{events: events, next_cursor: cursor}} ->
+              {events, %{q | cursor: cursor, after_sequence: nil}}
+
+            {:error, reason} ->
+              raise "Rheo.stream_query failed: #{inspect(reason)}"
+          end
+      end,
+      fn _ -> :ok end
+    )
+  end
+
+  @doc """
+  Replays history for a consumer group without copying events.
+
+  Options (one of):
+
+    * `:from_sequence` — exclusive lower bound; deliveries from the next sequence
+      become available again
+    * `:from` — `DateTime`; resolved to a sequence then same as `:from_sequence`
+    * `:query` — `%Rheo.Query{}` or keyword filters on the stream; matching
+      events are re-opened for this group
+
+  See ADR 015. Prefer a new group with `:start_after` / `:start_at` when isolating
+  replay from production consumers.
+  """
+  @spec replay(stream(), group(), keyword()) :: :ok | {:error, term()}
+  def replay(stream, group, opts \\ []) when is_binary(stream) and is_binary(group) do
+    {backend, handle, opts} = resolve(opts)
+
+    result =
+      cond do
+        Keyword.has_key?(opts, :from_sequence) ->
+          backend.replay(handle, stream, group,
+            from_sequence: Keyword.fetch!(opts, :from_sequence)
+          )
+
+        Keyword.has_key?(opts, :from) ->
+          with {:ok, seq} <-
+                 sequence_at_or_after(backend, handle, stream, Keyword.fetch!(opts, :from)) do
+            # exclusive: replay from just before that event
+            backend.replay(handle, stream, group, from_sequence: seq - 1)
+          end
+
+        Keyword.has_key?(opts, :query) ->
+          replay_query(backend, handle, stream, group, Keyword.fetch!(opts, :query), opts)
+
+        true ->
+          {:error, :invalid_replay_opts}
+      end
+
+    case result do
+      :ok ->
+        Telemetry.execute([:rheo, :group, :replay], %{count: 1}, %{stream: stream, group: group})
+        :ok
+
+      other ->
+        other
+    end
+  end
+
+  @doc """
+  Destructively clears deliveries for one group and resets its cursor.
+
+  Requires `confirm: true`. Never deletes immutable events. Other groups are
+  unaffected. Optional `:start_after` sets the post-reset materialization cursor
+  (exclusive), default `0` (replay from the beginning).
+  """
+  @spec reset_group(stream(), group(), keyword()) :: :ok | {:error, term()}
+  def reset_group(stream, group, opts \\ []) when is_binary(stream) and is_binary(group) do
+    if Keyword.get(opts, :confirm) != true do
+      {:error, :confirm_required}
+    else
+      {backend, handle, opts} = resolve(opts)
+
+      case backend.reset_group(handle, stream, group, opts) do
+        :ok ->
+          Telemetry.execute([:rheo, :group, :reset], %{count: 1}, %{stream: stream, group: group})
+          :ok
+
+        error ->
+          error
+      end
+    end
+  end
+
+  defp sequence_at_or_after(backend, handle, stream, %DateTime{} = dt) do
+    case backend.query(handle, %Query{
+           stream: stream,
+           from: dt,
+           order_by: [sequence: :asc],
+           limit: 1
+         }) do
+      {:ok, [%{sequence: seq} | _]} -> {:ok, seq}
+      {:ok, []} -> {:error, :no_events_in_range}
+      error -> error
+    end
+  end
+
+  defp replay_query(backend, handle, stream, group, %Query{} = query, _opts) do
+    query = %{query | stream: stream, limit: max(query.limit, 10_000)}
+
+    case backend.query(handle, query) do
+      {:ok, events} ->
+        backend.replay(handle, stream, group,
+          event_ids: Enum.map(events, & &1.id),
+          events: events
+        )
+
+      error ->
+        error
+    end
+  end
+
+  defp replay_query(backend, handle, stream, group, query_opts, opts)
+       when is_list(query_opts) do
+    replay_query(backend, handle, stream, group, Query.new(stream, query_opts), opts)
   end
 
   @doc """

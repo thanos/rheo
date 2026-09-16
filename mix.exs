@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.3.0"
+  @version "0.4.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -47,6 +47,7 @@ defmodule Rheo.MixProject do
           "docs/adr/012-backend-conformance-suite.md",
           "docs/adr/013-portable-query-model.md",
           "docs/adr/014-ets-backend.md",
+          "docs/adr/015-replay-semantics.md",
           "docs/migrations/0.1-to-0.2.md",
           "CHANGELOG.md",
           "docs/tutorials.md",
@@ -60,6 +61,7 @@ defmodule Rheo.MixProject do
           "docs/tutorials/08-searching-the-stream.md",
           "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
           "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
+          "docs/tutorials/11-search-and-replay-the-event-history.md",
           "notebooks/rheo_demo.livemd"
         ],
         groups_for_extras: [
@@ -86,7 +88,8 @@ defmodule Rheo.MixProject do
             "docs/adr/011-backend-capabilities.md",
             "docs/adr/012-backend-conformance-suite.md",
             "docs/adr/013-portable-query-model.md",
-            "docs/adr/014-ets-backend.md"
+            "docs/adr/014-ets-backend.md",
+            "docs/adr/015-replay-semantics.md"
           ],
           Tutorials: [
             "docs/tutorials.md",
@@ -99,7 +102,8 @@ defmodule Rheo.MixProject do
             "docs/tutorials/07-killing-consumers.md",
             "docs/tutorials/08-searching-the-stream.md",
             "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
-            "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md"
+            "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
+            "docs/tutorials/11-search-and-replay-the-event-history.md"
           ]
         ]
       ],
