@@ -18,3 +18,4 @@ Architectural decision records for Rheo:
 14. [ETS backend](adr/014-ets-backend.md)
 15. [Replay semantics](adr/015-replay-semantics.md)
 16. [Partitions and ACK frontier](adr/016-partitions-and-ack-frontier.md)
+17. [Ecto SQL backend](adr/017-ecto-backend.md)

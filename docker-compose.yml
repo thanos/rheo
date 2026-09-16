@@ -11,5 +11,22 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rheo_test
+    volumes:
+      - rheo_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   rheo_mongo_data:
+  rheo_postgres_data:

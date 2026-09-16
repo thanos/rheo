@@ -11,6 +11,8 @@ defmodule Rheo.DoctestTest do
   doctest Rheo.Clock.Frozen
   doctest Rheo.Backend.Mongo
   doctest Rheo.Backend.Mongo.Codec
+  doctest Rheo.Backend.Ecto
+  doctest Rheo.Backend.Ecto.Codec
   doctest Rheo.Telemetry
   doctest Rheo.Instance
 end

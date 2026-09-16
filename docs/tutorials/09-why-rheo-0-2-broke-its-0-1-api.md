@@ -40,4 +40,4 @@ every app Mongo’s sort dialect.
 
 0.2 breaks supervision opts, Consumer startup, query sort, and Event decoding
 so 0.3+ can add backends without carrying 0.1’s accidents. See
-[docs/migrations/0.1-to-0.2.md](../migrations/0.1-to-0.2.md).
+[0.1 → 0.2 migration](https://hexdocs.pm/rheo/0-1-to-0-2.html).

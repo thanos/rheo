@@ -68,3 +68,27 @@ flowchart LR
 
 Ordering is within a partition only. A hole (ACK 1001, inflight 1002, ACK 1003)
 keeps the frontier at 1001 until 1002 is terminal.
+
+## Ecto SQL backends (v0.6)
+
+```mermaid
+flowchart TB
+  app[Host app]
+  repo[MyApp.Repo]
+  rheo[Rheo instance]
+  ecto[Rheo.Backend.Ecto]
+  dialect{Dialect}
+  pg[PostgreSQL]
+  sqlite[SQLite]
+
+  app --> repo
+  app --> rheo
+  rheo --> ecto
+  ecto --> repo
+  repo --> dialect
+  dialect -->|SKIP_LOCKED optional NOTIFY| pg
+  dialect -->|BEGIN IMMEDIATE| sqlite
+```
+
+The host owns the Repo. Mongo stays on `Rheo.Backend.Mongo`; Ecto here means
+SQL only (see ADR 017).

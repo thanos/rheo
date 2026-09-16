@@ -19,6 +19,13 @@ guarantees or silently skip correctness.
 2. Capabilities document guarantees and gate optional conformance cases.
    They must **not** make lease fencing or at-least-once semantics optional.
 3. Mongo reports durable + secondary indexes; ETS reports ephemeral (not durable).
+4. A backend whose flags depend on runtime configuration may add an arity-1
+   `capabilities/1` alongside the required `capabilities/0`. `capabilities/0`
+   stays the module's static self-description. Introduced in v0.6.0 for
+   `Rheo.Backend.Ecto`, where `:distributed` follows the dialect (PostgreSQL
+   true, SQLite false) and `:notifications` follows the `notify: true` option
+   (ADR 017). The conformance suite accepts an explicit capability map so each
+   dialect is tested against the flags it actually claims.
 
 ## Alternatives
 
@@ -28,5 +35,5 @@ guarantees or silently skip correctness.
 ## Consequences
 
 - Conformance and docs can describe backends honestly
-- Future backends (Ecto, Mnesia) extend the same map
+- Future backends (Mnesia, …) extend the same map, as Ecto did in v0.6.0
 - Unsupported product features are skipped by capability, not omitted quietly

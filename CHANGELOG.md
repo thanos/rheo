@@ -5,6 +5,45 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-16
+
+Ecto SQL backend for PostgreSQL and SQLite.
+See [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html).
+
+### Added
+
+- `Rheo.Backend.Ecto` — full `Rheo.Backend` on a **host-owned** `Ecto.Repo`:
+  `{Rheo, backend: {Rheo.Backend.Ecto, repo: MyApp.Repo}}`
+- PostgreSQL (`Ecto.Adapters.Postgres`) with `FOR UPDATE SKIP LOCKED` claims and
+  `jsonb` payload/metadata columns; SQLite (`Ecto.Adapters.SQLite3`) for durable
+  zero-service local runs
+- `Rheo.Backend.Ecto.Server` — configuration holder whose registered name is the
+  opaque backend handle (same pattern as Mongo and ETS, ADR 010)
+- `Rheo.Backend.Ecto.Migrations` — idempotent dialect-aware DDL for
+  `rheo_streams`, `rheo_stream_sequences`, `rheo_events`, `rheo_groups`, and
+  `rheo_deliveries`, plus `Rheo.Backend.Ecto.Migrations.V1` for `mix ecto.migrate`
+- `mix rheo.ecto.gen_migration` — generates a host migration that delegates to
+  the library, so schema changes ship as Rheo code
+- `Rheo.Backend.Ecto.Codec` — JSON and timestamp encoding per dialect
+- `Rheo.Backend.Ecto.capabilities/1` — dialect- and option-aware flags
+  (`distributed` follows the dialect, `notifications` follows `notify: true`)
+- Optional `notify: true` → `NOTIFY rheo_events` on append (PostgreSQL only)
+- Optional `prefix:` to hold the Rheo tables in a PostgreSQL schema
+- Backend conformance runs on SQLite by default and on PostgreSQL when
+  `RHEO_POSTGRES_URL` (or `DATABASE_URL`) is set
+- ADR [017](https://hexdocs.pm/rheo/017-ecto-backend.html); tutorial
+  [article 13](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
+- Livebook optional SQLite/Ecto section; [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
+
+### Changed
+
+- `ecto` and `ecto_sql` are now dependencies; `postgrex` and `ecto_sqlite3` are
+  optional so the host picks its own driver. Splitting Rheo into per-backend
+  packages is deferred — see ADR 017 "Alternatives".
+- ADR 011 allows an optional `capabilities/1` for backends whose flags depend on
+  runtime configuration; `capabilities/0` remains the static self-description
+- `docker-compose.yml` and CI add a PostgreSQL service
+
 ## [0.5.0] - 2026-09-16
 
 Partitions, per-partition sequences, contiguous ACK frontier, and lag.
@@ -118,6 +157,7 @@ v0.3.0. See [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html).
 
 Initial Mongo-backed MVP: streams, groups, leases, Consumer, docs, Livebook.
 
+[0.6.0]: https://github.com/thanos/rheo/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thanos/rheo/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/thanos/rheo/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/thanos/rheo/compare/v0.3.0...v0.4.0

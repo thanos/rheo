@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.5.0** (2026-09-16).
+Current release: **v0.6.0** (2026-09-16).
 
 ## Done in 0.1.0
 
@@ -52,12 +52,20 @@ Current release: **v0.5.0** (2026-09-16).
 - ADR 016 + Article 12 + [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html)
 - Docs/Livebook/CHANGELOG links use absolute HexDocs or GitHub URLs for hex.pm
 
-## Next (0.6+)
+## Done in 0.6.0
 
-- Additional durable backends (Ecto family)
-- Broadway interop (evaluate)
-- Change-stream wakeups
+- `Rheo.Backend.Ecto` on host-owned Repo (PostgreSQL + SQLite)
+- SQL migrations + `mix rheo.ecto.gen_migration`
+- Postgres `FOR UPDATE SKIP LOCKED`; optional `NOTIFY`
+- SQLite durable single-node path; `distributed: false`
+- ADR 017 + Article 13 + [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
+
+## Next (0.7+)
+
+- Broadway / GenStage interop (evaluate)
+- Change-stream / richer wakeup integration
 - Mnesia (later)
+- Optional Hex package split if dependency hygiene demands it
 
 ## Explicitly deferred
 
@@ -74,3 +82,4 @@ Current release: **v0.5.0** (2026-09-16).
 - Multi-tenancy
 - Retention tiers
 - Standalone Rheo server
+- `mongodb_ecto` as a Rheo backend path
