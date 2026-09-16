@@ -141,7 +141,8 @@ defmodule Rheo.Backend.ETS do
     do: call(handle, {:reset_group, stream, group, opts})
 
   defp call(handle, request) do
-    GenServer.call(handle, request)
+    timeout = Application.get_env(:rheo, :ets_call_timeout, 5_000)
+    GenServer.call(handle, request, timeout)
   catch
     :exit, {:noproc, _} -> {:error, :backend_unavailable}
     :exit, {:timeout, _} -> {:error, :backend_unavailable}

@@ -273,6 +273,155 @@ defmodule Rheo.Backend.Mongo.ClientTest do
     assert {:error, :stream_not_found} = MongoBackend.append_batch(:h, "s", [%{type: "x"}])
   end
 
+  describe "resolve_group_start via create_group" do
+    test "default starts at sequence 1" do
+      expect(ClientMock, :find_one, fn :h, "streams", _ -> %{"name" => "s"} end)
+
+      expect(ClientMock, :insert_one, fn :h, "groups", doc ->
+        assert doc["next_sequence"] == 1
+        {:ok, %{}}
+      end)
+
+      assert :ok = MongoBackend.create_group(:h, "s", "g")
+    end
+
+    test "start_after sets next_sequence to after + 1" do
+      expect(ClientMock, :find_one, fn :h, "streams", _ -> %{"name" => "s"} end)
+
+      expect(ClientMock, :insert_one, fn :h, "groups", doc ->
+        assert doc["next_sequence"] == 11
+        {:ok, %{}}
+      end)
+
+      assert :ok = MongoBackend.create_group(:h, "s", "g", start_after: 10)
+    end
+
+    test "start_at uses first matching event sequence" do
+      expect(ClientMock, :find_one, fn :h, "streams", _ -> %{"name" => "s"} end)
+
+      expect(ClientMock, :find, fn :h, "events", filter, opts ->
+        assert filter["timestamp"]["$gte"]
+        assert opts[:limit] == 1
+        assert opts[:sort] == %{"sequence" => 1}
+
+        [
+          %{
+            "_id" => "e5",
+            "stream" => "s",
+            "partition" => 0,
+            "sequence" => 5,
+            "timestamp" => ~U[2026-06-01 00:00:00Z],
+            "type" => "t",
+            "payload" => %{}
+          }
+        ]
+      end)
+
+      expect(ClientMock, :insert_one, fn :h, "groups", doc ->
+        assert doc["next_sequence"] == 5
+        {:ok, %{}}
+      end)
+
+      assert :ok =
+               MongoBackend.create_group(:h, "s", "g", start_at: ~U[2026-06-01 00:00:00Z])
+    end
+
+    test "start_at with no events starts at 1" do
+      expect(ClientMock, :find_one, fn :h, "streams", _ -> %{"name" => "s"} end)
+      expect(ClientMock, :find, fn :h, "events", _f, _o -> [] end)
+
+      expect(ClientMock, :insert_one, fn :h, "groups", doc ->
+        assert doc["next_sequence"] == 1
+        {:ok, %{}}
+      end)
+
+      assert :ok =
+               MongoBackend.create_group(:h, "s", "g", start_at: ~U[2099-01-01 00:00:00Z])
+    end
+  end
+
+  describe "replay" do
+    setup do
+      expect(ClientMock, :find_one, fn :h, "groups", %{"stream" => "s", "name" => "g"} ->
+        %{"stream" => "s", "name" => "g", "next_sequence" => 1}
+      end)
+
+      :ok
+    end
+
+    test "unknown opts return invalid_replay_opts" do
+      assert {:error, :invalid_replay_opts} = MongoBackend.replay(:h, "s", "g", foo: 1)
+    end
+
+    test "empty opts return invalid_replay_opts" do
+      assert {:error, :invalid_replay_opts} = MongoBackend.replay(:h, "s", "g", [])
+    end
+
+    test "event_ids empty list short-circuits reopen_deliveries" do
+      assert :ok = MongoBackend.replay(:h, "s", "g", event_ids: [])
+    end
+
+    test "event_ids updates matching deliveries" do
+      expect(ClientMock, :update_many, fn :h, "deliveries", filter, update, [] ->
+        assert filter == %{
+                 "stream" => "s",
+                 "group" => "g",
+                 "event_id" => %{"$in" => ["e1", "e2"]}
+               }
+
+        assert update["$set"]["status"] == "available"
+        assert update["$set"]["reason"] == "replay"
+        {:ok, %{}}
+      end)
+
+      assert :ok = MongoBackend.replay(:h, "s", "g", event_ids: ["e1", "e2"])
+    end
+
+    test "event_ids maps update errors" do
+      expect(ClientMock, :update_many, fn :h, "deliveries", _f, _u, [] ->
+        {:error, %DBConnection.ConnectionError{message: "gone"}}
+      end)
+
+      assert {:error, :backend_unavailable} =
+               MongoBackend.replay(:h, "s", "g", event_ids: ["e1"])
+    end
+
+    test "events upserts deliveries via reopen_deliveries_with_events" do
+      events = [sample_event("e1", 1), sample_event("e2", 2)]
+
+      expect(ClientMock, :find_one_and_update, 2, fn :h, "deliveries", filter, update, opts ->
+        assert opts[:upsert] == true
+        assert filter["group"] == "g"
+        assert filter["event_id"] in ["e1", "e2"]
+        assert update["$set"]["status"] == "available"
+        assert update["$set"]["reason"] == "replay"
+        assert update["$setOnInsert"]["event_id"] == filter["event_id"]
+        {:ok, %Mongo.FindAndModifyResult{value: %{}}}
+      end)
+
+      assert :ok = MongoBackend.replay(:h, "s", "g", events: events)
+    end
+
+    test "events empty list is ok" do
+      assert :ok = MongoBackend.replay(:h, "s", "g", events: [])
+    end
+
+    test "events halts on first upsert error" do
+      events = [sample_event("e1", 1), sample_event("e2", 2)]
+
+      expect(ClientMock, :find_one_and_update, fn :h, "deliveries", _f, _u, _o ->
+        {:error, :write_failed}
+      end)
+
+      assert {:error, :write_failed} = MongoBackend.replay(:h, "s", "g", events: events)
+    end
+  end
+
+  test "replay when group missing" do
+    expect(ClientMock, :find_one, fn :h, "groups", _ -> nil end)
+    assert {:error, :group_not_found} = MongoBackend.replay(:h, "s", "g", event_ids: ["e1"])
+  end
+
   test "materialize ignore_duplicate on delivery insert" do
     stub(ClientMock, :find_one, fn
       :h, "groups", _ ->
@@ -323,15 +472,19 @@ defmodule Rheo.Backend.Mongo.ClientTest do
              MongoBackend.fetch(:h, "s", "g", limit: 1, consumer_id: "c1")
   end
 
-  defp sample_lease do
-    event = %Rheo.Event{
-      id: "e1",
+  defp sample_event(id, sequence) do
+    %Rheo.Event{
+      id: id,
       stream: "s",
       partition: 0,
-      sequence: 1,
+      sequence: sequence,
       timestamp: ~U[2026-01-01 00:00:00Z],
       payload: %{}
     }
+  end
+
+  defp sample_lease do
+    event = sample_event("e1", 1)
 
     %Lease{
       lease_id: "L1",
