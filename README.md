@@ -4,9 +4,9 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/rheo.svg)](https://hex.pm/packages/rheo)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/rheo/)
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
-[![License](https://img.shields.io/hexpm/l/rheo.svg)](LICENSE)
+[![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.4.0** — Durable consumer-group semantics over searchable databases.
+**v0.4.1** — Durable consumer-group semantics over searchable databases.
 Backends today: **MongoDB** (durable) and **ETS** (ephemeral, zero-infra).
 Rheo is an Elixir/OTP library you embed in your supervision tree, not a
 standalone messaging server.
@@ -50,7 +50,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.4.0"}
+    {:rheo, "~> 0.4.1"}
   ]
 end
 ```
@@ -137,28 +137,35 @@ Rheo.append("market-events", %{
 Rheo.query("market-events", type: "curve_update", currency: "EUR")
 ```
 
-Interactive walkthrough: open [notebooks/rheo_demo.livemd](notebooks/rheo_demo.livemd)
-in [Livebook](https://livebook.dev). The notebook defaults to **ETS** (no Docker).
-CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
+Interactive walkthrough: open the
+[Livebook demo](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)
+in [Livebook](https://livebook.dev) (or browse it on
+[HexDocs](https://hexdocs.pm/rheo/rheo_demo.html)). The notebook defaults to
+**ETS** (no Docker). CLI demo: `mix rheo.demo` (ETS) or
+`RHEO_BACKEND=mongo mix rheo.demo`.
 
 Upgrading:
 
-- [0.3 → 0.4](docs/migrations/0.3-to-0.4.md) (additive — search, replay, lineage)
-- [0.1 → 0.2](docs/migrations/0.1-to-0.2.md) (breaking Group / Query changes)
+- [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) (additive — search, replay, lineage)
+- [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html) (breaking Group / Query changes)
 
 ## Documentation
 
+Links below use [HexDocs](https://hexdocs.pm/rheo/) (and GitHub for the Livebook
+source). Relative `docs/…` paths break on [hex.pm](https://hex.pm/packages/rheo)
+because those files are not in the Hex tarball.
+
 - [HexDocs](https://hexdocs.pm/rheo/) — API reference
-- [Architecture](docs/architecture.md)
-- [Tutorials](docs/tutorials.md)
-- [ADRs](docs/adr.md)
-- [Livebook demo](notebooks/rheo_demo.livemd)
-- [Article 10: Prove it with ETS](docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md)
-- [Article 11: Search and Replay](docs/tutorials/11-search-and-replay-the-event-history.md)
-- [0.3 → 0.4 migration](docs/migrations/0.3-to-0.4.md)
-- [0.1 → 0.2 migration](docs/migrations/0.1-to-0.2.md)
-- [Changelog](CHANGELOG.md)
-- [Roadmap](docs/roadmap.md)
+- [Architecture](https://hexdocs.pm/rheo/architecture.html)
+- [Tutorials](https://hexdocs.pm/rheo/tutorials.html)
+- [ADRs](https://hexdocs.pm/rheo/adr.html)
+- [Livebook demo](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html))
+- [Article 10: Prove it with ETS](https://hexdocs.pm/rheo/10-if-rheo-is-database-agnostic-prove-it-with-ets.html)
+- [Article 11: Search and Replay](https://hexdocs.pm/rheo/11-search-and-replay-the-event-history.html)
+- [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html)
+- [0.1 → 0.2 migration](https://hexdocs.pm/rheo/0-1-to-0-2.html)
+- [Changelog](https://hexdocs.pm/rheo/changelog.html)
+- [Roadmap](https://hexdocs.pm/rheo/roadmap.html)
 
 ## More examples
 
@@ -260,7 +267,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.1.0** | MVP: Mongo event log, leases/ACK, competing consumers, query, `Rheo.Consumer` |
 | **0.2.0** | `Rheo.Group` runtime, real concurrency, lease renewal, multi-instance handles, portable `Rheo.Query`, persistence-error semantics |
 | **0.3.0** | `Rheo.Backend.ETS`, capabilities, backend conformance suite, Docker-free demo |
-| **0.4.0** (current) | Search pagination/streaming, replay/reset, event lineage conventions |
+| **0.4.0** | Search pagination/streaming, replay/reset, event lineage conventions |
+| **0.4.1** (current) | Hex README links point at HexDocs / GitHub (relative `docs/` paths break on hex.pm) |
 | **0.5.0** | Partitioning and ordered consume within a partition |
 | **0.6.0** | PostgreSQL (or second durable) backend |
 | **0.7.0** | Mongo change-stream wakeups |
@@ -270,11 +278,11 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 
 Still out of scope through 1.0 unless demand forces it: standalone Rheo server,
 exactly-once claims, K8s operator, auth frameworks, multi-tenancy. Details in
-[docs/roadmap.md](docs/roadmap.md).
+the [roadmap](https://hexdocs.pm/rheo/roadmap.html).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/thanos/rheo/blob/main/LICENSE).
 
 ## Building and developing the library
 

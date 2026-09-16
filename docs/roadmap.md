@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.4.0** (2026-09-16).
+Current release: **v0.4.1** (2026-09-16).
 
 ## Done in 0.1.0
 
@@ -37,6 +37,10 @@ Current release: **v0.4.0** (2026-09-16).
 - Replay / `reset_group` (no event copies); `create_group` start cursors
 - `Rheo.Event.Lineage` conventions
 - ADR 015 + Article 11 + [0.3 → 0.4 migration](migrations/0.3-to-0.4.md)
+
+## Done in 0.4.1
+
+- Hex README links use HexDocs / GitHub absolutes (relative `docs/` paths 404 on hex.pm)
 
 ## Next (0.5+)
 

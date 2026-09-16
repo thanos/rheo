@@ -1,6 +1,6 @@
 # Tutorials
 
-Medium-oriented tutorial notes for Rheo **v0.4.0**:
+Medium-oriented tutorial notes for Rheo **v0.4.1**:
 
 1. [Why put consumer groups in front of a database?](tutorials/01-why-consumer-groups-on-a-database.md)
 2. [What is a consumer group?](tutorials/02-what-is-a-consumer-group.md)

@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-09-16
+
+### Fixed
+
+- README documentation links use absolute [HexDocs](https://hexdocs.pm/rheo/) /
+  [GitHub](https://github.com/thanos/rheo) URLs. Relative `docs/…` and
+  `notebooks/…` paths were rewritten by Hex to
+  `repo.hex.pm/preview/rheo/…` and 404'd because those files are not in the
+  package tarball ([hex.pm/packages/rheo](https://hex.pm/packages/rheo)).
+
 ## [0.4.0] - 2026-09-16
 
 Search, pagination/streaming, replay/reset, and event lineage — additive over
@@ -80,6 +90,7 @@ v0.3.0. See [0.3 → 0.4 migration](docs/migrations/0.3-to-0.4.md).
 
 Initial Mongo-backed MVP: streams, groups, leases, Consumer, docs, Livebook.
 
+[0.4.1]: https://github.com/thanos/rheo/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/thanos/rheo/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/thanos/rheo/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/thanos/rheo/compare/v0.1.0...v0.2.0
