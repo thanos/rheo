@@ -15,3 +15,6 @@ Rheo.query("market-events", producer: "pricing-service-v3")
 
 This is Rheo's differentiator versus “queue then delete” systems: the log remains
 the system of record for what happened.
+
+For pagination, streaming, and re-consuming history without copying events, see
+[Article 11 — Search and Replay](11-search-and-replay-the-event-history.md).

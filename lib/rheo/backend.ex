@@ -28,7 +28,7 @@ defmodule Rheo.Backend do
 
   Required keys for v0.3+: `:durable`, `:distributed`, `:atomic_compare_and_set`,
   `:notifications`, `:change_feed`, `:secondary_indexes`, `:batch_writes`,
-  `:ordered_range_scan`.
+  `:ordered_range_scan`. Optional from v0.4+: `:replay`.
   """
   @type capabilities :: %{
           optional(atom()) => boolean(),
@@ -90,6 +90,21 @@ defmodule Rheo.Backend do
 
   @doc "Dead-letters a lease for this group only."
   @callback reject(handle(), Lease.t(), term()) :: :ok | {:error, term()}
+
+  @doc """
+  Re-opens deliveries for a group for replay (does not copy events).
+
+  Options typically include `:from_sequence`, `:from` (`DateTime`), or a list of
+  event ids under `:event_ids`.
+  """
+  @callback replay(handle(), stream(), group(), opts()) :: :ok | {:error, term()}
+
+  @doc """
+  Clears all deliveries for a group and resets its materialization cursor.
+
+  Never deletes immutable events. Callers must pass `confirm: true` via `Rheo`.
+  """
+  @callback reset_group(handle(), stream(), group(), opts()) :: :ok | {:error, term()}
 
   @doc "Health-checks the backend connection."
   @callback ping(handle()) :: :ok | {:error, term()}

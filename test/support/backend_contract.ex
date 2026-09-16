@@ -58,6 +58,7 @@ defmodule Rheo.BackendContract do
         end
 
         assert caps.atomic_compare_and_set
+        assert Map.get(caps, :replay, true) in [true, false]
       end
 
       test "stream create and duplicate", %{rheo: rheo} do
@@ -237,6 +238,37 @@ defmodule Rheo.BackendContract do
       test "ping and ensure_indexes", %{rheo: rheo} do
         assert :ok = Rheo.ping(ropts(rheo))
         assert :ok = Rheo.ensure_indexes(ropts(rheo))
+      end
+
+      test "sequence bounds on query", %{rheo: rheo} do
+        s = stream()
+        assert :ok = Rheo.create_stream(s, ropts(rheo))
+
+        assert {:ok, _} =
+                 Rheo.append_batch(s, [%{type: "a"}, %{type: "b"}, %{type: "c"}], ropts(rheo))
+
+        assert {:ok, [only]} =
+                 Rheo.query(s, [after_sequence: 1, until_sequence: 2] ++ ropts(rheo))
+
+        assert only.sequence == 2
+      end
+
+      test "replay and reset_group", %{rheo: rheo} do
+        s = stream()
+        assert :ok = Rheo.create_stream(s, ropts(rheo))
+        assert :ok = Rheo.create_group(s, "g", ropts(rheo))
+        assert {:ok, event} = Rheo.append(s, %{type: "e"}, ropts(rheo))
+        assert {:ok, [lease]} = Rheo.fetch(s, "g", [limit: 1] ++ ropts(rheo))
+        assert :ok = Rheo.ack(lease, ropts(rheo))
+
+        assert :ok = Rheo.replay(s, "g", [from_sequence: 0] ++ ropts(rheo))
+        assert {:ok, [again]} = Rheo.fetch(s, "g", [limit: 1] ++ ropts(rheo))
+        assert again.event_id == event.id
+
+        assert {:error, :confirm_required} = Rheo.reset_group(s, "g", ropts(rheo))
+        assert :ok = Rheo.reset_group(s, "g", [confirm: true] ++ ropts(rheo))
+        assert {:ok, [still]} = Rheo.read(s, [after: 0] ++ ropts(rheo))
+        assert still.id == event.id
       end
     end
   end

@@ -115,6 +115,21 @@ defmodule Rheo.GroupUnitTest do
     end
   end
 
+  defmodule KillHangConsumer do
+    use Rheo.Consumer, stream: "unused", group: "unused"
+
+    @impl true
+    def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
+
+    @impl true
+    def handle_event(event, %{agent: agent} = state) do
+      worker = self()
+      Agent.update(agent, fn _ -> %{pid: worker, event_id: event.id} end)
+      Process.sleep(:infinity)
+      {:ack, state}
+    end
+  end
+
   setup do
     Frozen.reset()
     stream = unique_stream("group-unit")
@@ -558,6 +573,129 @@ defmodule Rheo.GroupUnitTest do
       receive_fetches_while(group_pid, 300)
 
     assert count == 0
+    :ok = DynamicSupervisor.terminate_child(Rheo.Names.group_supervisor(Rheo), group_pid)
+  end
+
+  test "handle_worker_down on kill emits crash telemetry and leaves lease", %{stream: stream} do
+    Frozen.set(DateTime.utc_now())
+    {:ok, event} = Rheo.append(stream, %{type: "kill_me"})
+    {:ok, agent} = Agent.start_link(fn -> nil end)
+    parent = self()
+    crash_handler = "worker-crash-#{System.unique_integer()}"
+
+    :ok =
+      :telemetry.attach(
+        crash_handler,
+        [:rheo, :worker, :crash],
+        fn _e, %{count: 1}, meta, _ ->
+          if meta[:event_id] == event.id do
+            send(parent, {:worker_crash, meta[:reason]})
+          end
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(crash_handler) end)
+
+    lease_ms = 30_000
+
+    {:ok, group_pid} =
+      Rheo.GroupSupervisor.start_group(Rheo,
+        stream: stream,
+        group: "risk",
+        module: KillHangConsumer,
+        agent: agent,
+        poll_ms: 20,
+        lease_ms: lease_ms,
+        max_demand: 1,
+        concurrency: 1
+      )
+
+    wait_until(fn -> match?(%{pid: pid} when is_pid(pid), Agent.get(agent, & &1)) end)
+    %{pid: worker} = Agent.get(agent, & &1)
+
+    Process.exit(worker, :kill)
+
+    assert_receive {:worker_crash, :killed}, 2_000
+    assert Process.alive?(group_pid)
+
+    :ok = DynamicSupervisor.terminate_child(Rheo.Names.group_supervisor(Rheo), group_pid)
+
+    Frozen.advance(lease_ms + 1)
+
+    assert {:ok, [again]} =
+             Rheo.fetch(stream, "risk", limit: 1, consumer_id: "after-kill", lease_ms: 1_000)
+
+    assert again.event_id == event.id
+  end
+
+  test "handle_worker_down ignores unknown monitor refs", %{stream: stream} do
+    {:ok, group_pid} =
+      Rheo.GroupSupervisor.start_group(Rheo,
+        stream: stream,
+        group: "risk",
+        module: NoSetupConsumer,
+        poll_ms: 500
+      )
+
+    send(group_pid, {:DOWN, make_ref(), :process, self(), :noproc})
+    Process.sleep(50)
+    assert Process.alive?(group_pid)
+
+    :ok = DynamicSupervisor.terminate_child(Rheo.Names.group_supervisor(Rheo), group_pid)
+  end
+
+  test "handle_worker_down during drain does not ACK", %{stream: stream} do
+    Frozen.set(DateTime.utc_now())
+    {:ok, event} = Rheo.append(stream, %{type: "drain_kill"})
+    {:ok, agent} = Agent.start_link(fn -> nil end)
+    parent = self()
+    crash_handler = "drain-crash-#{System.unique_integer()}"
+
+    :ok =
+      :telemetry.attach(
+        crash_handler,
+        [:rheo, :worker, :crash],
+        fn _e, _m, meta, _ ->
+          if meta[:event_id] == event.id, do: send(parent, :drain_worker_crash)
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(crash_handler) end)
+
+    lease_ms = 5_000
+
+    {:ok, group_pid} =
+      Rheo.GroupSupervisor.start_group(Rheo,
+        stream: stream,
+        group: "risk",
+        module: KillHangConsumer,
+        agent: agent,
+        poll_ms: 20,
+        lease_ms: lease_ms,
+        max_demand: 1
+      )
+
+    wait_until(fn -> match?(%{pid: pid} when is_pid(pid), Agent.get(agent, & &1)) end)
+    %{pid: worker} = Agent.get(agent, & &1)
+
+    drain_task =
+      Task.async(fn -> Rheo.Group.drain(group_pid, 2_000) end)
+
+    Process.sleep(30)
+    Process.exit(worker, :kill)
+
+    assert_receive :drain_worker_crash, 2_000
+    assert :ok = Task.await(drain_task, 3_000)
+
+    Frozen.advance(lease_ms + 1)
+
+    assert {:ok, [again]} =
+             Rheo.fetch(stream, "risk", limit: 1, consumer_id: "after-drain-kill")
+
+    assert again.event_id == event.id
+
     :ok = DynamicSupervisor.terminate_child(Rheo.Names.group_supervisor(Rheo), group_pid)
   end
 

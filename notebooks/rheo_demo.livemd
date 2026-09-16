@@ -1,9 +1,10 @@
-# Rheo Livebook Demo (v0.3.0)
+# Rheo Livebook Demo (v0.4.0)
 
 ```elixir
 Mix.install(
   [
-    {:rheo, path: Path.join(__DIR__, "..")},
+    # {:rheo, path: Path.join(__DIR__, "..")},
+    {:rheo, "~> 0.4.0"},
     {:kino, "~> 0.14"}
   ],
   config: [
@@ -20,50 +21,76 @@ Mix.install(
 ## Prerequisites
 
 1. Open this notebook from the repo (`notebooks/rheo_demo.livemd`) so `Mix.install` can resolve `{:rheo, path: ...}`
-2. Evaluate cells top to bottom
+2. Evaluate cells **top to bottom**
 3. **No Docker required** — this demo uses `Rheo.Backend.ETS` by default
 
-Rheo **v0.3.0** is an embedded Elixir/OTP library: consumer groups over a
+Rheo **v0.4.0** is an embedded Elixir/OTP library: consumer groups over a
 searchable event log (Mongo durable, ETS ephemeral). Delivery is
 **at-least-once** — use event IDs for idempotency.
+
+This notebook covers:
+
+* leases, ACK fencing, competing / independent groups
+* searchable history (`query`, sequence bounds, `query_page`, `stream_query`)
+* event lineage metadata
+* replay / reset **without copying events**
 
 ---
 
 ## 1. Start Rheo (ETS)
 
+Restarting gives a clean ETS store if you re-run the notebook.
+
 ```elixir
-case Rheo.start_link(backend: Rheo.Backend.ETS) do
-  {:ok, _} -> :ok
-  {:error, {:already_started, _}} -> :ok
+case Process.whereis(Rheo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
 end
 
+{:ok, _} = Rheo.start_link(backend: Rheo.Backend.ETS)
 :ok = Rheo.ensure_indexes()
 :ok = Rheo.ping()
+
+%{backend: Rheo.Backend.ETS.capabilities()}
 ```
 
-> Optional Mongo path: start Docker (`docker compose up -d`), then
-> `Rheo.start_link(url: System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_livebook"))`
-> and clear collections before continuing.
+> Optional Mongo path: `docker compose up -d`, then
+> `Rheo.start_link(url: System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_livebook"))`.
 
 ---
 
-## 2. Create a stream and publish market events
+## 2. Create a stream and publish with lineage
+
+Append curve updates tagged with `Rheo.Event.Lineage` metadata.
 
 ```elixir
+alias Rheo.Event.Lineage
+
 stream = "market-events"
 :ok = Rheo.create_stream(stream)
 
+Rheo.Clock.Frozen.set(~U[2026-03-15 12:00:00.000Z])
+
 events =
   for i <- 1..30 do
+    currency = Enum.at(["EUR", "USD", "GBP"], rem(i, 3))
+    curve = Enum.at(["EUR-EURIBOR-6M", "USD-SOFR", "GBP-SONIA"], rem(i, 3))
+
+    meta =
+      Lineage.put(%{},
+        correlation_id: "corr-#{rem(i, 7)}",
+        causation_id: "cmd-#{i}",
+        producer: "pricing-service-v3",
+        schema: "curve_update",
+        schema_version: "1"
+      )
+
     %{
       type: "curve_update",
-      currency: Enum.at(["EUR", "USD", "GBP"], rem(i, 3)),
-      curve: Enum.at(["EUR-EURIBOR-6M", "USD-SOFR", "GBP-SONIA"], rem(i, 3)),
-      price: Float.round(1.0 + :rand.uniform() * 3.0, 4),
-      metadata: %{
-        correlation_id: "corr-#{rem(i, 7)}",
-        producer: "pricing-service-v3"
-      }
+      currency: currency,
+      curve: curve,
+      price: Float.round(1.0 + i * 0.07, 4),
+      metadata: meta
     }
   end
 
@@ -74,10 +101,11 @@ Kino.DataTable.new(
     %{
       sequence: e.sequence,
       id: e.id,
-      type: e.type,
       currency: e.payload["currency"],
       curve: e.payload["curve"],
-      price: e.payload["price"]
+      price: e.payload["price"],
+      correlation_id: Lineage.get(e, :correlation_id),
+      producer: Lineage.get(e, :producer)
     }
   end)
 )
@@ -120,7 +148,6 @@ Advance the frozen clock past the lease TTL. A different risk worker can claim t
 same events; the stale lease can no longer ACK.
 
 ```elixir
-Rheo.Clock.Frozen.set(DateTime.utc_now())
 Rheo.Clock.Frozen.advance(6_000)
 
 {:ok, redelivered} = Rheo.fetch(stream, "risk", limit: 5, consumer_id: "risk-2")
@@ -140,9 +167,10 @@ Enum.each(tl(redelivered), &Rheo.ack/1)
 
 ---
 
-## 5. Search history after consumption
+## 5. Search history (filters + sequence bounds)
 
-Events stay in Mongo after ACK — that is Rheo's differentiator.
+Events stay in the log after ACK — that is Rheo's differentiator. Query by
+payload fields, lineage metadata, and sequence range.
 
 ```elixir
 {:ok, eur} =
@@ -153,32 +181,180 @@ Events stay in Mongo after ACK — that is Rheo's differentiator.
     limit: 10
   )
 
+{:ok, mid} =
+  Rheo.query(stream,
+    after_sequence: 10,
+    until_sequence: 15,
+    order_by: [sequence: :asc]
+  )
+
 {:ok, by_corr} = Rheo.query(stream, correlation_id: "corr-1", limit: 10)
 
 Kino.Layout.grid(
   [
+    Kino.Markdown.new("### EUR curve"),
     Kino.DataTable.new(
       Enum.map(eur, fn e ->
         %{sequence: e.sequence, price: e.payload["price"], id: e.id}
       end)
     ),
+    Kino.Markdown.new("### Sequences 11–15"),
+    Kino.DataTable.new(
+      Enum.map(mid, fn e ->
+        %{sequence: e.sequence, currency: e.payload["currency"], price: e.payload["price"]}
+      end)
+    ),
+    Kino.Markdown.new("### correlation_id = corr-1"),
     Kino.DataTable.new(
       Enum.map(by_corr, fn e ->
         %{
           sequence: e.sequence,
           currency: e.payload["currency"],
-          correlation_id: e.metadata["correlation_id"]
+          causation_id: Lineage.get(e, :causation_id)
         }
       end)
     )
   ],
-  columns: 2
+  columns: 1
 )
 ```
 
 ---
 
-## 6. Idiomatic `Rheo.Consumer`
+## 6. Pagination and streaming
+
+`query_page` returns an opaque cursor (no SQL `OFFSET`). `stream_query` pages
+internally with a bounded page size.
+
+```elixir
+{:ok, page1} = Rheo.query_page(stream, type: "curve_update", limit: 8)
+
+{:ok, page2} =
+  Rheo.query_page(stream,
+    type: "curve_update",
+    limit: 8,
+    cursor: page1.next_cursor
+  )
+
+streamed_seqs =
+  stream
+  |> Rheo.stream_query(type: "curve_update", limit: 10)
+  |> Enum.map(& &1.sequence)
+
+%{
+  page1_sequences: Enum.map(page1.events, & &1.sequence),
+  page1_next_cursor: page1.next_cursor,
+  page2_sequences: Enum.map(page2.events, & &1.sequence),
+  page2_next_cursor: page2.next_cursor,
+  streamed_count: length(streamed_seqs),
+  streamed_first_last: {List.first(streamed_seqs), List.last(streamed_seqs)}
+}
+```
+
+---
+
+## 7. Replay without copying events
+
+Replay re-drives **per-group delivery state**. The event log is never cloned.
+
+### 7a. Preferred: new group with a start cursor
+
+```elixir
+:ok = Rheo.create_group(stream, "risk-replay", start_after: 20)
+
+{:ok, replay_leases} = Rheo.fetch(stream, "risk-replay", limit: 10, consumer_id: "replay-1")
+
+Kino.DataTable.new(
+  Enum.map(replay_leases, fn lease ->
+    %{
+      sequence: lease.event.sequence,
+      event_id: lease.event_id,
+      currency: lease.event.payload["currency"]
+    }
+  end)
+)
+```
+
+Only sequences **after** 20 appear. Production `risk` is untouched.
+
+```elixir
+Enum.each(replay_leases, &Rheo.ack/1)
+
+%{
+  replay_group_first_sequence: hd(replay_leases).event.sequence,
+  risk_still_independent?: true
+}
+```
+
+### 7b. Reopen an existing group (`Rheo.replay/3`)
+
+Drain remaining `risk` work first, then replay from sequence 0 (duplicates expected).
+
+```elixir
+# Finish whatever risk still has available
+:ok =
+  Enum.reduce_while(1..100, :ok, fn _, _ ->
+    case Rheo.fetch(stream, "risk", limit: 20, consumer_id: "risk-drain") do
+      {:ok, []} ->
+        {:halt, :ok}
+
+      {:ok, leases} ->
+        Enum.each(leases, &Rheo.ack/1)
+        {:cont, :ok}
+    end
+  end)
+
+{:ok, []} = Rheo.fetch(stream, "risk", limit: 1, consumer_id: "risk-check")
+
+:ok = Rheo.replay(stream, "risk", from_sequence: 0)
+
+{:ok, after_replay} = Rheo.fetch(stream, "risk", limit: 5, consumer_id: "risk-replayed")
+
+%{
+  after_replay_count: length(after_replay),
+  sequences: Enum.map(after_replay, & &1.event.sequence),
+  attempts: Enum.map(after_replay, & &1.attempt)
+}
+```
+
+Query-selected replay (EUR only):
+
+```elixir
+Enum.each(after_replay, &Rheo.ack/1)
+
+:ok =
+  Rheo.replay(stream, "risk",
+    query: [type: "curve_update", currency: "EUR"]
+  )
+
+{:ok, eur_again} = Rheo.fetch(stream, "risk", limit: 20, consumer_id: "risk-eur")
+
+%{
+  eur_redelivered: length(eur_again),
+  currencies: Enum.map(eur_again, & &1.event.payload["currency"]) |> Enum.uniq()
+}
+```
+
+### 7c. Destructive reset (requires `confirm: true`)
+
+```elixir
+assert_without_confirm = Rheo.reset_group(stream, "risk")
+:ok = Rheo.reset_group(stream, "risk", confirm: true, start_after: 25)
+
+{:ok, after_reset} = Rheo.fetch(stream, "risk", limit: 10, consumer_id: "risk-reset")
+{:ok, [still_in_log | _]} = Rheo.read(stream, after: 0, limit: 1)
+
+%{
+  reset_without_confirm: assert_without_confirm,
+  after_reset_sequences: Enum.map(after_reset, & &1.event.sequence),
+  events_still_in_log?: still_in_log.sequence == 1,
+  surveillance_unaffected_hint: "other groups keep their own deliveries"
+}
+```
+
+---
+
+## 8. Idiomatic `Rheo.Consumer`
 
 ```elixir
 defmodule Livebook.RiskConsumer do
@@ -186,7 +362,7 @@ defmodule Livebook.RiskConsumer do
 
   @impl true
   def setup(opts) do
-    {:ok, %{seen: [], agent: Keyword.fetch!(opts, :agent)}}
+    {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
   end
 
   @impl true
@@ -218,10 +394,21 @@ seen = Agent.get(agent, &Enum.reverse/1)
 
 ## Takeaways
 
-* **Immutable log** — consumption never deletes events
-* **Independent groups** — risk and surveillance progress separately
+* **Immutable log** — consumption never deletes events (ETS or Mongo)
+
+* **Independent groups** — risk, surveillance, and risk-replay progress separately
+
 * **Leases + fencing** — stale ACKs fail; expired work is redelivered (at-least-once)
-* **Search** — investigate history with `Rheo.query/2` after processing
-* **OTP** — supervise `{Rheo, ...}` and `Rheo.Consumer` in your app
+
+* **Search** — filters, sequence bounds, `query_page`, `stream_query`
+
+* **Lineage** — `Rheo.Event.Lineage` metadata is queryable
+
+* **Replay** — new group + start cursor (preferred), `replay/3`, or loud `reset_group`
+
+* **OTP** — supervise `{Rheo, backend: Rheo.Backend.ETS | Mongo}` and `Rheo.Consumer`
+
+Further reading: [Article 11](../docs/tutorials/11-search-and-replay-the-event-history.md),
+[ADR 015](../docs/adr/015-replay-semantics.md), [0.3 → 0.4 migration](../docs/migrations/0.3-to-0.4.md).
 
 CLI alternative from the repo root: `mix rheo.demo`

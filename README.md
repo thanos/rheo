@@ -6,7 +6,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](LICENSE)
 
-**v0.3.0** — Durable consumer-group semantics over searchable databases.
+**v0.4.0** — Durable consumer-group semantics over searchable databases.
 Backends today: **MongoDB** (durable) and **ETS** (ephemeral, zero-infra).
 Rheo is an Elixir/OTP library you embed in your supervision tree, not a
 standalone messaging server.
@@ -50,7 +50,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.3.0"}
+    {:rheo, "~> 0.4.0"}
   ]
 end
 ```
@@ -141,7 +141,10 @@ Interactive walkthrough: open [notebooks/rheo_demo.livemd](notebooks/rheo_demo.l
 in [Livebook](https://livebook.dev). The notebook defaults to **ETS** (no Docker).
 CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
 
-Upgrading from 0.1? See the [0.1 → 0.2 migration guide](docs/migrations/0.1-to-0.2.md).
+Upgrading:
+
+- [0.3 → 0.4](docs/migrations/0.3-to-0.4.md) (additive — search, replay, lineage)
+- [0.1 → 0.2](docs/migrations/0.1-to-0.2.md) (breaking Group / Query changes)
 
 ## Documentation
 
@@ -151,6 +154,8 @@ Upgrading from 0.1? See the [0.1 → 0.2 migration guide](docs/migrations/0.1-to
 - [ADRs](docs/adr.md)
 - [Livebook demo](notebooks/rheo_demo.livemd)
 - [Article 10: Prove it with ETS](docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md)
+- [Article 11: Search and Replay](docs/tutorials/11-search-and-replay-the-event-history.md)
+- [0.3 → 0.4 migration](docs/migrations/0.3-to-0.4.md)
 - [0.1 → 0.2 migration](docs/migrations/0.1-to-0.2.md)
 - [Changelog](CHANGELOG.md)
 - [Roadmap](docs/roadmap.md)
@@ -173,17 +178,40 @@ end)
 ```elixir
 Rheo.query("market-events",
   type: "curve_update",
+  after_sequence: 100,
   order_by: [sequence: :desc],
   limit: 50
 )
 
-# or structured:
-Rheo.query(%Rheo.Query{
-  stream: "market-events",
-  where: [type: "curve_update"],
-  order_by: [sequence: :desc],
-  limit: 50
-})
+{:ok, page} = Rheo.query_page("market-events", type: "curve_update", limit: 100)
+Rheo.stream_query("market-events", type: "curve_update", limit: 100) |> Enum.take(250)
+```
+
+### Replay without copying events
+
+```elixir
+# Safest: new group from a cursor
+Rheo.create_group("market-events", "risk-replay", start_after: 1_000)
+
+# Or reopen an existing group (duplicates expected)
+Rheo.replay("market-events", "risk", from_sequence: 1_000)
+Rheo.reset_group("market-events", "risk", confirm: true)
+```
+
+### Event lineage metadata
+
+```elixir
+meta =
+  Rheo.Event.Lineage.put(%{},
+    correlation_id: "trade-42",
+    causation_id: "cmd-9",
+    producer: "pricing-v3",
+    schema: "curve_update",
+    schema_version: "1"
+  )
+
+Rheo.append("market-events", %{type: "curve_update", currency: "EUR", metadata: meta})
+Rheo.query("market-events", correlation_id: "trade-42")
 ```
 
 ### Competing consumers and independent groups
@@ -231,8 +259,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 |---|---|
 | **0.1.0** | MVP: Mongo event log, leases/ACK, competing consumers, query, `Rheo.Consumer` |
 | **0.2.0** | `Rheo.Group` runtime, real concurrency, lease renewal, multi-instance handles, portable `Rheo.Query`, persistence-error semantics |
-| **0.3.0** (current) | `Rheo.Backend.ETS`, capabilities, backend conformance suite, Docker-free demo |
-| **0.4.0** | Search/replay ergonomics and event lineage |
+| **0.3.0** | `Rheo.Backend.ETS`, capabilities, backend conformance suite, Docker-free demo |
+| **0.4.0** (current) | Search pagination/streaming, replay/reset, event lineage conventions |
 | **0.5.0** | Partitioning and ordered consume within a partition |
 | **0.6.0** | PostgreSQL (or second durable) backend |
 | **0.7.0** | Mongo change-stream wakeups |
