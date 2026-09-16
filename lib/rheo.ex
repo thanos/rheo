@@ -32,6 +32,11 @@ defmodule Rheo do
       :ok = Rheo.ack(hd(leases))
       {:ok, _} = Rheo.query("market-events", type: "curve_update", currency: "EUR")
 
+  Search history with `query` / `query_page` / `stream_query`. Replay without
+  copying events via `create_group` start cursors, `replay/3`, or
+  `reset_group/3` (`confirm: true`). See `Rheo.Event.Lineage` for correlation
+  metadata.
+
   See also `Rheo.Consumer` for the OTP handler API and `Rheo.Backend` for adapters.
   """
 

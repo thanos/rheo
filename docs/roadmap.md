@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.4.0**.
+Current release: **v0.4.0** (2026-09-16).
 
 ## Done in 0.1.0
 
@@ -34,13 +34,13 @@ Current release: **v0.4.0**.
 ## Done in 0.4.0
 
 - Query sequence bounds, `query_page` / `stream_query`
-- Replay / reset_group (no event copies); create_group start cursors
+- Replay / `reset_group` (no event copies); `create_group` start cursors
 - `Rheo.Event.Lineage` conventions
-- ADR 015 + Article 11
+- ADR 015 + Article 11 + [0.3 → 0.4 migration](migrations/0.3-to-0.4.md)
 
 ## Next (0.5+)
 
-- Partitions / frontier
+- Partitions / contiguous ACK frontier
 - Additional durable backends (Ecto family)
 - Broadway interop (evaluate)
 - Mnesia (later)

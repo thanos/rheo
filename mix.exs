@@ -49,6 +49,7 @@ defmodule Rheo.MixProject do
           "docs/adr/014-ets-backend.md",
           "docs/adr/015-replay-semantics.md",
           "docs/migrations/0.1-to-0.2.md",
+          "docs/migrations/0.3-to-0.4.md",
           "CHANGELOG.md",
           "docs/tutorials.md",
           "docs/tutorials/01-why-consumer-groups-on-a-database.md",
@@ -70,6 +71,7 @@ defmodule Rheo.MixProject do
             "docs/roadmap.md",
             "docs/diagrams.md",
             "docs/migrations/0.1-to-0.2.md",
+            "docs/migrations/0.3-to-0.4.md",
             "CHANGELOG.md",
             "notebooks/rheo_demo.livemd"
           ],
@@ -186,6 +188,7 @@ defmodule Rheo.MixProject do
         mix.exs
         README.md
         LICENSE
+        CHANGELOG.md
         coveralls.json
       )
     ]

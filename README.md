@@ -141,7 +141,10 @@ Interactive walkthrough: open [notebooks/rheo_demo.livemd](notebooks/rheo_demo.l
 in [Livebook](https://livebook.dev). The notebook defaults to **ETS** (no Docker).
 CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
 
-Upgrading from 0.1? See the [0.1 → 0.2 migration guide](docs/migrations/0.1-to-0.2.md).
+Upgrading:
+
+- [0.3 → 0.4](docs/migrations/0.3-to-0.4.md) (additive — search, replay, lineage)
+- [0.1 → 0.2](docs/migrations/0.1-to-0.2.md) (breaking Group / Query changes)
 
 ## Documentation
 
@@ -152,6 +155,7 @@ Upgrading from 0.1? See the [0.1 → 0.2 migration guide](docs/migrations/0.1-to
 - [Livebook demo](notebooks/rheo_demo.livemd)
 - [Article 10: Prove it with ETS](docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md)
 - [Article 11: Search and Replay](docs/tutorials/11-search-and-replay-the-event-history.md)
+- [0.3 → 0.4 migration](docs/migrations/0.3-to-0.4.md)
 - [0.1 → 0.2 migration](docs/migrations/0.1-to-0.2.md)
 - [Changelog](CHANGELOG.md)
 - [Roadmap](docs/roadmap.md)
@@ -192,6 +196,22 @@ Rheo.create_group("market-events", "risk-replay", start_after: 1_000)
 # Or reopen an existing group (duplicates expected)
 Rheo.replay("market-events", "risk", from_sequence: 1_000)
 Rheo.reset_group("market-events", "risk", confirm: true)
+```
+
+### Event lineage metadata
+
+```elixir
+meta =
+  Rheo.Event.Lineage.put(%{},
+    correlation_id: "trade-42",
+    causation_id: "cmd-9",
+    producer: "pricing-v3",
+    schema: "curve_update",
+    schema_version: "1"
+  )
+
+Rheo.append("market-events", %{type: "curve_update", currency: "EUR", metadata: meta})
+Rheo.query("market-events", correlation_id: "trade-42")
 ```
 
 ### Competing consumers and independent groups

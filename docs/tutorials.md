@@ -16,4 +16,7 @@ Medium-oriented tutorial notes for Rheo **v0.4.0**:
 
 Hands-on walkthrough: [Livebook demo](../notebooks/rheo_demo.livemd) (ETS by default).
 
-Migration: [0.1 → 0.2](migrations/0.1-to-0.2.md).
+Migrations:
+
+- [0.3 → 0.4](migrations/0.3-to-0.4.md) (additive)
+- [0.1 → 0.2](migrations/0.1-to-0.2.md)

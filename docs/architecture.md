@@ -60,4 +60,6 @@ events (ADR 015).
 
 - CLI: `mix rheo.demo`
 - Interactive: [notebooks/rheo_demo.livemd](../notebooks/rheo_demo.livemd)
-- Migration: [migrations/0.1-to-0.2.md](migrations/0.1-to-0.2.md)
+- Migrations: [0.3 → 0.4](migrations/0.3-to-0.4.md) · [0.1 → 0.2](migrations/0.1-to-0.2.md)
+- Changelog: [CHANGELOG.md](../CHANGELOG.md)
+- Roadmap: [roadmap.md](roadmap.md)
