@@ -59,6 +59,8 @@ defmodule Rheo.BackendContract do
 
         assert caps.atomic_compare_and_set
         assert Map.get(caps, :replay, true) in [true, false]
+        assert Map.get(caps, :partitions, false) in [true, false]
+        assert Map.get(caps, :contiguous_frontier, false) in [true, false]
       end
 
       test "stream create and duplicate", %{rheo: rheo} do
@@ -269,6 +271,31 @@ defmodule Rheo.BackendContract do
         assert :ok = Rheo.reset_group(s, "g", [confirm: true] ++ ropts(rheo))
         assert {:ok, [still]} = Rheo.read(s, [after: 0] ++ ropts(rheo))
         assert still.id == event.id
+      end
+
+      test "partition frontier hole and lag", %{rheo: rheo, caps: caps} do
+        if Map.get(caps, :contiguous_frontier, false) do
+          s = stream()
+          assert :ok = Rheo.create_stream(s, [partition_count: 2] ++ ropts(rheo))
+          assert :ok = Rheo.create_group(s, "g", ropts(rheo))
+
+          assert {:ok, _} = Rheo.append(s, %{type: "e"}, [partition: 0] ++ ropts(rheo))
+          assert {:ok, _} = Rheo.append(s, %{type: "e"}, [partition: 0] ++ ropts(rheo))
+          assert {:ok, _} = Rheo.append(s, %{type: "e"}, [partition: 0] ++ ropts(rheo))
+
+          assert {:ok, [a, b, c]} =
+                   Rheo.fetch(s, "g", [limit: 3, partition: 0] ++ ropts(rheo))
+
+          assert :ok = Rheo.ack(a, ropts(rheo))
+          assert :ok = Rheo.ack(c, ropts(rheo))
+          assert {:ok, lag1} = Rheo.lag(s, "g", ropts(rheo))
+          assert lag1.partitions[0].frontier == 1
+
+          assert :ok = Rheo.ack(b, ropts(rheo))
+          assert {:ok, lag2} = Rheo.lag(s, "g", ropts(rheo))
+          assert lag2.partitions[0].frontier == 3
+          assert lag2.partitions[0].lag == 0
+        end
       end
     end
   end

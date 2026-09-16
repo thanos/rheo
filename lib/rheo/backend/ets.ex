@@ -18,7 +18,7 @@ defmodule Rheo.Backend.ETS do
   @behaviour Rheo.Backend
   use GenServer
 
-  alias Rheo.{Clock, Event, Id, Lease, Query, Telemetry}
+  alias Rheo.{Clock, Event, Id, Lag, Lease, Partition, Query, Telemetry}
 
   defstruct [:name, :streams, :events, :groups, :deliveries]
 
@@ -33,7 +33,9 @@ defmodule Rheo.Backend.ETS do
       secondary_indexes: false,
       batch_writes: true,
       ordered_range_scan: true,
-      replay: true
+      replay: true,
+      partitions: true,
+      contiguous_frontier: true
     }
   end
 
@@ -140,6 +142,10 @@ defmodule Rheo.Backend.ETS do
   def reset_group(handle, stream, group, opts \\ []),
     do: call(handle, {:reset_group, stream, group, opts})
 
+  @impl true
+  def lag(handle, stream, group, opts \\ []),
+    do: call(handle, {:lag, stream, group, opts})
+
   defp call(handle, request) do
     timeout = Application.get_env(:rheo, :ets_call_timeout, 5_000)
     GenServer.call(handle, request, timeout)
@@ -176,9 +182,15 @@ defmodule Rheo.Backend.ETS do
           {:error, :already_exists}
 
         [] ->
-          :ets.insert(state.streams, {stream, stream_rec(stream, opts)})
-          Telemetry.execute([:rheo, :stream, :create], %{count: 1}, %{stream: stream})
-          :ok
+          partition_count = Keyword.get(opts, :partition_count, 1)
+
+          if is_integer(partition_count) and partition_count >= 1 do
+            :ets.insert(state.streams, {stream, stream_rec(stream, opts)})
+            Telemetry.execute([:rheo, :stream, :create], %{count: 1}, %{stream: stream})
+            :ok
+          else
+            {:error, :invalid_partition_count}
+          end
       end
 
     {:reply, reply, state}
@@ -194,19 +206,21 @@ defmodule Rheo.Backend.ETS do
           {:error, :already_exists}
 
         true ->
-          {:ok, next_sequence} = resolve_group_start(state, stream, opts)
+          [{^stream, stream_rec}] = :ets.lookup(state.streams, stream)
 
-          :ets.insert(
-            state.groups,
-            {{stream, group}, group_rec(stream, group, opts, next_sequence)}
-          )
+          with {:ok, cursors} <- resolve_group_start(state, stream, stream_rec, opts) do
+            :ets.insert(
+              state.groups,
+              {{stream, group}, group_rec(stream, group, opts, cursors)}
+            )
 
-          Telemetry.execute([:rheo, :group, :create], %{count: 1}, %{
-            stream: stream,
-            group: group
-          })
+            Telemetry.execute([:rheo, :group, :create], %{count: 1}, %{
+              stream: stream,
+              group: group
+            })
 
-          :ok
+            :ok
+          end
       end
 
     {:reply, reply, state}
@@ -222,27 +236,26 @@ defmodule Rheo.Backend.ETS do
           {:error, :stream_not_found}
 
         [{^stream, rec}] ->
-          start_seq = rec.next_sequence + 1
-          partition = Keyword.get(opts, :partition, 0)
+          partition_count = Map.get(rec, :partition_count, 1)
+          next_sequences = stream_next_sequences(rec)
           now = Clock.utc_now()
 
-          events =
-            payloads
-            |> Enum.with_index()
-            |> Enum.map(fn {payload, idx} ->
-              build_event(stream, partition, start_seq + idx, payload, now, opts)
+          with {:ok, events, updated_sequences} <-
+                 build_partitioned_events(
+                   stream,
+                   payloads,
+                   opts,
+                   partition_count,
+                   next_sequences,
+                   now
+                 ) do
+            Enum.each(events, fn event ->
+              :ets.insert(state.events, {{stream, event.partition, event.sequence}, event})
             end)
 
-          Enum.each(events, fn event ->
-            :ets.insert(state.events, {{stream, partition, event.sequence}, event})
-          end)
-
-          :ets.insert(
-            state.streams,
-            {stream, %{rec | next_sequence: start_seq + length(payloads) - 1}}
-          )
-
-          {:ok, events}
+            :ets.insert(state.streams, {stream, Map.put(rec, :next_sequences, updated_sequences)})
+            {:ok, events}
+          end
       end
 
     {:reply, reply, state}
@@ -282,28 +295,44 @@ defmodule Rheo.Backend.ETS do
 
   def handle_call({:fetch, stream, group, opts}, _from, state) do
     reply =
-      case :ets.lookup(state.groups, {stream, group}) do
-        [] ->
+      case {:ets.lookup(state.streams, stream), :ets.lookup(state.groups, {stream, group})} do
+        {_, []} ->
           {:error, :group_not_found}
 
-        [{{^stream, ^group}, group_rec}] ->
+        {[], _} ->
+          {:error, :stream_not_found}
+
+        {[{^stream, stream_rec}], [{{^stream, ^group}, group_rec}]} ->
           limit = Keyword.get(opts, :limit, Application.get_env(:rheo, :default_max_demand, 10))
           consumer_id = Keyword.get_lazy(opts, :consumer_id, &Id.generate/0)
 
           lease_ms =
             Keyword.get(opts, :lease_ms, Application.get_env(:rheo, :default_lease_ms, 30_000))
 
-          now = Clock.utc_now()
-          materialize(state, stream, group, group_rec, max(limit, 50))
-          leases = claim_many(state, stream, group, consumer_id, lease_ms, limit, now)
+          with {:ok, partitions} <- resolve_assignment(opts, stream_rec.partition_count) do
+            now = Clock.utc_now()
+            materialize(state, stream, group, group_rec, partitions, max(limit, 50))
 
-          Telemetry.execute([:rheo, :lease], %{count: length(leases)}, %{
-            stream: stream,
-            group: group,
-            consumer_id: consumer_id
-          })
+            leases =
+              claim_many(
+                state,
+                stream,
+                group,
+                partitions,
+                consumer_id,
+                lease_ms,
+                limit,
+                now
+              )
 
-          {:ok, leases}
+            Telemetry.execute([:rheo, :lease], %{count: length(leases)}, %{
+              stream: stream,
+              group: group,
+              consumer_id: consumer_id
+            })
+
+            {:ok, leases}
+          end
       end
 
     {:reply, reply, state}
@@ -344,6 +373,7 @@ defmodule Rheo.Backend.ETS do
           })
         )
 
+        advance_frontier(state, delivery)
         :ok
       end
 
@@ -392,28 +422,50 @@ defmodule Rheo.Backend.ETS do
 
   def handle_call({:replay, stream, group, opts}, _from, state) do
     reply =
-      case :ets.lookup(state.groups, {stream, group}) do
-        [] ->
+      case {:ets.lookup(state.streams, stream), :ets.lookup(state.groups, {stream, group})} do
+        {_, []} ->
           {:error, :group_not_found}
 
-        [{key, group_rec}] ->
-          cond do
-            events = Keyword.get(opts, :events) ->
-              reopen_ets_events(state, stream, group, events)
-              :ok
+        {[], _} ->
+          {:error, :stream_not_found}
 
-            ids = Keyword.get(opts, :event_ids) ->
-              reopen_ets_deliveries(state, stream, group, ids)
-              :ok
+        {[{^stream, stream_rec}], [{key, group_rec}]} ->
+          with {:ok, partitions} <- resolve_assignment(opts, stream_rec.partition_count) do
+            cond do
+              events = Keyword.get(opts, :events) ->
+                reopen_ets_events(state, stream, group, events, partitions)
+                rewind_frontiers_for_events(state, key, group_rec, events, partitions)
+                :ok
 
-            Keyword.has_key?(opts, :from_sequence) ->
-              next = Keyword.fetch!(opts, :from_sequence) + 1
-              reopen_ets_from_sequence(state, stream, group, next)
-              :ets.insert(state.groups, {key, %{group_rec | next_sequence: next}})
-              :ok
+              ids = Keyword.get(opts, :event_ids) ->
+                reopened =
+                  reopen_ets_deliveries(state, stream, group, ids, partitions)
 
-            true ->
-              {:error, :invalid_replay_opts}
+                rewind_frontiers_for_deliveries(state, key, group_rec, reopened)
+                :ok
+
+              Keyword.has_key?(opts, :from_sequence) ->
+                next = Keyword.fetch!(opts, :from_sequence) + 1
+                reopen_ets_from_sequence(state, stream, group, next, partitions)
+                cursors = put_partitions(group_cursors(group_rec), partitions, next)
+
+                frontiers =
+                  rewind_frontiers_to_sequence(
+                    group_frontiers(group_rec),
+                    partitions,
+                    next
+                  )
+
+                :ets.insert(
+                  state.groups,
+                  {key, group_rec |> Map.put(:cursors, cursors) |> Map.put(:frontiers, frontiers)}
+                )
+
+                :ok
+
+              true ->
+                {:error, :invalid_replay_opts}
+            end
           end
       end
 
@@ -422,22 +474,57 @@ defmodule Rheo.Backend.ETS do
 
   def handle_call({:reset_group, stream, group, opts}, _from, state) do
     reply =
-      case :ets.lookup(state.groups, {stream, group}) do
-        [] ->
+      case {:ets.lookup(state.streams, stream), :ets.lookup(state.groups, {stream, group})} do
+        {_, []} ->
           {:error, :group_not_found}
 
-        [{key, group_rec}] ->
-          start_seq = Keyword.get(opts, :start_after, 0) + 1
+        {[], _} ->
+          {:error, :stream_not_found}
 
-          state.deliveries
-          |> :ets.tab2list()
-          |> Enum.each(fn
-            {{^stream, ^group, _} = key, _} -> :ets.delete(state.deliveries, key)
-            _ -> :ok
-          end)
+        {[{^stream, stream_rec}], [{key, group_rec}]} ->
+          with {:ok, partitions} <- resolve_assignment(opts, stream_rec.partition_count),
+               {:ok, starts} <- resolve_group_start(state, stream, stream_rec, opts) do
+            delete_partition_deliveries(state, stream, group, partitions)
 
-          :ets.insert(state.groups, {key, %{group_rec | next_sequence: start_seq}})
-          :ok
+            cursors =
+              Enum.reduce(partitions, group_cursors(group_rec), fn partition, acc ->
+                Map.put(acc, partition, Partition.map_get(starts, partition, 1))
+              end)
+
+            frontiers = put_partitions(group_frontiers(group_rec), partitions, 0)
+
+            :ets.insert(
+              state.groups,
+              {key, group_rec |> Map.put(:cursors, cursors) |> Map.put(:frontiers, frontiers)}
+            )
+
+            :ok
+          end
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:lag, stream, group, opts}, _from, state) do
+    reply =
+      case {:ets.lookup(state.streams, stream), :ets.lookup(state.groups, {stream, group})} do
+        {_, []} ->
+          {:error, :group_not_found}
+
+        {[], _} ->
+          {:error, :stream_not_found}
+
+        {[{^stream, stream_rec}], [{_, group_rec}]} ->
+          with {:ok, partitions} <- resolve_assignment(opts, stream_rec.partition_count) do
+            {:ok,
+             Lag.from_maps(
+               stream,
+               group,
+               group_frontiers(group_rec),
+               stream_next_sequences(stream_rec),
+               partitions
+             )}
+          end
       end
 
     {:reply, reply, state}
@@ -461,85 +548,116 @@ defmodule Rheo.Backend.ETS do
       event_id: lease.event_id
     })
 
+    advance_frontier(state, delivery)
     :ok
   end
 
-  defp materialize(state, stream, group, group_rec, limit) do
-    next_seq = group_rec.next_sequence
+  defp materialize(state, stream, group, group_rec, partitions, limit) do
+    cursors =
+      Enum.reduce(partitions, group_cursors(group_rec), fn partition, cursors ->
+        next_sequence = Partition.map_get(cursors, partition, 1)
 
-    events =
-      state.events
-      |> :ets.tab2list()
-      |> Enum.filter(fn {{s, _p, seq}, _} -> s == stream and seq >= next_seq end)
-      |> Enum.sort_by(fn {{_, _, seq}, _} -> seq end)
-      |> Enum.take(limit)
-      |> Enum.map(fn {_, event} -> event end)
+        events =
+          state.events
+          |> :ets.tab2list()
+          |> Enum.filter(fn {{s, p, sequence}, _} ->
+            s == stream and p == partition and sequence >= next_sequence
+          end)
+          |> Enum.sort_by(fn {{_, _, sequence}, _} -> sequence end)
+          |> Enum.take(limit)
+          |> Enum.map(fn {_, event} -> event end)
 
-    Enum.each(events, fn event ->
-      key = {stream, group, event.id}
+        Enum.each(events, &materialize_event(state, stream, group, &1))
 
-      case :ets.lookup(state.deliveries, key) do
-        [] ->
-          :ets.insert(
-            state.deliveries,
-            {key,
-             %{
-               stream: stream,
-               group: group,
-               event_id: event.id,
-               partition: event.partition,
-               sequence: event.sequence,
-               status: :available,
-               attempt: 0,
-               lease_id: nil,
-               consumer_id: nil,
-               expires_at: nil,
-               created_at: Clock.utc_now()
-             }}
-          )
+        case List.last(events) do
+          nil -> cursors
+          last -> Map.put(cursors, partition, last.sequence + 1)
+        end
+      end)
 
-        _ ->
-          :ok
-      end
-    end)
+    updated =
+      group_rec
+      |> Map.put(:cursors, cursors)
+      |> Map.put(:frontiers, group_frontiers(group_rec))
 
-    case List.last(events) do
-      nil ->
-        :ok
+    :ets.insert(state.groups, {{stream, group}, updated})
+  end
 
-      last ->
+  defp materialize_event(state, stream, group, event) do
+    key = {stream, group, event.id}
+
+    case :ets.lookup(state.deliveries, key) do
+      [] ->
         :ets.insert(
-          state.groups,
-          {{stream, group}, %{group_rec | next_sequence: last.sequence + 1}}
+          state.deliveries,
+          {key,
+           %{
+             stream: stream,
+             group: group,
+             event_id: event.id,
+             partition: event.partition,
+             sequence: event.sequence,
+             status: :available,
+             attempt: 0,
+             lease_id: nil,
+             consumer_id: nil,
+             expires_at: nil,
+             created_at: Clock.utc_now()
+           }}
         )
+
+      _ ->
+        :ok
     end
   end
 
-  defp claim_many(state, stream, group, consumer_id, lease_ms, limit, now) do
-    claim_loop(state, stream, group, consumer_id, lease_ms, limit, now, [])
+  defp claim_many(state, stream, group, partitions, consumer_id, lease_ms, limit, now) do
+    ctx = %{
+      state: state,
+      stream: stream,
+      group: group,
+      partitions: partitions,
+      consumer_id: consumer_id,
+      lease_ms: lease_ms,
+      now: now
+    }
+
+    claim_loop(ctx, limit, [])
   end
 
-  defp claim_loop(_state, _stream, _group, _consumer_id, _lease_ms, 0, _now, acc),
-    do: Enum.reverse(acc)
+  defp claim_loop(_ctx, 0, acc), do: Enum.reverse(acc)
 
-  defp claim_loop(state, stream, group, consumer_id, lease_ms, remaining, now, acc) do
-    case claim_one(state, stream, group, consumer_id, lease_ms, now) do
+  defp claim_loop(ctx, remaining, acc) do
+    %{
+      state: state,
+      stream: stream,
+      group: group,
+      partitions: partitions,
+      consumer_id: consumer_id,
+      lease_ms: lease_ms,
+      now: now
+    } = ctx
+
+    case claim_one(state, stream, group, partitions, consumer_id, lease_ms, now) do
       nil ->
         Enum.reverse(acc)
 
       lease ->
-        claim_loop(state, stream, group, consumer_id, lease_ms, remaining - 1, now, [lease | acc])
+        claim_loop(ctx, remaining - 1, [lease | acc])
     end
   end
 
-  defp claim_one(state, stream, group, consumer_id, lease_ms, now) do
+  defp claim_one(state, stream, group, partitions, consumer_id, lease_ms, now) do
+    partition_set = MapSet.new(partitions)
+
     candidates =
       state.deliveries
       |> :ets.tab2list()
       |> Enum.filter(fn {{s, g, _}, d} ->
-        s == stream and g == group and claimable?(d, now)
+        s == stream and g == group and MapSet.member?(partition_set, d.partition) and
+          claimable?(d, now)
       end)
-      |> Enum.sort_by(fn {_, d} -> d.sequence end)
+      |> Enum.sort_by(fn {_, d} -> {d.partition, d.sequence} end)
 
     case candidates do
       [] ->
@@ -601,6 +719,56 @@ defmodule Rheo.Backend.ETS do
   defp put_delivery(state, delivery) do
     key = {delivery.stream, delivery.group, delivery.event_id}
     :ets.insert(state.deliveries, {key, delivery})
+  end
+
+  defp advance_frontier(state, delivery) do
+    key = {delivery.stream, delivery.group}
+
+    case :ets.lookup(state.groups, key) do
+      [{^key, group_rec}] ->
+        frontiers = group_frontiers(group_rec)
+        old_frontier = Partition.map_get(frontiers, delivery.partition, 0)
+
+        frontier =
+          walk_frontier(state, delivery.stream, delivery.group, delivery.partition, old_frontier)
+
+        if frontier > old_frontier do
+          updated_frontiers = Map.put(frontiers, delivery.partition, frontier)
+          :ets.insert(state.groups, {key, Map.put(group_rec, :frontiers, updated_frontiers)})
+
+          Telemetry.execute(
+            [:rheo, :group, :frontier],
+            %{frontier: frontier},
+            %{
+              stream: delivery.stream,
+              group: delivery.group,
+              partition: delivery.partition,
+              frontier: frontier
+            }
+          )
+        end
+
+      [] ->
+        :ok
+    end
+  end
+
+  defp walk_frontier(state, stream, group, partition, frontier) do
+    next = frontier + 1
+
+    terminal? =
+      state.deliveries
+      |> :ets.tab2list()
+      |> Enum.any?(fn
+        {{^stream, ^group, _}, %{partition: ^partition, sequence: ^next, status: status}}
+        when status in [:acked, :rejected] ->
+          true
+
+        _ ->
+          false
+      end)
+
+    if terminal?, do: walk_frontier(state, stream, group, partition, next), else: frontier
   end
 
   defp event_by_id!(state, event_id) do
@@ -701,58 +869,73 @@ defmodule Rheo.Backend.ETS do
   end
 
   defp stream_rec(stream, opts) do
+    partition_count = Keyword.get(opts, :partition_count, 1)
+
     %{
       name: stream,
-      partition_count: Keyword.get(opts, :partition_count, 1),
-      next_sequence: 0,
+      partition_count: partition_count,
+      next_sequences: Map.new(0..(partition_count - 1), &{&1, 0}),
       created_at: Clock.utc_now()
     }
   end
 
-  defp group_rec(stream, group, opts, next_sequence) do
+  defp group_rec(stream, group, opts, cursors) do
     %{
       stream: stream,
       name: group,
-      next_sequence: next_sequence,
+      cursors: cursors,
+      frontiers: Map.new(Map.keys(cursors), &{&1, 0}),
       max_attempts:
         Keyword.get(opts, :max_attempts, Application.get_env(:rheo, :default_max_attempts, 5)),
       created_at: Clock.utc_now()
     }
   end
 
-  defp resolve_group_start(state, stream, opts) do
-    cond do
-      Keyword.has_key?(opts, :start_after) ->
-        {:ok, Keyword.fetch!(opts, :start_after) + 1}
+  defp resolve_group_start(state, stream, stream_rec, opts) do
+    partition_count = stream_rec.partition_count
 
-      Keyword.has_key?(opts, :start_at) ->
-        dt = Keyword.fetch!(opts, :start_at)
+    with {:ok, selected} <- resolve_assignment(opts, partition_count) do
+      selected_set = MapSet.new(selected)
+      default_cursors = Map.new(0..(partition_count - 1), &{&1, 1})
 
-        events =
-          state.events
-          |> :ets.tab2list()
-          |> Enum.map(fn {_, e} -> e end)
-          |> Enum.filter(fn e ->
-            e.stream == stream and DateTime.compare(e.timestamp, dt) != :lt
-          end)
-          |> Enum.sort_by(& &1.sequence)
+      cursors =
+        cond do
+          Keyword.has_key?(opts, :start_after) ->
+            apply_start_after_cursors(
+              selected,
+              Keyword.fetch!(opts, :start_after),
+              default_cursors
+            )
 
-        case events do
-          [%{sequence: seq} | _] -> {:ok, seq}
-          [] -> {:ok, 1}
+          Keyword.has_key?(opts, :start_at) ->
+            datetime = Keyword.fetch!(opts, :start_at)
+
+            apply_start_at_cursors(
+              state,
+              stream,
+              partition_count,
+              selected_set,
+              datetime,
+              default_cursors
+            )
+
+          true ->
+            default_cursors
         end
 
-      true ->
-        {:ok, 1}
+      {:ok, cursors}
     end
   end
 
-  defp reopen_ets_from_sequence(state, stream, group, next_sequence) do
+  defp reopen_ets_from_sequence(state, stream, group, next_sequence, partitions) do
+    partition_set = MapSet.new(partitions)
+
     state.deliveries
     |> :ets.tab2list()
     |> Enum.each(fn
       {{^stream, ^group, _}, delivery} ->
-        if delivery.sequence >= next_sequence do
+        if MapSet.member?(partition_set, delivery.partition) and
+             delivery.sequence >= next_sequence do
           put_delivery(
             state,
             Map.merge(delivery, %{
@@ -771,67 +954,259 @@ defmodule Rheo.Backend.ETS do
     end)
   end
 
-  defp reopen_ets_deliveries(state, stream, group, event_ids) do
+  defp reopen_ets_deliveries(state, stream, group, event_ids, partitions) do
     id_set = MapSet.new(event_ids)
+    partition_set = MapSet.new(partitions)
+
+    state.deliveries
+    |> :ets.tab2list()
+    |> Enum.reduce([], fn
+      {{^stream, ^group, event_id}, delivery}, acc ->
+        if MapSet.member?(id_set, event_id) and
+             MapSet.member?(partition_set, delivery.partition) do
+          put_delivery(
+            state,
+            Map.merge(delivery, %{
+              status: :available,
+              lease_id: nil,
+              consumer_id: nil,
+              expires_at: nil,
+              reason: :replay,
+              retried_at: Clock.utc_now()
+            })
+          )
+
+          [delivery | acc]
+        else
+          acc
+        end
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp reopen_ets_events(state, stream, group, events, partitions) do
+    partition_set = MapSet.new(partitions)
+
+    Enum.each(events, fn event ->
+      if MapSet.member?(partition_set, event.partition) do
+        key = {stream, group, event.id}
+
+        delivery =
+          case :ets.lookup(state.deliveries, key) do
+            [{^key, existing}] ->
+              existing
+
+            [] ->
+              %{
+                stream: stream,
+                group: group,
+                event_id: event.id,
+                partition: event.partition,
+                sequence: event.sequence,
+                attempt: 0,
+                created_at: Clock.utc_now()
+              }
+          end
+
+        put_delivery(
+          state,
+          Map.merge(delivery, %{
+            status: :available,
+            lease_id: nil,
+            consumer_id: nil,
+            expires_at: nil,
+            reason: :replay,
+            retried_at: Clock.utc_now(),
+            partition: event.partition,
+            sequence: event.sequence
+          })
+        )
+      end
+    end)
+  end
+
+  defp build_partitioned_events(
+         stream,
+         payloads,
+         opts,
+         partition_count,
+         next_sequences,
+         now
+       ) do
+    payloads
+    |> Enum.reduce_while({:ok, [], next_sequences}, fn payload, {:ok, events, sequences} ->
+      case Partition.resolve(payload, opts, partition_count) do
+        {:ok, partition} ->
+          sequence = Partition.map_get(sequences, partition, 0) + 1
+          event = build_event(stream, partition, sequence, payload, now, opts)
+
+          {:cont, {:ok, [event | events], Map.put(sequences, partition, sequence)}}
+
+        {:error, :invalid_partition} = error ->
+          {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, events, sequences} -> {:ok, Enum.reverse(events), sequences}
+      error -> error
+    end
+  end
+
+  defp resolve_assignment(opts, partition_count) do
+    assignment =
+      cond do
+        Keyword.has_key?(opts, :partition) -> Keyword.fetch!(opts, :partition)
+        Keyword.has_key?(opts, :partitions) -> Keyword.fetch!(opts, :partitions)
+        true -> :all
+      end
+
+    Partition.normalize_assignment(assignment, partition_count)
+  end
+
+  defp stream_next_sequences(rec) do
+    case Map.get(rec, :next_sequences) do
+      map when is_map(map) ->
+        map
+
+      _ ->
+        %{0 => Map.get(rec, :next_sequence, 0)}
+    end
+  end
+
+  defp group_cursors(rec) do
+    case Map.get(rec, :cursors) do
+      map when is_map(map) ->
+        map
+
+      _ ->
+        %{0 => Map.get(rec, :next_sequence, 1)}
+    end
+  end
+
+  defp group_frontiers(rec) do
+    case Map.get(rec, :frontiers) do
+      map when is_map(map) -> map
+      _ -> %{}
+    end
+  end
+
+  defp put_partitions(map, partitions, value) do
+    Enum.reduce(partitions, map, &Map.put(&2, &1, value))
+  end
+
+  defp rewind_frontiers_to_sequence(frontiers, partitions, next) do
+    replay_frontier = max(next - 1, 0)
+
+    Enum.reduce(partitions, frontiers, fn partition, acc ->
+      Map.put(acc, partition, min(Partition.map_get(acc, partition, 0), replay_frontier))
+    end)
+  end
+
+  defp delete_partition_deliveries(state, stream, group, partitions) do
+    partition_set = MapSet.new(partitions)
 
     state.deliveries
     |> :ets.tab2list()
     |> Enum.each(fn
-      {{^stream, ^group, event_id}, delivery} ->
-        if MapSet.member?(id_set, event_id) do
-          put_delivery(
-            state,
-            Map.merge(delivery, %{
-              status: :available,
-              lease_id: nil,
-              consumer_id: nil,
-              expires_at: nil,
-              reason: :replay,
-              retried_at: Clock.utc_now()
-            })
-          )
-        end
+      {{^stream, ^group, _} = delivery_key, delivery} ->
+        maybe_delete_delivery(state.deliveries, delivery_key, delivery, partition_set)
 
       _ ->
         :ok
     end)
   end
 
-  defp reopen_ets_events(state, stream, group, events) do
-    Enum.each(events, fn event ->
-      key = {stream, group, event.id}
+  defp maybe_delete_delivery(table, delivery_key, delivery, partition_set) do
+    if MapSet.member?(partition_set, delivery.partition) do
+      :ets.delete(table, delivery_key)
+    end
+  end
 
-      delivery =
-        case :ets.lookup(state.deliveries, key) do
-          [{^key, existing}] ->
-            existing
-
-          [] ->
-            %{
-              stream: stream,
-              group: group,
-              event_id: event.id,
-              partition: event.partition,
-              sequence: event.sequence,
-              attempt: 0,
-              created_at: Clock.utc_now()
-            }
-        end
-
-      put_delivery(
-        state,
-        Map.merge(delivery, %{
-          status: :available,
-          lease_id: nil,
-          consumer_id: nil,
-          expires_at: nil,
-          reason: :replay,
-          retried_at: Clock.utc_now(),
-          partition: event.partition,
-          sequence: event.sequence
-        })
-      )
+  defp apply_start_at_cursors(
+         state,
+         stream,
+         partition_count,
+         selected_set,
+         datetime,
+         default_cursors
+       ) do
+    Enum.reduce(0..(partition_count - 1), default_cursors, fn partition, acc ->
+      apply_start_at_partition(state, stream, partition, selected_set, datetime, acc)
     end)
+  end
+
+  defp apply_start_after_cursors(selected, start_after, default_cursors) do
+    Enum.reduce(selected, default_cursors, fn partition, acc ->
+      put_start_after_cursor(acc, partition, start_after_for_partition(start_after, partition))
+    end)
+  end
+
+  defp put_start_after_cursor(acc, _partition, nil), do: acc
+
+  defp put_start_after_cursor(acc, partition, sequence),
+    do: Map.put(acc, partition, sequence + 1)
+
+  defp apply_start_at_partition(state, stream, partition, selected_set, datetime, acc) do
+    if MapSet.member?(selected_set, partition) do
+      Map.put(acc, partition, first_sequence_at(state, stream, partition, datetime, 1))
+    else
+      acc
+    end
+  end
+
+  defp start_after_for_partition(sequence, _partition) when is_integer(sequence), do: sequence
+
+  defp start_after_for_partition(sequences, partition) when is_map(sequences) do
+    string_key = Partition.key(partition)
+
+    cond do
+      Map.has_key?(sequences, partition) -> Map.get(sequences, partition)
+      Map.has_key?(sequences, string_key) -> Map.get(sequences, string_key)
+      true -> nil
+    end
+  end
+
+  defp first_sequence_at(state, stream, partition, datetime, default) do
+    state.events
+    |> :ets.tab2list()
+    |> Enum.map(fn {_, event} -> event end)
+    |> Enum.filter(fn event ->
+      event.stream == stream and event.partition == partition and
+        DateTime.compare(event.timestamp, datetime) != :lt
+    end)
+    |> Enum.min_by(& &1.sequence, fn -> nil end)
+    |> case do
+      nil -> default
+      event -> event.sequence
+    end
+  end
+
+  defp rewind_frontiers_for_events(state, key, group_rec, events, partitions) do
+    partition_set = MapSet.new(partitions)
+
+    frontiers =
+      Enum.reduce(events, group_frontiers(group_rec), fn event, acc ->
+        if MapSet.member?(partition_set, event.partition) do
+          old = Partition.map_get(acc, event.partition, 0)
+          Map.put(acc, event.partition, min(old, max(event.sequence - 1, 0)))
+        else
+          acc
+        end
+      end)
+
+    :ets.insert(state.groups, {key, Map.put(group_rec, :frontiers, frontiers)})
+  end
+
+  defp rewind_frontiers_for_deliveries(state, key, group_rec, deliveries) do
+    frontiers =
+      Enum.reduce(deliveries, group_frontiers(group_rec), fn delivery, acc ->
+        old = Partition.map_get(acc, delivery.partition, 0)
+        Map.put(acc, delivery.partition, min(old, max(delivery.sequence - 1, 0)))
+      end)
+
+    :ets.insert(state.groups, {key, Map.put(group_rec, :frontiers, frontiers)})
   end
 
   defp build_event(stream, partition, sequence, payload, now, opts) do

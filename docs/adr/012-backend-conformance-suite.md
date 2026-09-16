@@ -11,7 +11,7 @@ run against both. Copy-pasted suites diverge; Mongo-only tests hide leaks.
 
 ## Decision
 
-1. Provide `Rheo.BackendContract` (ExUnit case template under `test/support`)
+1. Provide the BackendContract ExUnit case template under `test/support`
    that injects required semantic tests.
 2. Wire one contract module per backend (`ETS` always; `Mongo` tagged `:mongo`).
 3. Required v0.3 cases: streams, append/batch, sequences, immutability, read,

@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-16
+
+Partitions, per-partition sequences, contiguous ACK frontier, and lag.
+See [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html).
+
+### Added
+
+- Configurable `partition_count` with per-partition sequence allocation
+- Deterministic key routing via `:erlang.phash2/2` (`Rheo.Partition`)
+- Contiguous committed frontier per `(stream, group, partition)` (ADR 016)
+- `Rheo.lag/3` and `%Rheo.Lag{}` (sum of per-partition HW − frontier)
+- Static Group/Consumer `:partitions` assignment (`:all` or list)
+- Partition-scoped `replay` / `reset_group` (`:partition` / `:partitions`)
+- Capabilities `partitions: true`, `contiguous_frontier: true`
+- ADR [016](https://hexdocs.pm/rheo/016-partitions-and-ack-frontier.html);
+  tutorial [article 12](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
+- Livebook section for multi-partition publish, frontier hole, and lag
+
+### Changed
+
+- Group docs store per-partition `cursors` / `frontiers` (legacy `next_sequence`
+  maps to partition `0`)
+- Stream docs store `next_sequences` map
+- README / Livebook / changelog doc links stay on absolute HexDocs or GitHub
+  URLs so [hex.pm/packages/rheo](https://hex.pm/packages/rheo) does not 404
+  (same class of fix as 0.4.1)
+
 ## [0.4.1] - 2026-09-16
 
 ### Fixed
@@ -18,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-09-16
 
 Search, pagination/streaming, replay/reset, and event lineage — additive over
-v0.3.0. See [0.3 → 0.4 migration](docs/migrations/0.3-to-0.4.md).
+v0.3.0. See [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html).
 
 ### Added
 
@@ -32,9 +59,10 @@ v0.3.0. See [0.3 → 0.4 migration](docs/migrations/0.3-to-0.4.md).
 - `Rheo.Event.Lineage` helpers for `correlation_id`, `causation_id`, `producer`,
   `schema`, `schema_version`
 - Telemetry: `[:rheo, :group, :replay]`, `[:rheo, :group, :reset]`
-- ADR [015](docs/adr/015-replay-semantics.md); tutorial
-  [article 11](docs/tutorials/11-search-and-replay-the-event-history.md)
+- ADR [015](https://hexdocs.pm/rheo/015-replay-semantics.html); tutorial
+  [article 11](https://hexdocs.pm/rheo/11-search-and-replay-the-event-history.html)
 - Conformance + unit coverage for search/replay on ETS and Mongo
+- [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html)
 
 ### Changed
 
@@ -53,7 +81,7 @@ v0.3.0. See [0.3 → 0.4 migration](docs/migrations/0.3-to-0.4.md).
 
 - `Rheo.Backend.ETS` — ephemeral per-instance ETS backend (no Docker)
 - Backend `capabilities/0` callback; Mongo and ETS implementations
-- Backend conformance suite (`Rheo.BackendContract`) for ETS and Mongo
+- Backend conformance suite (BackendContract ExUnit template) for ETS and Mongo
 - ADRs 011, 012, 014; tutorial article 10
 - Docker-free `mix rheo.demo` (default ETS; `RHEO_BACKEND=mongo` for Mongo)
 
@@ -90,6 +118,7 @@ v0.3.0. See [0.3 → 0.4 migration](docs/migrations/0.3-to-0.4.md).
 
 Initial Mongo-backed MVP: streams, groups, leases, Consumer, docs, Livebook.
 
+[0.5.0]: https://github.com/thanos/rheo/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/thanos/rheo/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/thanos/rheo/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/thanos/rheo/compare/v0.2.0...v0.3.0

@@ -5,6 +5,9 @@ defmodule Rheo.Group do
   Owns demand, fetch scheduling, inflight leases, renewals, and drain — **not**
   durable ACK truth. Competing nodes may each run a Group for the same durable
   group; the backend arbitrates leases.
+
+  Optional `:partitions` (`:all` or a list of ids) scopes fetch to a static
+  assignment. Automatic rebalancing is not implemented (ADR 016).
   """
   use GenServer
   require Logger
@@ -27,6 +30,7 @@ defmodule Rheo.Group do
     :consumer_id,
     :user_state,
     :renew_timer,
+    :partitions,
     inflight: %{},
     draining: false,
     backoff_ms: 0
@@ -80,6 +84,7 @@ defmodule Rheo.Group do
 
     poll_ms = Keyword.get(opts, :poll_ms, 200)
     consumer_id = Keyword.get(opts, :consumer_id) || Rheo.Id.generate()
+    partitions = Keyword.get(opts, :partitions, :all)
 
     user_state =
       case maybe_setup(module, opts) do
@@ -97,6 +102,7 @@ defmodule Rheo.Group do
       lease_ms: lease_ms,
       poll_ms: poll_ms,
       consumer_id: consumer_id,
+      partitions: partitions,
       user_state: user_state
     }
 
@@ -192,12 +198,16 @@ defmodule Rheo.Group do
   end
 
   defp fetch_and_spawn(state, slots) do
-    case Rheo.fetch(state.stream, state.group,
-           rheo: state.rheo,
-           limit: slots,
-           consumer_id: state.consumer_id,
-           lease_ms: state.lease_ms
-         ) do
+    fetch_opts =
+      [
+        rheo: state.rheo,
+        limit: slots,
+        consumer_id: state.consumer_id,
+        lease_ms: state.lease_ms
+      ]
+      |> maybe_put_partitions(state.partitions)
+
+    case Rheo.fetch(state.stream, state.group, fetch_opts) do
       {:ok, []} ->
         Process.send_after(self(), :fetch, state.poll_ms)
         {:noreply, %{state | backoff_ms: 0}}
@@ -219,6 +229,10 @@ defmodule Rheo.Group do
         {:noreply, %{state | backoff_ms: backoff}}
     end
   end
+
+  defp maybe_put_partitions(opts, :all), do: opts
+  defp maybe_put_partitions(opts, nil), do: opts
+  defp maybe_put_partitions(opts, partitions), do: Keyword.put(opts, :partitions, partitions)
 
   defp spawn_worker(%Lease{} = lease, state) do
     user_state = state.user_state

@@ -6,13 +6,14 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.4.1** — Durable consumer-group semantics over searchable databases.
+**v0.5.0** — Durable consumer-group semantics over searchable databases.
 Backends today: **MongoDB** (durable) and **ETS** (ephemeral, zero-infra).
 Rheo is an Elixir/OTP library you embed in your supervision tree, not a
 standalone messaging server.
 
 **Delivery guarantee:** at-least-once. Duplicates are possible after failures —
-use stable event IDs for idempotency.
+use stable event IDs for idempotency. Ordering is guaranteed **within a
+partition** only (not globally across partitions).
 
 ## When to use
 
@@ -21,6 +22,7 @@ Use Rheo when you want:
 - An **immutable, queryable event log** in a database you already run
 - **Consumer groups** with leases, ACK, retry, and dead-lettering
 - **Competing consumers** and **independent groups** on the same stream
+- **Partitions** with key routing, a contiguous ACK frontier, and `Rheo.lag/3`
 - OTP-native demand, concurrency, and lease renewal — without standing up Kafka,
   RabbitMQ, or a separate broker cluster
 
@@ -50,7 +52,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.4.1"}
+    {:rheo, "~> 0.5.0"}
   ]
 end
 ```
@@ -146,6 +148,7 @@ in [Livebook](https://livebook.dev) (or browse it on
 
 Upgrading:
 
+- [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html) (partitions, frontier, lag)
 - [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) (additive — search, replay, lineage)
 - [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html) (breaking Group / Query changes)
 
@@ -162,6 +165,8 @@ because those files are not in the Hex tarball.
 - [Livebook demo](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html))
 - [Article 10: Prove it with ETS](https://hexdocs.pm/rheo/10-if-rheo-is-database-agnostic-prove-it-with-ets.html)
 - [Article 11: Search and Replay](https://hexdocs.pm/rheo/11-search-and-replay-the-event-history.html)
+- [Article 12: ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
+- [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html)
 - [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html)
 - [0.1 → 0.2 migration](https://hexdocs.pm/rheo/0-1-to-0-2.html)
 - [Changelog](https://hexdocs.pm/rheo/changelog.html)
@@ -221,6 +226,29 @@ Rheo.append("market-events", %{type: "curve_update", currency: "EUR", metadata: 
 Rheo.query("market-events", correlation_id: "trade-42")
 ```
 
+### Partitions, frontier, and lag
+
+Sequences are monotonic **per partition**. Append with a `:key` (or explicit
+`:partition`); ordering across partitions is undefined. Progress is a contiguous
+committed frontier — ACKs with holes do not advance lag (see
+[Article 12](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)).
+
+```elixir
+Rheo.create_stream("market-events", partition_count: 4)
+Rheo.create_group("market-events", "risk")
+
+Rheo.append("market-events", %{type: "curve_update", key: "EUR-EURIBOR-6M", price: 2.9})
+
+{:ok, lag} = Rheo.lag("market-events", "risk")
+# lag.partitions[p] => %{frontier: …, high_watermark: …, lag: …}
+# lag.lag => sum of per-partition lags
+
+# Static ownership (no automatic rebalance):
+{MyApp.RiskConsumer, partitions: [0, 1], concurrency: 4}
+
+Rheo.replay("market-events", "risk", from_sequence: 0, partition: 1)
+```
+
 ### Competing consumers and independent groups
 
 Multiple processes can compete for the same durable group. Separate groups on
@@ -268,8 +296,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.2.0** | `Rheo.Group` runtime, real concurrency, lease renewal, multi-instance handles, portable `Rheo.Query`, persistence-error semantics |
 | **0.3.0** | `Rheo.Backend.ETS`, capabilities, backend conformance suite, Docker-free demo |
 | **0.4.0** | Search pagination/streaming, replay/reset, event lineage conventions |
-| **0.4.1** (current) | Hex README links point at HexDocs / GitHub (relative `docs/` paths break on hex.pm) |
-| **0.5.0** | Partitioning and ordered consume within a partition |
+| **0.4.1** | Hex README links point at HexDocs / GitHub |
+| **0.5.0** (current) | Partitions, key routing, contiguous ACK frontier, lag |
 | **0.6.0** | PostgreSQL (or second durable) backend |
 | **0.7.0** | Mongo change-stream wakeups |
 | **0.8.0** | Ops surface: DLQ inspection, lag metrics, admin helpers |

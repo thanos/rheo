@@ -2,12 +2,36 @@ defmodule Rheo.Backend.ETSTest do
   use ExUnit.Case, async: false
 
   alias Rheo.Backend.ETS
-  alias Rheo.{Event, Lease}
+  alias Rheo.{Event, Lease, Query}
 
   setup do
     handle = :"ets_unit_#{System.unique_integer([:positive])}"
     assert {:ok, _} = start_supervised({ETS, name: handle}, id: handle)
     %{handle: handle}
+  end
+
+  defp drop_stream(handle, stream) do
+    :sys.replace_state(handle, fn state ->
+      true = :ets.delete(state.streams, stream)
+      state
+    end)
+  end
+
+  defp mutate_stream(handle, stream, fun) do
+    :sys.replace_state(handle, fn state ->
+      [{^stream, rec}] = :ets.lookup(state.streams, stream)
+      true = :ets.insert(state.streams, {stream, fun.(rec)})
+      state
+    end)
+  end
+
+  defp mutate_group(handle, stream, group, fun) do
+    :sys.replace_state(handle, fn state ->
+      key = {stream, group}
+      [{^key, rec}] = :ets.lookup(state.groups, key)
+      true = :ets.insert(state.groups, {key, fun.(rec)})
+      state
+    end)
   end
 
   test "starts without Mongo and survives basic consume loop" do
@@ -83,14 +107,361 @@ defmodule Rheo.Backend.ETSTest do
       assert {:error, :stream_not_found} = ETS.append_batch(handle, "nope", [%{type: "x"}])
     end
 
+    test "empty append_batch returns ok list", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s")
+      assert {:ok, []} = ETS.append_batch(handle, "s", [])
+    end
+
     test "fetch on missing group", %{handle: handle} do
       assert :ok = ETS.create_stream(handle, "s")
       assert {:error, :group_not_found} = ETS.fetch(handle, "s", "missing", limit: 1)
     end
 
+    test "fetch / replay / reset / lag when stream row missing", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s")
+      assert :ok = ETS.create_group(handle, "s", "g")
+      drop_stream(handle, "s")
+
+      assert {:error, :stream_not_found} = ETS.fetch(handle, "s", "g", limit: 1)
+      assert {:error, :stream_not_found} = ETS.replay(handle, "s", "g", from_sequence: 0)
+      assert {:error, :stream_not_found} = ETS.reset_group(handle, "s", "g")
+      assert {:error, :stream_not_found} = ETS.lag(handle, "s", "g")
+    end
+
     test "retry on missing group", %{handle: handle} do
       lease = sample_lease("s", "gone", "e1")
       assert {:error, :group_not_found} = ETS.retry(handle, lease, :tmp)
+    end
+  end
+
+  describe "partitions and lag" do
+    test "default arity replay and lag", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s", partition_count: 2)
+      assert :ok = ETS.create_group(handle, "s", "g")
+      assert {:ok, _} = ETS.append(handle, "s", %{type: "a"}, partition: 0)
+      assert {:ok, [lease]} = ETS.fetch(handle, "s", "g", limit: 1, partition: 0)
+      assert :ok = ETS.ack(handle, lease)
+
+      assert {:error, :invalid_replay_opts} = ETS.replay(handle, "s", "g")
+      assert :ok = ETS.replay(handle, "s", "g", from_sequence: 0)
+      assert {:ok, %Rheo.Lag{lag: lag}} = ETS.lag(handle, "s", "g")
+      assert is_integer(lag)
+    end
+
+    test "reject advances frontier past hole", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s")
+      assert :ok = ETS.create_group(handle, "s", "g")
+      assert {:ok, _} = ETS.append_batch(handle, "s", [%{type: "a"}, %{type: "b"}, %{type: "c"}])
+      assert {:ok, [l1, l2, l3]} = ETS.fetch(handle, "s", "g", limit: 3)
+      assert :ok = ETS.ack(handle, l1)
+      assert :ok = ETS.reject(handle, l2, :poison)
+      assert :ok = ETS.ack(handle, l3)
+
+      assert {:ok, lag} = ETS.lag(handle, "s", "g")
+      assert lag.partitions[0].frontier == 3
+    end
+
+    test "ack after group deleted still settles lease", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s")
+      assert :ok = ETS.create_group(handle, "s", "g")
+      assert {:ok, _} = ETS.append(handle, "s", %{type: "a"})
+      assert {:ok, [lease]} = ETS.fetch(handle, "s", "g", limit: 1)
+
+      :sys.replace_state(handle, fn state ->
+        true = :ets.delete(state.groups, {"s", "g"})
+        state
+      end)
+
+      assert :ok = ETS.ack(handle, lease)
+    end
+
+    test "start_after map with atom and string keys", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s", partition_count: 2)
+      assert {:ok, _} = ETS.append(handle, "s", %{type: "a"}, partition: 0)
+      assert {:ok, _} = ETS.append(handle, "s", %{type: "b"}, partition: 0)
+      assert {:ok, _} = ETS.append(handle, "s", %{type: "c"}, partition: 1)
+
+      assert :ok =
+               ETS.create_group(handle, "s", "g0", start_after: %{0 => 1}, partition: 0)
+
+      assert {:ok, [lease0]} = ETS.fetch(handle, "s", "g0", limit: 10, partition: 0)
+      assert lease0.event.sequence == 2
+
+      assert :ok =
+               ETS.create_group(handle, "s", "g1", start_after: %{"1" => 0}, partitions: [1])
+
+      assert {:ok, [lease1]} = ETS.fetch(handle, "s", "g1", limit: 10, partition: 1)
+      assert lease1.event.partition == 1
+
+      # Map missing selected partition leaves default cursor (nil branch).
+      assert :ok =
+               ETS.create_group(handle, "s", "g2", start_after: %{9 => 0}, partition: 0)
+
+      assert {:ok, [from_start | _]} = ETS.fetch(handle, "s", "g2", limit: 10, partition: 0)
+      assert from_start.event.sequence == 1
+    end
+
+    test "start_at with partition subset leaves other partitions alone", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s", partition_count: 2)
+      assert {:ok, e0} = ETS.append(handle, "s", %{type: "a"}, partition: 0)
+      assert {:ok, _} = ETS.append(handle, "s", %{type: "b"}, partition: 1)
+
+      assert :ok =
+               ETS.create_group(handle, "s", "g",
+                 start_at: e0.timestamp,
+                 partitions: [0]
+               )
+
+      assert {:ok, only0} = ETS.fetch(handle, "s", "g", limit: 10, partitions: [0])
+      assert Enum.all?(only0, &(&1.event.partition == 0))
+    end
+
+    test "partition-scoped reset and replay outside assignment", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s", partition_count: 2)
+      assert :ok = ETS.create_group(handle, "s", "g")
+      assert {:ok, e0} = ETS.append(handle, "s", %{type: "a"}, partition: 0)
+      assert {:ok, e1} = ETS.append(handle, "s", %{type: "b"}, partition: 1)
+      assert {:ok, leases} = ETS.fetch(handle, "s", "g", limit: 10)
+      Enum.each(leases, &ETS.ack(handle, &1))
+
+      assert :ok = ETS.reset_group(handle, "s", "g", partition: 0, start_after: 0)
+      assert {:ok, again} = ETS.fetch(handle, "s", "g", limit: 10, partition: 0)
+      assert Enum.all?(again, &(&1.event.partition == 0))
+
+      # Replay events filtered to assigned partitions only.
+      assert :ok = ETS.replay(handle, "s", "g", events: [e0, e1], partition: 1)
+      assert {:ok, replayed} = ETS.fetch(handle, "s", "g", limit: 10, partition: 1)
+      assert Enum.map(replayed, & &1.event_id) == [e1.id]
+    end
+
+    test "legacy next_sequence / next_sequences fallbacks", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s")
+      assert :ok = ETS.create_group(handle, "s", "g")
+      assert {:ok, _} = ETS.append(handle, "s", %{type: "a"})
+
+      mutate_stream(handle, "s", fn rec ->
+        rec
+        |> Map.delete(:next_sequences)
+        |> Map.put(:next_sequence, 4)
+      end)
+
+      mutate_group(handle, "s", "g", fn rec ->
+        rec
+        |> Map.delete(:cursors)
+        |> Map.delete(:frontiers)
+        |> Map.put(:next_sequence, 2)
+      end)
+
+      assert {:ok, lag} = ETS.lag(handle, "s", "g")
+      assert lag.partitions[0].high_watermark == 4
+      assert lag.partitions[0].frontier == 0
+    end
+
+    test "nested payload and string metadata key", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s")
+
+      assert {:ok, event} =
+               ETS.append(handle, "s", %{
+                 "type" => "nested",
+                 "metadata" => %{"schema" => "v1"},
+                 "bag" => %{"n" => 1, "ts" => ~U[2026-01-01 00:00:00Z], "xs" => [1, %{a: 2}]}
+               })
+
+      assert event.metadata["schema"] == "v1"
+      assert event.payload["bag"]["n"] == 1
+      assert is_list(event.payload["bag"]["xs"])
+    end
+
+    test "reset ignores other streams' deliveries", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s1")
+      assert :ok = ETS.create_stream(handle, "s2")
+      assert :ok = ETS.create_group(handle, "s1", "g")
+      assert :ok = ETS.create_group(handle, "s2", "g")
+      assert {:ok, _} = ETS.append(handle, "s1", %{type: "a"})
+      assert {:ok, e2} = ETS.append(handle, "s2", %{type: "b"})
+      assert {:ok, [_]} = ETS.fetch(handle, "s1", "g", limit: 1)
+      assert {:ok, [_]} = ETS.fetch(handle, "s2", "g", limit: 1)
+
+      assert :ok = ETS.reset_group(handle, "s1", "g")
+      assert {:ok, [still]} = ETS.read(handle, "s2", after: 0)
+      assert still.id == e2.id
+    end
+
+    test "lag group_not_found and legacy group cursors on fetch", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s")
+      assert :ok = ETS.create_group(handle, "s", "g")
+      assert {:ok, _} = ETS.append(handle, "s", %{type: "a"})
+
+      assert {:error, :group_not_found} = ETS.lag(handle, "s", "missing")
+
+      mutate_group(handle, "s", "g", fn rec ->
+        rec
+        |> Map.delete(:cursors)
+        |> Map.delete(:frontiers)
+        |> Map.put(:next_sequence, 1)
+      end)
+
+      assert {:ok, [_lease]} = ETS.fetch(handle, "s", "g", limit: 1)
+    end
+
+    test "replay walks other streams' delivery rows", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s1")
+      assert :ok = ETS.create_stream(handle, "s2")
+      assert :ok = ETS.create_group(handle, "s1", "g")
+      assert :ok = ETS.create_group(handle, "s2", "g")
+      assert {:ok, e1} = ETS.append(handle, "s1", %{type: "a"})
+      assert {:ok, _} = ETS.append(handle, "s2", %{type: "b"})
+      assert {:ok, [l1]} = ETS.fetch(handle, "s1", "g", limit: 1)
+      assert {:ok, [_]} = ETS.fetch(handle, "s2", "g", limit: 1)
+      assert :ok = ETS.ack(handle, l1)
+
+      assert :ok = ETS.replay(handle, "s1", "g", from_sequence: 0)
+      assert :ok = ETS.replay(handle, "s1", "g", event_ids: [e1.id])
+    end
+
+    test "starts with non-atom registered name", %{handle: _handle} do
+      name = {:global, :"ets_tuple_#{System.unique_integer([:positive])}"}
+      assert {:ok, _} = start_supervised({ETS, name: name}, id: name)
+      assert :ok = ETS.ping(name)
+      assert :ok = ETS.create_stream(name, "s")
+    end
+
+    test "reject stale lease and atom metadata causation filter", %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s")
+      assert :ok = ETS.create_group(handle, "s", "g")
+      assert {:ok, event} = ETS.append(handle, "s", %{type: "a"})
+      assert {:error, :stale_lease} = ETS.reject(handle, sample_lease("s", "g", event.id), :x)
+
+      :sys.replace_state(handle, fn state ->
+        key = {event.stream, event.partition, event.sequence}
+        [{^key, ^event}] = :ets.lookup(state.events, key)
+        atom_meta = %{causation_id: "atom-cause", correlation_id: "c"}
+        true = :ets.insert(state.events, {key, %{event | metadata: atom_meta}})
+        state
+      end)
+
+      assert {:ok, [found]} =
+               ETS.query(handle, %Query{
+                 stream: "s",
+                 where: [causation_id: "atom-cause"],
+                 limit: 10
+               })
+
+      assert found.id == event.id
+    end
+  end
+
+  describe "query filters" do
+    setup %{handle: handle} do
+      assert :ok = ETS.create_stream(handle, "s", partition_count: 2)
+
+      assert {:ok, eur} =
+               ETS.append(
+                 handle,
+                 "s",
+                 %{
+                   type: "curve_update",
+                   key: "EUR-1",
+                   currency: "EUR",
+                   curve: "EURIBOR",
+                   price: 2.5,
+                   metadata: %{
+                     correlation_id: "c1",
+                     causation_id: "cause",
+                     producer: "svc",
+                     schema: "v1"
+                   }
+                 },
+                 partition: 0,
+                 timestamp: ~U[2026-01-02 12:00:00Z]
+               )
+
+      assert {:ok, usd} =
+               ETS.append(
+                 handle,
+                 "s",
+                 %{
+                   type: "trade",
+                   key: "USD-1",
+                   currency: "USD",
+                   metadata: %{"correlation_id" => "c2", "producer" => "oms"}
+                 },
+                 partition: 1,
+                 timestamp: ~U[2026-01-03 12:00:00Z]
+               )
+
+      %{eur: eur, usd: usd}
+    end
+
+    test "filters by key, partition, metadata, and time window", %{handle: handle, eur: eur} do
+      assert {:ok, [^eur]} =
+               ETS.query(handle, %Query{
+                 stream: "s",
+                 where: [key: "EUR-1", partition: 0, currency: "EUR", curve: "EURIBOR"],
+                 limit: 10
+               })
+
+      assert {:ok, [^eur]} =
+               ETS.query(handle, %Query{
+                 stream: "s",
+                 where: [
+                   correlation_id: "c1",
+                   causation_id: "cause",
+                   producer: "svc",
+                   schema: "v1"
+                 ],
+                 limit: 10
+               })
+
+      assert {:ok, [^eur]} =
+               ETS.query(handle, %Query{
+                 stream: "s",
+                 from: ~U[2026-01-02 00:00:00Z],
+                 to: ~U[2026-01-02 23:59:59Z],
+                 limit: 10
+               })
+
+      assert {:ok, from_only} =
+               ETS.query(handle, %Query{
+                 stream: "s",
+                 from: ~U[2026-01-02 00:00:00Z],
+                 limit: 10
+               })
+
+      assert length(from_only) == 2
+
+      assert {:ok, [_]} =
+               ETS.query(handle, %Query{
+                 stream: "s",
+                 to: ~U[2026-01-02 23:59:59Z],
+                 limit: 10
+               })
+    end
+
+    test "generic payload field and catch-all where", %{handle: handle, usd: usd, eur: eur} do
+      assert {:ok, [^usd]} =
+               ETS.query(handle, %Query{
+                 stream: "s",
+                 where: [type: "trade", currency: "USD"],
+                 limit: 10
+               })
+
+      assert {:ok, [^eur]} =
+               ETS.query(handle, %Query{
+                 stream: "s",
+                 where: [price: 2.5],
+                 limit: 10
+               })
+
+      # Non-atom where field hits the catch-all matcher.
+      assert {:ok, both} =
+               ETS.query(handle, %Query{
+                 stream: "s",
+                 where: [{1, :ignored}],
+                 limit: 10
+               })
+
+      assert length(both) == 2
     end
   end
 

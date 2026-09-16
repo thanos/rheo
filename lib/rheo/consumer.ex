@@ -17,6 +17,7 @@ defmodule Rheo.Consumer do
     * `:lease_ms` — lease TTL in milliseconds
     * `:poll_ms` — idle poll interval (default `200`)
     * `:consumer_id` — worker identity (default: generated)
+    * `:partitions` — `:all` (default) or a list of partition ids this group owns
     * `:name` — optional bridge GenServer name
     * `:id` — supervisor child id (default: `{module, rheo, stream, group}`)
 

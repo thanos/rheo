@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.4.1"
+  @version "0.5.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -48,8 +48,10 @@ defmodule Rheo.MixProject do
           "docs/adr/013-portable-query-model.md",
           "docs/adr/014-ets-backend.md",
           "docs/adr/015-replay-semantics.md",
+          "docs/adr/016-partitions-and-ack-frontier.md",
           "docs/migrations/0.1-to-0.2.md",
           "docs/migrations/0.3-to-0.4.md",
+          "docs/migrations/0.4-to-0.5.md",
           "CHANGELOG.md",
           "docs/tutorials.md",
           "docs/tutorials/01-why-consumer-groups-on-a-database.md",
@@ -63,6 +65,7 @@ defmodule Rheo.MixProject do
           "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
           "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
           "docs/tutorials/11-search-and-replay-the-event-history.md",
+          "docs/tutorials/12-acks-are-not-a-cursor.md",
           "notebooks/rheo_demo.livemd"
         ],
         groups_for_extras: [
@@ -72,6 +75,7 @@ defmodule Rheo.MixProject do
             "docs/diagrams.md",
             "docs/migrations/0.1-to-0.2.md",
             "docs/migrations/0.3-to-0.4.md",
+            "docs/migrations/0.4-to-0.5.md",
             "CHANGELOG.md",
             "notebooks/rheo_demo.livemd"
           ],
@@ -91,7 +95,8 @@ defmodule Rheo.MixProject do
             "docs/adr/012-backend-conformance-suite.md",
             "docs/adr/013-portable-query-model.md",
             "docs/adr/014-ets-backend.md",
-            "docs/adr/015-replay-semantics.md"
+            "docs/adr/015-replay-semantics.md",
+            "docs/adr/016-partitions-and-ack-frontier.md"
           ],
           Tutorials: [
             "docs/tutorials.md",
@@ -105,7 +110,8 @@ defmodule Rheo.MixProject do
             "docs/tutorials/08-searching-the-stream.md",
             "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
             "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
-            "docs/tutorials/11-search-and-replay-the-event-history.md"
+            "docs/tutorials/11-search-and-replay-the-event-history.md",
+            "docs/tutorials/12-acks-are-not-a-cursor.md"
           ]
         ]
       ],
@@ -148,7 +154,7 @@ defmodule Rheo.MixProject do
       {:jason, "~> 1.4"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.34", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:mox, "~> 1.1", only: :test},
       {:excoveralls, "~> 0.18", only: :test}
@@ -160,18 +166,40 @@ defmodule Rheo.MixProject do
       "rheo.demo": ["run priv/demo/demo.exs"],
       "test.unit": ["test", "--exclude", "mongo", "--exclude", "integration"],
       "test.integration": ["test", "--include", "integration"],
-      quality: [
-        "format --check-formatted",
-        "compile --warnings-as-errors",
-        "credo --strict",
-        "dialyzer",
-        "coveralls"
-      ]
+      ci: &verify/1
     ]
   end
 
+  defp verify(_) do
+    steps = [
+      {"compile --warnings-as-errors", :dev},
+      {"format --check-formatted", :dev},
+      {"credo --strict", :dev},
+      {"dialyzer", :dev},
+      {"test --cover", :test},
+      {"docs --warnings-as-errors", :dev}
+    ]
+
+    Enum.each(steps, fn {task, env} ->
+      Mix.shell().info([:bright, "==> mix #{task}", :reset])
+
+      {_, exit_code} =
+        System.cmd("mix", String.split(task),
+          env: [{"MIX_ENV", to_string(env)}],
+          into: IO.stream()
+        )
+
+      if exit_code != 0 do
+        Mix.raise("mix #{task} failed (exit code #{exit_code})")
+      end
+    end)
+
+    Mix.shell().info([:green, :bright, "\nAll verification checks passed!", :reset])
+  end
+
   defp description do
-    "Durable consumer-group semantics over searchable databases (MongoDB + ETS)."
+    "Durable consumer-group semantics over searchable databases (MongoDB + ETS). " <>
+      "Partitions, contiguous ACK frontier, and lag in v0.5."
   end
 
   defp package do
@@ -180,7 +208,8 @@ defmodule Rheo.MixProject do
       licenses: ["MIT"],
       links: %{
         "GitHub" => @source_url,
-        "Docs" => "https://hexdocs.pm/rheo"
+        "Docs" => "https://hexdocs.pm/rheo",
+        "Changelog" => "https://hexdocs.pm/rheo/changelog.html"
       },
       files: ~w(
         lib

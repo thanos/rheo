@@ -9,16 +9,24 @@ correct schema.
 
 Collections:
 
-- `streams` — `{name, partition_count, next_sequence}`
-- `events` — immutable event documents
-- `groups` — `{stream, name, next_sequence, max_attempts}`
-- `deliveries` — per `(stream, group, event_id)` lease/ACK/DLQ state
+- `streams` — `{name, partition_count, next_sequences, created_at}`  
+  (`next_sequences` is a map of partition → last allocated sequence; legacy
+  `next_sequence` is treated as partition `0` only)
+- `events` — immutable event documents keyed by `(stream, partition, sequence)`
+- `groups` — `{stream, name, cursors, frontiers, max_attempts, created_at}`  
+  (`cursors` = materialization next-sequence per partition; `frontiers` =
+  contiguous committed sequence per partition; legacy `next_sequence` maps to
+  partition `0`)
+- `deliveries` — per `(stream, group, event_id)` lease/ACK/DLQ state including
+  `partition` and `sequence`
 
-Sequence allocation uses atomic `$inc` on the stream document.
-Fetch materializes delivery rows lazily, then claims with conditional updates.
+Sequence allocation uses atomic `$inc` on `next_sequences.<partition>`.
+Fetch materializes delivery rows lazily per partition, then claims with
+conditional updates. ACK/reject advance the contiguous frontier (ADR 016).
 
-Indexes support stream/partition/sequence uniqueness, claim lookups, and common
-query fields (`type`, `key`, `timestamp`, currency/curve, correlation id).
+Indexes support stream/partition/sequence uniqueness, claim lookups,
+`(stream, group, partition, sequence)` frontier walks, and common query fields
+(`type`, `key`, `timestamp`, currency/curve, correlation id).
 
 ## Alternatives
 
@@ -29,3 +37,4 @@ query fields (`type`, `key`, `timestamp`, currency/curve, correlation id).
 
 - Correct competing-consumer semantics with Mongo atomic ops
 - Queryability is a first-class indexed workload
+- Multi-partition ordering is per partition only (ADR 016)

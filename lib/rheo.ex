@@ -7,6 +7,11 @@ defmodule Rheo do
   after a crash or lease expiry an event may be delivered again. Make handlers
   idempotent using stable event ids (`Rheo.Event.id`).
 
+  From **v0.5**, streams may use multiple partitions: sequences and ordering are
+  **per partition**, key routing uses `:erlang.phash2/2`, and group progress is a
+  contiguous ACK frontier (`Rheo.lag/3`). There is no global order across
+  partitions.
+
   ## Supervision
 
       children = [
@@ -25,17 +30,18 @@ defmodule Rheo do
 
   ## Typical low-level flow
 
-      Rheo.create_stream("market-events")
-      {:ok, event} = Rheo.append("market-events", %{type: "curve_update", currency: "EUR"})
+      Rheo.create_stream("market-events", partition_count: 4)
+      {:ok, event} = Rheo.append("market-events", %{type: "curve_update", key: "EUR-1"})
       Rheo.create_group("market-events", "risk")
       {:ok, leases} = Rheo.fetch("market-events", "risk", limit: 10)
       :ok = Rheo.ack(hd(leases))
-      {:ok, _} = Rheo.query("market-events", type: "curve_update", currency: "EUR")
+      {:ok, _} = Rheo.query("market-events", type: "curve_update")
+      {:ok, lag} = Rheo.lag("market-events", "risk")
 
   Search history with `query` / `query_page` / `stream_query`. Replay without
   copying events via `create_group` start cursors, `replay/3`, or
   `reset_group/3` (`confirm: true`). See `Rheo.Event.Lineage` for correlation
-  metadata.
+  metadata and `Rheo.Partition` for routing helpers.
 
   See also `Rheo.Consumer` for the OTP handler API and `Rheo.Backend` for adapters.
   """
@@ -118,12 +124,13 @@ defmodule Rheo do
     * `stream` — unique stream name (`t:stream/0`)
     * `opts` — optional keyword list:
       * `:rheo` — instance name (default `Rheo`)
-      * `:partition_count` — number of partitions (default `1`; MVP consumes
-        partition `0` only)
+      * `:partition_count` — number of partitions (default `1`). Sequences are
+        per-partition; key routing uses `:erlang.phash2/2` when `:key` is set
+        on append (ADR 016).
 
   ## Examples
 
-      iex> stream = "doc-create-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-create-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> Rheo.create_stream(stream)
       :ok
       iex> Rheo.create_stream(stream)
@@ -154,12 +161,14 @@ defmodule Rheo do
       * `:rheo` — instance name (default `Rheo`)
       * `:max_attempts` — attempts before dead-letter on retry (default from
         application env, typically `5`)
-      * `:start_after` — exclusive sequence; group begins materializing after this
+      * `:start_after` — exclusive sequence (integer for all selected partitions,
+        or `%{partition => sequence}` map); group begins materializing after this
       * `:start_at` — `DateTime`; begin at the first event at/after this time
-
+      * `:partition` / `:partitions` — limit start cursors to those partitions
+        (default all)
   ## Examples
 
-      iex> stream = "doc-group-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-group-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> :ok = Rheo.create_stream(stream)
       iex> Rheo.create_group(stream, "risk")
       :ok
@@ -198,14 +207,14 @@ defmodule Rheo do
     * `opts` — optional keyword list:
       * `:rheo` — instance name (default `Rheo`)
       * `:id` — explicit event id (default: generated)
-      * `:key` — overrides payload key
+      * `:key` — routing / payload key; hashed into a partition when `:partition` omitted
       * `:metadata` — extra metadata map
       * `:timestamp` — `DateTime.t()` (default: clock now)
-      * `:partition` — partition number (default `0`)
+      * `:partition` — explicit partition (overrides key routing)
 
   ## Examples
 
-      iex> stream = "doc-append-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-append-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> :ok = Rheo.create_stream(stream)
       iex> {:ok, event} = Rheo.append(stream, %{
       ...>   type: "curve_update",
@@ -242,7 +251,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-batch-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-batch-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> :ok = Rheo.create_stream(stream)
       iex> {:ok, events} = Rheo.append_batch(stream, [
       ...>   %{type: "tick", n: 1},
@@ -280,7 +289,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-read-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-read-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> :ok = Rheo.create_stream(stream)
       iex> {:ok, _} = Rheo.append_batch(stream, [%{type: "a"}, %{type: "b"}, %{type: "c"}])
       iex> {:ok, [first, second]} = Rheo.read(stream, after: 0, limit: 2)
@@ -314,7 +323,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-query-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-query-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> :ok = Rheo.create_stream(stream)
       iex> {:ok, _} = Rheo.append(stream, %{
       ...>   type: "curve_update",
@@ -439,19 +448,23 @@ defmodule Rheo do
   @spec replay(stream(), group(), keyword()) :: :ok | {:error, term()}
   def replay(stream, group, opts \\ []) when is_binary(stream) and is_binary(group) do
     {backend, handle, opts} = resolve(opts)
+    scope = Keyword.take(opts, [:partition, :partitions])
 
     result =
       cond do
         Keyword.has_key?(opts, :from_sequence) ->
-          backend.replay(handle, stream, group,
-            from_sequence: Keyword.fetch!(opts, :from_sequence)
+          backend.replay(
+            handle,
+            stream,
+            group,
+            [from_sequence: Keyword.fetch!(opts, :from_sequence)] ++ scope
           )
 
         Keyword.has_key?(opts, :from) ->
           with {:ok, seq} <-
                  sequence_at_or_after(backend, handle, stream, Keyword.fetch!(opts, :from)) do
             # exclusive: replay from just before that event
-            backend.replay(handle, stream, group, from_sequence: seq - 1)
+            backend.replay(handle, stream, group, [from_sequence: seq - 1] ++ scope)
           end
 
         Keyword.has_key?(opts, :query) ->
@@ -494,6 +507,18 @@ defmodule Rheo do
           error
       end
     end
+  end
+
+  @doc """
+  Returns contiguous-frontier lag for a consumer group (v0.5+).
+
+  Per-partition lag is `max(high_watermark - frontier, 0)`. Aggregate `lag` is
+  the sum across partitions. See `Rheo.Lag` and ADR 016.
+  """
+  @spec lag(stream(), group(), keyword()) :: {:ok, Rheo.Lag.t()} | {:error, term()}
+  def lag(stream, group, opts \\ []) when is_binary(stream) and is_binary(group) do
+    {backend, handle, opts} = resolve(opts)
+    backend.lag(handle, stream, group, opts)
   end
 
   defp sequence_at_or_after(backend, handle, stream, %DateTime{} = dt) do
@@ -547,7 +572,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-fetch-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-fetch-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> :ok = Rheo.create_stream(stream)
       iex> :ok = Rheo.create_group(stream, "risk")
       iex> {:ok, _} = Rheo.append(stream, %{type: "order", id: 1})
@@ -604,7 +629,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-ack-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-ack-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> :ok = Rheo.create_stream(stream)
       iex> :ok = Rheo.create_group(stream, "risk")
       iex> {:ok, _} = Rheo.append(stream, %{type: "once"})
@@ -642,7 +667,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-nack-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-nack-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> :ok = Rheo.create_stream(stream)
       iex> :ok = Rheo.create_group(stream, "risk", max_attempts: 5)
       iex> {:ok, _} = Rheo.append(stream, %{type: "tmp"})
@@ -680,7 +705,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-reject-#{System.unique_integer([:positive])}"
+      iex> stream = "doc-reject-" <> Integer.to_string(System.unique_integer([:positive]))
       iex> :ok = Rheo.create_stream(stream)
       iex> :ok = Rheo.create_group(stream, "risk")
       iex> {:ok, _} = Rheo.append(stream, %{type: "poison"})

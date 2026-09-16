@@ -39,10 +39,11 @@ make lease fencing optional. Both backends must refuse a stale ACK.
 
 ## Conformance, not copy-paste
 
-`Rheo.BackendContract` injects the same ExUnit cases into:
+The BackendContract ExUnit template (`test/support/backend_contract.ex`) injects
+the same cases into:
 
-- `Rheo.Backend.ETSContractTest` (always on in CI)
-- `Rheo.Backend.MongoContractTest` (`@tag :mongo`)
+- ETS contract tests (always on in CI)
+- Mongo contract tests (`@tag :mongo`)
 
 When a test fails on one backend only, you found an abstraction leak.
 

@@ -15,10 +15,10 @@ defmodule Rheo.Event do
   |---|---|---|
   | `id` | `String.t()` | Stable unique id (use for idempotency) |
   | `stream` | `String.t()` | Stream name this event belongs to |
-  | `partition` | `non_neg_integer()` | Partition within the stream (MVP uses `0`) |
+  | `partition` | `non_neg_integer()` | Partition within the stream |
   | `sequence` | `pos_integer()` | Monotonic sequence within `(stream, partition)` |
   | `timestamp` | `DateTime.t()` | Event time (defaults to append time) |
-  | `key` | `String.t() \\| nil` | Optional routing / partition key |
+  | `key` | `String.t() \\| nil` | Optional routing key (`:erlang.phash2/2`) |
   | `type` | `String.t() \\| nil` | Optional event type for queries |
   | `metadata` | `map()` | Cross-cutting headers (correlation id, producer, …) |
   | `payload` | `map()` | Domain body (currency, curve, price, …) |

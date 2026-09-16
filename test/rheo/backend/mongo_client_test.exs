@@ -167,7 +167,16 @@ defmodule Rheo.Backend.Mongo.ClientTest do
   test "fetch claim with missing event" do
     stub(ClientMock, :find_one, fn
       :h, "groups", _ ->
-        %{"stream" => "s", "name" => "g", "next_sequence" => 1, "max_attempts" => 5}
+        %{
+          "stream" => "s",
+          "name" => "g",
+          "cursors" => %{"0" => 1},
+          "frontiers" => %{"0" => 0},
+          "max_attempts" => 5
+        }
+
+      :h, "streams", %{"name" => "s"} ->
+        %{"name" => "s"}
 
       :h, "events", %{"_id" => "missing"} ->
         nil
@@ -185,8 +194,9 @@ defmodule Rheo.Backend.Mongo.ClientTest do
   test "retry dead-letters at max attempts" do
     lease = %{sample_lease() | attempt: 5}
 
-    expect(ClientMock, :find_one, fn :h, "groups", _ ->
-      %{"max_attempts" => 5}
+    stub(ClientMock, :find_one, fn
+      :h, "groups", _ -> %{"max_attempts" => 5, "frontiers" => %{"0" => 0}}
+      :h, "deliveries", _ -> nil
     end)
 
     expect(ClientMock, :find_one_and_update, fn :h, "deliveries", _f, update, _o ->
@@ -199,6 +209,11 @@ defmodule Rheo.Backend.Mongo.ClientTest do
 
   test "reject success" do
     lease = sample_lease()
+
+    stub(ClientMock, :find_one, fn
+      :h, "groups", _ -> %{"frontiers" => %{"0" => 0}}
+      :h, "deliveries", _ -> nil
+    end)
 
     expect(ClientMock, :find_one_and_update, fn :h, "deliveries", _f, update, _o ->
       assert update["$set"]["status"] == "rejected"
@@ -278,18 +293,20 @@ defmodule Rheo.Backend.Mongo.ClientTest do
       expect(ClientMock, :find_one, fn :h, "streams", _ -> %{"name" => "s"} end)
 
       expect(ClientMock, :insert_one, fn :h, "groups", doc ->
-        assert doc["next_sequence"] == 1
+        assert doc["cursors"] == %{"0" => 1}
+        assert doc["frontiers"] == %{"0" => 0}
         {:ok, %{}}
       end)
 
       assert :ok = MongoBackend.create_group(:h, "s", "g")
     end
 
-    test "start_after sets next_sequence to after + 1" do
+    test "start_after sets partition cursor to after + 1" do
       expect(ClientMock, :find_one, fn :h, "streams", _ -> %{"name" => "s"} end)
 
       expect(ClientMock, :insert_one, fn :h, "groups", doc ->
-        assert doc["next_sequence"] == 11
+        assert doc["cursors"] == %{"0" => 11}
+        assert doc["frontiers"] == %{"0" => 0}
         {:ok, %{}}
       end)
 
@@ -318,7 +335,8 @@ defmodule Rheo.Backend.Mongo.ClientTest do
       end)
 
       expect(ClientMock, :insert_one, fn :h, "groups", doc ->
-        assert doc["next_sequence"] == 5
+        assert doc["cursors"] == %{"0" => 5}
+        assert doc["frontiers"] == %{"0" => 0}
         {:ok, %{}}
       end)
 
@@ -331,7 +349,8 @@ defmodule Rheo.Backend.Mongo.ClientTest do
       expect(ClientMock, :find, fn :h, "events", _f, _o -> [] end)
 
       expect(ClientMock, :insert_one, fn :h, "groups", doc ->
-        assert doc["next_sequence"] == 1
+        assert doc["cursors"] == %{"0" => 1}
+        assert doc["frontiers"] == %{"0" => 0}
         {:ok, %{}}
       end)
 
@@ -342,9 +361,20 @@ defmodule Rheo.Backend.Mongo.ClientTest do
 
   describe "replay" do
     setup do
-      expect(ClientMock, :find_one, fn :h, "groups", %{"stream" => "s", "name" => "g"} ->
-        %{"stream" => "s", "name" => "g", "next_sequence" => 1}
+      stub(ClientMock, :find_one, fn
+        :h, "groups", %{"stream" => "s", "name" => "g"} ->
+          %{
+            "stream" => "s",
+            "name" => "g",
+            "cursors" => %{"0" => 1},
+            "frontiers" => %{"0" => 0}
+          }
+
+        :h, "streams", %{"name" => "s"} ->
+          %{"name" => "s"}
       end)
+
+      stub(ClientMock, :find, fn :h, "deliveries", _filter, _opts -> [] end)
 
       :ok
     end
@@ -366,12 +396,18 @@ defmodule Rheo.Backend.Mongo.ClientTest do
         assert filter == %{
                  "stream" => "s",
                  "group" => "g",
-                 "event_id" => %{"$in" => ["e1", "e2"]}
+                 "event_id" => %{"$in" => ["e1", "e2"]},
+                 "partition" => %{"$in" => [0]}
                }
 
         assert update["$set"]["status"] == "available"
         assert update["$set"]["reason"] == "replay"
         {:ok, %{}}
+      end)
+
+      expect(ClientMock, :find_one_and_update, fn :h, "groups", _filter, update, _opts ->
+        assert update == %{"$set" => %{"frontiers" => %{"0" => 0}}}
+        {:ok, %Mongo.FindAndModifyResult{value: %{}}}
       end)
 
       assert :ok = MongoBackend.replay(:h, "s", "g", event_ids: ["e1", "e2"])
@@ -389,14 +425,19 @@ defmodule Rheo.Backend.Mongo.ClientTest do
     test "events upserts deliveries via reopen_deliveries_with_events" do
       events = [sample_event("e1", 1), sample_event("e2", 2)]
 
-      expect(ClientMock, :find_one_and_update, 2, fn :h, "deliveries", filter, update, opts ->
-        assert opts[:upsert] == true
-        assert filter["group"] == "g"
-        assert filter["event_id"] in ["e1", "e2"]
-        assert update["$set"]["status"] == "available"
-        assert update["$set"]["reason"] == "replay"
-        assert update["$setOnInsert"]["event_id"] == filter["event_id"]
-        {:ok, %Mongo.FindAndModifyResult{value: %{}}}
+      stub(ClientMock, :find_one_and_update, fn
+        :h, "deliveries", filter, update, opts ->
+          assert opts[:upsert] == true
+          assert filter["group"] == "g"
+          assert filter["event_id"] in ["e1", "e2"]
+          assert update["$set"]["status"] == "available"
+          assert update["$set"]["reason"] == "replay"
+          assert update["$setOnInsert"]["event_id"] == filter["event_id"]
+          {:ok, %Mongo.FindAndModifyResult{value: %{}}}
+
+        :h, "groups", _filter, update, _opts ->
+          assert update == %{"$set" => %{"frontiers" => %{"0" => 0}}}
+          {:ok, %Mongo.FindAndModifyResult{value: %{}}}
       end)
 
       assert :ok = MongoBackend.replay(:h, "s", "g", events: events)
@@ -425,7 +466,16 @@ defmodule Rheo.Backend.Mongo.ClientTest do
   test "materialize ignore_duplicate on delivery insert" do
     stub(ClientMock, :find_one, fn
       :h, "groups", _ ->
-        %{"stream" => "s", "name" => "g", "next_sequence" => 1, "max_attempts" => 5}
+        %{
+          "stream" => "s",
+          "name" => "g",
+          "cursors" => %{"0" => 1},
+          "frontiers" => %{"0" => 0},
+          "max_attempts" => 5
+        }
+
+      :h, "streams", %{"name" => "s"} ->
+        %{"name" => "s"}
 
       :h, "events", %{"_id" => "e1"} ->
         %{

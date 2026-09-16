@@ -95,5 +95,6 @@ untouched. Without `confirm: true`, Rheo returns `{:error, :confirm_required}`.
 
 ## What comes next
 
-v0.5 adds partitions and a contiguous ACK frontier — “ACKs are not a cursor.”
-See [ADR 015](../adr/015-replay-semantics.md).
+v0.5 shipped partitions and a contiguous ACK frontier — “ACKs are not a cursor.”
+See [Article 12](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html) and
+[ADR 016](https://hexdocs.pm/rheo/016-partitions-and-ack-frontier.html).

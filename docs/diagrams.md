@@ -50,3 +50,21 @@ stateDiagram-v2
   acked --> [*]
   rejected --> [*]
 ```
+
+## Partitions and ACK frontier (v0.5)
+
+```mermaid
+flowchart LR
+  append[append key or partition] --> route[phash2]
+  route --> seq[per-partition sequence]
+  seq --> events[immutable events]
+  fetch[fetch assigned partitions] --> mat[materialize by cursor]
+  mat --> claim[lease by sequence]
+  claim --> ack[ACK or reject]
+  ack --> frontier[contiguous frontier]
+  frontier --> lag[Rheo.lag HW - frontier]
+  events --> mat
+```
+
+Ordering is within a partition only. A hole (ACK 1001, inflight 1002, ACK 1003)
+keeps the frontier at 1001 until 1002 is terminal.

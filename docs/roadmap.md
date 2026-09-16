@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.4.1** (2026-09-16).
+Current release: **v0.5.0** (2026-09-16).
 
 ## Done in 0.1.0
 
@@ -36,17 +36,27 @@ Current release: **v0.4.1** (2026-09-16).
 - Query sequence bounds, `query_page` / `stream_query`
 - Replay / `reset_group` (no event copies); `create_group` start cursors
 - `Rheo.Event.Lineage` conventions
-- ADR 015 + Article 11 + [0.3 → 0.4 migration](migrations/0.3-to-0.4.md)
+- ADR 015 + Article 11 + [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html)
 
 ## Done in 0.4.1
 
 - Hex README links use HexDocs / GitHub absolutes (relative `docs/` paths 404 on hex.pm)
 
-## Next (0.5+)
+## Done in 0.5.0
 
-- Partitions / contiguous ACK frontier
+- Configurable partitions + `:erlang.phash2/2` key routing
+- Per-partition sequences; ordered consume within a partition only
+- Contiguous ACK frontier + `Rheo.lag/3`
+- Static Group/Consumer `:partitions` assignment (no auto-rebalance)
+- Partition-scoped `replay` / `reset_group`
+- ADR 016 + Article 12 + [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html)
+- Docs/Livebook/CHANGELOG links use absolute HexDocs or GitHub URLs for hex.pm
+
+## Next (0.6+)
+
 - Additional durable backends (Ecto family)
 - Broadway interop (evaluate)
+- Change-stream wakeups
 - Mnesia (later)
 
 ## Explicitly deferred

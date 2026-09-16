@@ -25,7 +25,7 @@ defmodule Rheo.Backend.Mongo do
 
   alias Rheo.Backend.Mongo.Client
   alias Rheo.Backend.Mongo.Codec
-  alias Rheo.{Clock, Event, Id, Lease, Query, Telemetry}
+  alias Rheo.{Clock, Event, Id, Lag, Lease, Partition, Query, Telemetry}
 
   @streams "streams"
   @events "events"
@@ -101,7 +101,9 @@ defmodule Rheo.Backend.Mongo do
       secondary_indexes: true,
       batch_writes: true,
       ordered_range_scan: true,
-      replay: true
+      replay: true,
+      partitions: true,
+      contiguous_frontier: true
     }
   end
 
@@ -140,6 +142,8 @@ defmodule Rheo.Backend.Mongo do
       {@groups, %{"stream" => 1, "name" => 1}, [unique: true, name: "groups_stream_name"]},
       {@deliveries, %{"stream" => 1, "group" => 1, "event_id" => 1},
        [unique: true, name: "deliveries_stream_group_event"]},
+      {@deliveries, %{"stream" => 1, "group" => 1, "partition" => 1, "sequence" => 1},
+       [name: "deliveries_frontier"]},
       {@deliveries, %{"stream" => 1, "group" => 1, "status" => 1, "expires_at" => 1},
        [name: "deliveries_claim"]}
     ]
@@ -147,39 +151,49 @@ defmodule Rheo.Backend.Mongo do
 
   @impl true
   def create_stream(topo, stream, opts \\ []) when is_binary(stream) do
-    doc = %{
-      "name" => stream,
-      "partition_count" => Keyword.get(opts, :partition_count, 1),
-      "next_sequence" => 0,
-      "created_at" => Clock.utc_now()
-    }
+    partition_count = Keyword.get(opts, :partition_count, 1)
 
-    case client().insert_one(topo, @streams, doc) do
-      {:ok, _} ->
-        :ok = ensure_indexes(topo)
-        Telemetry.execute([:rheo, :stream, :create], %{count: 1}, %{stream: stream})
-        :ok
+    if is_integer(partition_count) and partition_count >= 1 do
+      doc = %{
+        "name" => stream,
+        "partition_count" => partition_count,
+        "next_sequences" => string_partition_map(partition_count, 0),
+        "created_at" => Clock.utc_now()
+      }
 
-      {:error, reason} ->
-        already_or_error(reason)
+      case client().insert_one(topo, @streams, doc) do
+        {:ok, _} ->
+          :ok = ensure_indexes(topo)
+          Telemetry.execute([:rheo, :stream, :create], %{count: 1}, %{stream: stream})
+          :ok
+
+        {:error, reason} ->
+          already_or_error(reason)
+      end
+    else
+      {:error, :invalid_partition_count}
     end
   end
 
   @impl true
   def create_group(topo, stream, group, opts \\ [])
       when is_binary(stream) and is_binary(group) do
-    with {:ok, _} <- fetch_stream(topo, stream), do: insert_group(topo, stream, group, opts)
+    with {:ok, stream_doc} <- fetch_stream(topo, stream),
+         do: insert_group(topo, stream, group, stream_doc, opts)
   end
 
-  defp insert_group(topo, stream, group, opts) do
+  defp insert_group(topo, stream, group, stream_doc, opts) do
     max_attempts =
       Keyword.get(opts, :max_attempts, Application.get_env(:rheo, :default_max_attempts, 5))
 
-    with {:ok, next_sequence} <- resolve_group_start(topo, stream, opts) do
+    partition_count = partition_count(stream_doc)
+
+    with {:ok, cursors} <- resolve_group_start(topo, stream, partition_count, opts) do
       doc = %{
         "stream" => stream,
         "name" => group,
-        "next_sequence" => next_sequence,
+        "cursors" => cursors,
+        "frontiers" => string_partition_map(partition_count, 0),
         "max_attempts" => max_attempts,
         "created_at" => Clock.utc_now()
       }
@@ -196,23 +210,40 @@ defmodule Rheo.Backend.Mongo do
     end
   end
 
-  defp resolve_group_start(topo, stream, opts) do
-    cond do
-      Keyword.has_key?(opts, :start_after) ->
-        after_seq = Keyword.fetch!(opts, :start_after)
-        {:ok, after_seq + 1}
+  defp resolve_group_start(topo, stream, partition_count, opts) do
+    with {:ok, selected} <- resolve_assignment(opts, partition_count) do
+      cursors = string_partition_map(partition_count, 1)
 
-      Keyword.has_key?(opts, :start_at) ->
-        dt = Keyword.fetch!(opts, :start_at)
+      cond do
+        Keyword.has_key?(opts, :start_after) ->
+          start_after = Keyword.fetch!(opts, :start_after)
 
-        case query(topo, %Query{stream: stream, from: dt, order_by: [sequence: :asc], limit: 1}) do
-          {:ok, [%{sequence: seq} | _]} -> {:ok, seq}
-          {:ok, []} -> {:ok, 1}
-          {:error, reason} -> {:error, reason}
-        end
+          {:ok,
+           Enum.reduce(selected, cursors, fn partition, acc ->
+             case start_after_for_partition(start_after, partition) do
+               sequence when is_integer(sequence) ->
+                 Map.put(acc, Partition.key(partition), sequence + 1)
 
-      true ->
-        {:ok, 1}
+               _ ->
+                 acc
+             end
+           end)}
+
+        Keyword.has_key?(opts, :start_at) ->
+          datetime = Keyword.fetch!(opts, :start_at)
+
+          {:ok,
+           Enum.reduce(selected, cursors, fn partition, acc ->
+             Map.put(
+               acc,
+               Partition.key(partition),
+               first_sequence_at(topo, stream, partition, datetime)
+             )
+           end)}
+
+        true ->
+          {:ok, cursors}
+      end
     end
   end
 
@@ -233,21 +264,22 @@ defmodule Rheo.Backend.Mongo do
   defp do_append_batch(_topo, _stream, [], _opts), do: {:ok, []}
 
   defp do_append_batch(topo, stream, payloads, opts) do
-    with {:ok, _} <- fetch_stream(topo, stream),
-         {:ok, start_seq} <- allocate_sequences(topo, stream, length(payloads)) do
-      insert_event_docs(topo, stream, payloads, start_seq, opts)
+    with {:ok, stream_doc} <- fetch_stream(topo, stream),
+         {:ok, routed} <- resolve_payload_partitions(payloads, opts, partition_count(stream_doc)),
+         {:ok, starts} <- allocate_partition_sequences(topo, stream, stream_doc, routed) do
+      insert_event_docs(topo, stream, routed, starts, opts)
     end
   end
 
-  defp insert_event_docs(topo, stream, payloads, start_seq, opts) do
+  defp insert_event_docs(topo, stream, routed, starts, opts) do
     now = Clock.utc_now()
-    partition = Keyword.get(opts, :partition, 0)
 
-    docs =
-      payloads
-      |> Enum.with_index()
-      |> Enum.map(fn {payload, idx} ->
-        build_event_doc(stream, partition, start_seq + idx, payload, now, opts)
+    {docs, _offsets} =
+      Enum.map_reduce(routed, %{}, fn {payload, partition}, offsets ->
+        offset = Map.get(offsets, partition, 0)
+        sequence = Map.fetch!(starts, partition) + offset
+        doc = build_event_doc(stream, partition, sequence, payload, now, opts)
+        {doc, Map.put(offsets, partition, offset + 1)}
       end)
 
     case client().insert_many(topo, @events, docs, ordered: true) do
@@ -300,7 +332,9 @@ defmodule Rheo.Backend.Mongo do
   end
 
   defp do_fetch(topo, stream, group, opts) do
-    with {:ok, _} <- fetch_group(topo, stream, group) do
+    with {:ok, _} <- fetch_group(topo, stream, group),
+         {:ok, stream_doc} <- fetch_stream(topo, stream),
+         {:ok, partitions} <- resolve_assignment(opts, partition_count(stream_doc)) do
       limit = Keyword.get(opts, :limit, Application.get_env(:rheo, :default_max_demand, 10))
       consumer_id = Keyword.get_lazy(opts, :consumer_id, &Id.generate/0)
 
@@ -309,7 +343,18 @@ defmodule Rheo.Backend.Mongo do
 
       now = Clock.utc_now()
 
-      case fetch_until(topo, stream, group, consumer_id, lease_ms, limit, now, []) do
+      ctx = %{
+        topo: topo,
+        stream: stream,
+        group: group,
+        partitions: partitions,
+        consumer_id: consumer_id,
+        lease_ms: lease_ms,
+        limit: limit,
+        now: now
+      }
+
+      case fetch_until(ctx, []) do
         {:ok, leases} = ok ->
           Telemetry.execute([:rheo, :lease], %{count: length(leases)}, %{
             stream: stream,
@@ -325,22 +370,49 @@ defmodule Rheo.Backend.Mongo do
     end
   end
 
-  defp fetch_until(_topo, _stream, _group, _consumer_id, _lease_ms, limit, _now, acc)
-       when length(acc) >= limit do
+  defp fetch_until(%{limit: limit}, acc) when length(acc) >= limit do
     {:ok, acc}
   end
 
-  defp fetch_until(topo, stream, group, consumer_id, lease_ms, limit, now, acc) do
+  defp fetch_until(ctx, acc) do
+    %{
+      topo: topo,
+      stream: stream,
+      group: group,
+      partitions: partitions,
+      consumer_id: consumer_id,
+      lease_ms: lease_ms,
+      limit: limit,
+      now: now
+    } = ctx
+
     remaining = limit - length(acc)
 
     with {:ok, group_doc} <- fetch_group(topo, stream, group),
-         :ok <- materialize_deliveries(topo, stream, group, group_doc, max(remaining, 50)),
+         :ok <-
+           materialize_deliveries(
+             topo,
+             stream,
+             group,
+             group_doc,
+             partitions,
+             max(remaining, 50)
+           ),
          {:ok, batch} <-
-           claim_deliveries(topo, stream, group, consumer_id, lease_ms, remaining, now) do
+           claim_deliveries(
+             topo,
+             stream,
+             group,
+             partitions,
+             consumer_id,
+             lease_ms,
+             remaining,
+             now
+           ) do
       if batch == [] do
         {:ok, acc}
       else
-        fetch_until(topo, stream, group, consumer_id, lease_ms, limit, now, acc ++ batch)
+        fetch_until(ctx, acc ++ batch)
       end
     end
   end
@@ -388,7 +460,10 @@ defmodule Rheo.Backend.Mongo do
         }
       }
 
-      mutate_lease(topo, lease, update)
+      with :ok <- mutate_lease(topo, lease, update) do
+        advance_frontier(topo, lease)
+        :ok
+      end
     end)
   end
 
@@ -442,6 +517,7 @@ defmodule Rheo.Backend.Mongo do
             event_id: lease.event_id
           })
 
+          advance_frontier(topo, lease)
           :ok
 
         error ->
@@ -452,17 +528,23 @@ defmodule Rheo.Backend.Mongo do
 
   @impl true
   def replay(topo, stream, group, opts \\ []) do
-    with {:ok, _} <- fetch_group(topo, stream, group) do
+    with {:ok, group_doc} <- fetch_group(topo, stream, group),
+         {:ok, stream_doc} <- fetch_stream(topo, stream),
+         {:ok, partitions} <- resolve_assignment(opts, partition_count(stream_doc)) do
       cond do
         events = Keyword.get(opts, :events) ->
-          reopen_deliveries_with_events(topo, stream, group, events)
+          selected = Enum.filter(events, &(&1.partition in partitions))
+
+          with :ok <- reopen_deliveries_with_events(topo, stream, group, selected) do
+            rewind_frontiers_for_events(topo, stream, group, group_doc, selected)
+          end
 
         ids = Keyword.get(opts, :event_ids) ->
-          reopen_deliveries(topo, stream, group, ids)
+          reopen_deliveries(topo, stream, group, group_doc, ids, partitions)
 
         Keyword.has_key?(opts, :from_sequence) ->
           from_seq = Keyword.fetch!(opts, :from_sequence)
-          reopen_from_sequence(topo, stream, group, from_seq + 1)
+          reopen_from_sequence(topo, stream, group, group_doc, from_seq + 1, partitions)
 
         true ->
           {:error, :invalid_replay_opts}
@@ -472,21 +554,39 @@ defmodule Rheo.Backend.Mongo do
 
   @impl true
   def reset_group(topo, stream, group, opts \\ []) do
-    with {:ok, _} <- fetch_group(topo, stream, group) do
-      start_seq = Keyword.get(opts, :start_after, 0) + 1
+    with {:ok, group_doc} <- fetch_group(topo, stream, group),
+         {:ok, stream_doc} <- fetch_stream(topo, stream),
+         {:ok, partitions} <- resolve_assignment(opts, partition_count(stream_doc)),
+         {:ok, starts} <-
+           resolve_group_start(topo, stream, partition_count(stream_doc), opts) do
+      filter = %{
+        "stream" => stream,
+        "group" => group,
+        "partition" => %{"$in" => partitions}
+      }
 
-      case client().delete_many(topo, @deliveries, %{"stream" => stream, "group" => group}) do
+      case client().delete_many(topo, @deliveries, filter) do
         {:ok, _} ->
-          _ =
-            client().find_one_and_update(
-              topo,
-              @groups,
-              %{"stream" => stream, "name" => group},
-              %{"$set" => %{"next_sequence" => start_seq}},
-              return_document: :after
-            )
+          cursors =
+            Enum.reduce(partitions, group_cursors(group_doc), fn partition, acc ->
+              Map.put(acc, Partition.key(partition), Partition.map_get(starts, partition, 1))
+            end)
 
-          :ok
+          frontiers =
+            Enum.reduce(partitions, group_frontiers(group_doc), fn partition, acc ->
+              Map.put(acc, Partition.key(partition), 0)
+            end)
+
+          case client().find_one_and_update(
+                 topo,
+                 @groups,
+                 %{"stream" => stream, "name" => group},
+                 %{"$set" => %{"cursors" => cursors, "frontiers" => frontiers}},
+                 return_document: :after
+               ) do
+            {:ok, _} -> :ok
+            {:error, reason} -> {:error, map_backend_error(reason)}
+          end
 
         {:error, reason} ->
           {:error, map_backend_error(reason)}
@@ -494,10 +594,27 @@ defmodule Rheo.Backend.Mongo do
     end
   end
 
-  defp reopen_from_sequence(topo, stream, group, next_sequence) do
+  @impl true
+  def lag(topo, stream, group, opts \\ []) do
+    with {:ok, group_doc} <- fetch_group(topo, stream, group),
+         {:ok, stream_doc} <- fetch_stream(topo, stream),
+         {:ok, partitions} <- resolve_assignment(opts, partition_count(stream_doc)) do
+      {:ok,
+       Lag.from_maps(
+         stream,
+         group,
+         group_frontiers(group_doc),
+         stream_next_sequences(stream_doc),
+         partitions
+       )}
+    end
+  end
+
+  defp reopen_from_sequence(topo, stream, group, group_doc, next_sequence, partitions) do
     filter = %{
       "stream" => stream,
       "group" => group,
+      "partition" => %{"$in" => partitions},
       "sequence" => %{"$gte" => next_sequence}
     }
 
@@ -514,30 +631,34 @@ defmodule Rheo.Backend.Mongo do
 
     case client().update_many(topo, @deliveries, filter, update, []) do
       {:ok, _} ->
-        _ =
-          client().find_one_and_update(
-            topo,
-            @groups,
-            %{"stream" => stream, "name" => group},
-            %{"$set" => %{"next_sequence" => next_sequence}},
-            return_document: :after
-          )
+        cursors = put_partitions(group_cursors(group_doc), partitions, next_sequence)
 
-        :ok
+        frontiers =
+          Enum.reduce(partitions, group_frontiers(group_doc), fn partition, acc ->
+            replay_frontier = max(next_sequence - 1, 0)
+            old = Partition.map_get(acc, partition, 0)
+            Map.put(acc, Partition.key(partition), min(old, replay_frontier))
+          end)
+
+        update_group_maps(topo, stream, group, cursors, frontiers)
 
       {:error, reason} ->
         {:error, map_backend_error(reason)}
     end
   end
 
-  defp reopen_deliveries(_topo, _stream, _group, []), do: :ok
+  defp reopen_deliveries(_topo, _stream, _group, _group_doc, [], _partitions), do: :ok
 
-  defp reopen_deliveries(topo, stream, group, event_ids) when is_list(event_ids) do
+  defp reopen_deliveries(topo, stream, group, group_doc, event_ids, partitions)
+       when is_list(event_ids) do
     filter = %{
       "stream" => stream,
       "group" => group,
-      "event_id" => %{"$in" => event_ids}
+      "event_id" => %{"$in" => event_ids},
+      "partition" => %{"$in" => partitions}
     }
+
+    deliveries = Enum.to_list(client().find(topo, @deliveries, filter, sort: %{"partition" => 1}))
 
     update = %{
       "$set" => %{
@@ -551,7 +672,7 @@ defmodule Rheo.Backend.Mongo do
     }
 
     case client().update_many(topo, @deliveries, filter, update, []) do
-      {:ok, _} -> :ok
+      {:ok, _} -> rewind_frontiers_for_deliveries(topo, stream, group, group_doc, deliveries)
       {:error, reason} -> {:error, map_backend_error(reason)}
     end
   end
@@ -601,6 +722,61 @@ defmodule Rheo.Backend.Mongo do
     end
   end
 
+  defp advance_frontier(topo, %Lease{} = lease) do
+    partition = lease.event.partition
+
+    case fetch_group(topo, lease.stream, lease.group) do
+      {:ok, group_doc} ->
+        old_frontier = Partition.map_get(group_frontiers(group_doc), partition, 0)
+        frontier = walk_frontier(topo, lease.stream, lease.group, partition, old_frontier)
+
+        if frontier > old_frontier do
+          path = "frontiers.#{Partition.key(partition)}"
+
+          case client().find_one_and_update(
+                 topo,
+                 @groups,
+                 %{"stream" => lease.stream, "name" => lease.group},
+                 %{"$max" => %{path => frontier}},
+                 return_document: :after
+               ) do
+            {:ok, _} ->
+              Telemetry.execute(
+                [:rheo, :group, :frontier],
+                %{frontier: frontier},
+                %{
+                  stream: lease.stream,
+                  group: lease.group,
+                  partition: partition,
+                  frontier: frontier
+                }
+              )
+
+            {:error, _reason} ->
+              :ok
+          end
+        end
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp walk_frontier(topo, stream, group, partition, frontier) do
+    next = frontier + 1
+
+    case client().find_one(topo, @deliveries, %{
+           "stream" => stream,
+           "group" => group,
+           "partition" => partition,
+           "sequence" => next,
+           "status" => %{"$in" => ["acked", "rejected"]}
+         }) do
+      nil -> frontier
+      _delivery -> walk_frontier(topo, stream, group, partition, next)
+    end
+  end
+
   defp lease_filter(lease) do
     %{
       "stream" => lease.stream,
@@ -611,26 +787,141 @@ defmodule Rheo.Backend.Mongo do
     }
   end
 
-  defp allocate_sequences(topo, stream, count) do
+  defp rewind_frontiers_for_events(_topo, _stream, _group, _group_doc, []), do: :ok
+
+  defp rewind_frontiers_for_events(topo, stream, group, group_doc, events) do
+    frontiers =
+      Enum.reduce(events, group_frontiers(group_doc), fn event, acc ->
+        old = Partition.map_get(acc, event.partition, 0)
+        Map.put(acc, Partition.key(event.partition), min(old, max(event.sequence - 1, 0)))
+      end)
+
+    update_group_frontiers(topo, stream, group, frontiers)
+  end
+
+  defp rewind_frontiers_for_deliveries(topo, stream, group, group_doc, deliveries) do
+    frontiers =
+      Enum.reduce(deliveries, group_frontiers(group_doc), fn delivery, acc ->
+        partition = delivery["partition"] || delivery[:partition] || 0
+        sequence = delivery["sequence"] || delivery[:sequence]
+        old = Partition.map_get(acc, partition, 0)
+
+        if is_integer(sequence) do
+          Map.put(acc, Partition.key(partition), min(old, max(sequence - 1, 0)))
+        else
+          acc
+        end
+      end)
+
+    update_group_frontiers(topo, stream, group, frontiers)
+  end
+
+  defp update_group_frontiers(topo, stream, group, frontiers) do
+    case client().find_one_and_update(
+           topo,
+           @groups,
+           %{"stream" => stream, "name" => group},
+           %{"$set" => %{"frontiers" => frontiers}},
+           return_document: :after
+         ) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, map_backend_error(reason)}
+    end
+  end
+
+  defp update_group_maps(topo, stream, group, cursors, frontiers) do
+    case client().find_one_and_update(
+           topo,
+           @groups,
+           %{"stream" => stream, "name" => group},
+           %{"$set" => %{"cursors" => cursors, "frontiers" => frontiers}},
+           return_document: :after
+         ) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, map_backend_error(reason)}
+    end
+  end
+
+  defp resolve_payload_partitions(payloads, opts, partition_count) do
+    payloads
+    |> Enum.reduce_while({:ok, []}, fn payload, {:ok, acc} ->
+      case Partition.resolve(payload, opts, partition_count) do
+        {:ok, partition} -> {:cont, {:ok, [{payload, partition} | acc]}}
+        {:error, :invalid_partition} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, routed} -> {:ok, Enum.reverse(routed)}
+      error -> error
+    end
+  end
+
+  defp allocate_partition_sequences(topo, stream, stream_doc, routed) do
+    counts = Enum.frequencies_by(routed, &elem(&1, 1))
+
+    counts
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.reduce_while({:ok, %{}}, fn {partition, count}, {:ok, starts} ->
+      case allocate_sequences(topo, stream, stream_doc, partition, count) do
+        {:ok, start} -> {:cont, {:ok, Map.put(starts, partition, start)}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp allocate_sequences(topo, stream, stream_doc, partition, count) do
+    field = sequence_field(stream_doc, partition)
+
     case client().find_one_and_update(
            topo,
            @streams,
            %{"name" => stream},
-           %{"$inc" => %{"next_sequence" => count}},
+           %{"$inc" => %{field => count}},
            return_document: :after
          ) do
-      {:ok, result} -> sequences_from_result(result, count)
+      {:ok, result} -> sequences_from_result(result, count, partition, field)
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp sequences_from_result(result, count) do
+  defp sequences_from_result(result, count, partition, field) do
     case get_value(result) do
-      %{"next_sequence" => next} -> {:ok, next - count + 1}
-      %{next_sequence: next} -> {:ok, next - count + 1}
-      nil -> {:error, :stream_not_found}
+      doc when is_map(doc) ->
+        next =
+          if field == "next_sequence",
+            do: doc["next_sequence"] || doc[:next_sequence],
+            else:
+              Partition.map_get(
+                doc["next_sequences"] || doc[:next_sequences] || %{},
+                partition,
+                0
+              )
+
+        if is_integer(next), do: {:ok, next - count + 1}, else: {:error, :stream_not_found}
+
+      nil ->
+        {:error, :stream_not_found}
     end
   end
+
+  defp sequence_field(stream_doc, 0) do
+    sequences = stream_doc["next_sequences"] || stream_doc[:next_sequences]
+    legacy = stream_doc["next_sequence"] || stream_doc[:next_sequence]
+
+    cond do
+      is_map(sequences) and
+          (Map.has_key?(sequences, "0") or Map.has_key?(sequences, 0)) ->
+        "next_sequences.0"
+
+      is_integer(legacy) ->
+        "next_sequence"
+
+      true ->
+        "next_sequences.0"
+    end
+  end
+
+  defp sequence_field(_stream_doc, partition), do: "next_sequences.#{Partition.key(partition)}"
 
   defp build_event_doc(stream, partition, sequence, payload, now, opts) do
     id = Keyword.get_lazy(opts, :id, &Id.generate/0)
@@ -667,29 +958,40 @@ defmodule Rheo.Backend.Mongo do
     end
   end
 
-  defp materialize_deliveries(topo, stream, group, group_doc, limit) do
-    next_seq = group_doc["next_sequence"] || group_doc[:next_sequence] || 1
-    {:ok, events} = read(topo, stream, after: next_seq - 1, limit: limit)
-    insert_delivery_docs(topo, stream, group, next_seq, events)
+  defp materialize_deliveries(topo, stream, group, group_doc, partitions, limit) do
+    Enum.reduce_while(partitions, :ok, fn partition, :ok ->
+      next_sequence = Partition.map_get(group_cursors(group_doc), partition, 1)
+
+      {:ok, events} =
+        read(topo, stream, partition: partition, after: next_sequence - 1, limit: limit)
+
+      case insert_delivery_docs(topo, stream, group, partition, events) do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
   end
 
-  defp insert_delivery_docs(_topo, _stream, _group, _next_seq, []), do: :ok
+  defp insert_delivery_docs(_topo, _stream, _group, _partition, []), do: :ok
 
-  defp insert_delivery_docs(topo, stream, group, next_seq, events) do
+  defp insert_delivery_docs(topo, stream, group, partition, events) do
     docs = Enum.map(events, &delivery_doc(stream, group, &1))
-    _ = ignore_duplicate(client().insert_many(topo, @deliveries, docs, ordered: false))
-    last_seq = List.last(events).sequence
 
-    _ =
-      client().find_one_and_update(
-        topo,
-        @groups,
-        %{"stream" => stream, "name" => group, "next_sequence" => next_seq},
-        %{"$set" => %{"next_sequence" => last_seq + 1}},
-        return_document: :after
-      )
+    with :ok <- ignore_duplicate(client().insert_many(topo, @deliveries, docs, ordered: false)) do
+      last_seq = List.last(events).sequence
+      path = "cursors.#{Partition.key(partition)}"
 
-    :ok
+      case client().find_one_and_update(
+             topo,
+             @groups,
+             %{"stream" => stream, "name" => group},
+             %{"$max" => %{path => last_seq + 1}},
+             return_document: :after
+           ) do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, map_backend_error(reason)}
+      end
+    end
   end
 
   defp delivery_doc(stream, group, %Event{} = event) do
@@ -708,34 +1010,64 @@ defmodule Rheo.Backend.Mongo do
     }
   end
 
-  defp claim_deliveries(topo, stream, group, consumer_id, lease_ms, limit, now) do
-    claim_loop(topo, stream, group, consumer_id, lease_ms, limit, now, [])
+  defp claim_deliveries(
+         topo,
+         stream,
+         group,
+         partitions,
+         consumer_id,
+         lease_ms,
+         limit,
+         now
+       ) do
+    ctx = %{
+      topo: topo,
+      stream: stream,
+      group: group,
+      partitions: partitions,
+      consumer_id: consumer_id,
+      lease_ms: lease_ms,
+      now: now
+    }
+
+    claim_loop(ctx, limit, [])
   end
 
-  defp claim_loop(_topo, _stream, _group, _consumer_id, _lease_ms, 0, _now, acc) do
+  defp claim_loop(_ctx, 0, acc) do
     {:ok, Enum.reverse(acc)}
   end
 
-  defp claim_loop(topo, stream, group, consumer_id, lease_ms, remaining, now, acc) do
-    case claim_one(topo, stream, group, consumer_id, lease_ms, now) do
+  defp claim_loop(ctx, remaining, acc) do
+    %{
+      topo: topo,
+      stream: stream,
+      group: group,
+      partitions: partitions,
+      consumer_id: consumer_id,
+      lease_ms: lease_ms,
+      now: now
+    } = ctx
+
+    case claim_one(topo, stream, group, partitions, consumer_id, lease_ms, now) do
       {:ok, nil} ->
         {:ok, Enum.reverse(acc)}
 
       {:ok, lease} ->
-        claim_loop(topo, stream, group, consumer_id, lease_ms, remaining - 1, now, [lease | acc])
+        claim_loop(ctx, remaining - 1, [lease | acc])
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  defp claim_one(topo, stream, group, consumer_id, lease_ms, now) do
+  defp claim_one(topo, stream, group, partitions, consumer_id, lease_ms, now) do
     lease_id = Id.generate()
     expires_at = DateTime.add(now, lease_ms, :millisecond)
 
     filter = %{
       "stream" => stream,
       "group" => group,
+      "partition" => %{"$in" => partitions},
       "$or" => [
         %{"status" => "available"},
         %{"status" => "leased", "expires_at" => %{"$lte" => now}}
@@ -754,7 +1086,7 @@ defmodule Rheo.Backend.Mongo do
     }
 
     case client().find_one_and_update(topo, @deliveries, filter, update,
-           sort: %{"sequence" => 1},
+           sort: %{"partition" => 1, "sequence" => 1},
            return_document: :after
          ) do
       {:ok, result} ->
@@ -817,6 +1149,85 @@ defmodule Rheo.Backend.Mongo do
       nil -> {:error, :group_not_found}
       doc -> {:ok, doc}
     end
+  end
+
+  defp partition_count(doc), do: doc["partition_count"] || doc[:partition_count] || 1
+
+  defp stream_next_sequences(doc) do
+    case doc["next_sequences"] || doc[:next_sequences] do
+      map when is_map(map) -> with_legacy_partition_zero(map, doc, 0)
+      _ -> %{"0" => doc["next_sequence"] || doc[:next_sequence] || 0}
+    end
+  end
+
+  defp group_cursors(doc) do
+    case doc["cursors"] || doc[:cursors] do
+      map when is_map(map) -> with_legacy_partition_zero(map, doc, 1)
+      _ -> %{"0" => doc["next_sequence"] || doc[:next_sequence] || 1}
+    end
+  end
+
+  defp with_legacy_partition_zero(map, doc, default) do
+    if Map.has_key?(map, "0") or Map.has_key?(map, 0) do
+      map
+    else
+      legacy = doc["next_sequence"] || doc[:next_sequence] || default
+      Map.put(map, "0", legacy)
+    end
+  end
+
+  defp group_frontiers(doc) do
+    case doc["frontiers"] || doc[:frontiers] do
+      map when is_map(map) -> map
+      _ -> %{}
+    end
+  end
+
+  defp resolve_assignment(opts, partition_count) do
+    assignment =
+      cond do
+        Keyword.has_key?(opts, :partition) -> Keyword.fetch!(opts, :partition)
+        Keyword.has_key?(opts, :partitions) -> Keyword.fetch!(opts, :partitions)
+        true -> :all
+      end
+
+    Partition.normalize_assignment(assignment, partition_count)
+  end
+
+  defp string_partition_map(partition_count, value) do
+    Map.new(0..(partition_count - 1), fn partition -> {Partition.key(partition), value} end)
+  end
+
+  defp put_partitions(map, partitions, value) do
+    Enum.reduce(partitions, map, fn partition, acc ->
+      Map.put(acc, Partition.key(partition), value)
+    end)
+  end
+
+  defp start_after_for_partition(sequence, _partition) when is_integer(sequence), do: sequence
+
+  defp start_after_for_partition(sequences, partition) when is_map(sequences) do
+    string_key = Partition.key(partition)
+
+    cond do
+      Map.has_key?(sequences, partition) -> Map.get(sequences, partition)
+      Map.has_key?(sequences, string_key) -> Map.get(sequences, string_key)
+      true -> nil
+    end
+  end
+
+  defp start_after_for_partition(_, _), do: nil
+
+  defp first_sequence_at(topo, stream, partition, datetime) do
+    filter = %{
+      "stream" => stream,
+      "partition" => partition,
+      "timestamp" => %{"$gte" => datetime}
+    }
+
+    topo
+    |> then(&client().find(&1, @events, filter, sort: %{"sequence" => 1}, limit: 1))
+    |> Enum.find_value(1, fn doc -> doc["sequence"] || doc[:sequence] end)
   end
 
   defp build_query_filter(%Query{} = query) do

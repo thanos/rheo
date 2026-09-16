@@ -1,10 +1,10 @@
-# Rheo Livebook Demo (v0.4.1)
+# Rheo Livebook Demo (v0.5.0)
 
 ```elixir
 Mix.install(
   [
     # {:rheo, path: Path.join(__DIR__, "..")},
-    {:rheo, "~> 0.4.0"},
+    {:rheo, "~> 0.5.0"},
     {:kino, "~> 0.14"}
   ],
   config: [
@@ -24,7 +24,7 @@ Mix.install(
 2. Evaluate cells **top to bottom**
 3. **No Docker required** — this demo uses `Rheo.Backend.ETS` by default
 
-Rheo **v0.4.1** is an embedded Elixir/OTP library: consumer groups over a
+Rheo **v0.5.0** is an embedded Elixir/OTP library: consumer groups over a
 searchable event log (Mongo durable, ETS ephemeral). Delivery is
 **at-least-once** — use event IDs for idempotency.
 
@@ -34,6 +34,7 @@ This notebook covers:
 * searchable history (`query`, sequence bounds, `query_page`, `stream_query`)
 * event lineage metadata
 * replay / reset **without copying events**
+* partitions, contiguous frontier, and `Rheo.lag`
 
 ---
 
@@ -354,7 +355,61 @@ assert_without_confirm = Rheo.reset_group(stream, "risk")
 
 ---
 
-## 8. Idiomatic `Rheo.Consumer`
+## 8. Partitions, frontier hole, and lag
+
+Restart with a multi-partition stream to demo contiguous frontiers.
+
+```elixir
+case Process.whereis(Rheo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
+end
+
+{:ok, _} = Rheo.start_link(backend: Rheo.Backend.ETS)
+stream = "market-events"
+:ok = Rheo.create_stream(stream, partition_count: 4)
+:ok = Rheo.create_group(stream, "risk")
+
+for key <- ["EUR-A", "EUR-A", "USD-B", "GBP-C"] do
+  {:ok, _} = Rheo.append(stream, %{type: "curve_update", key: key, price: 1.0})
+end
+
+# Same key → same partition; sequences are per-partition
+{:ok, same_key} = Rheo.query(stream, key: "EUR-A", order_by: [sequence: :asc])
+
+Kino.DataTable.new(
+  Enum.map(same_key, fn e ->
+    %{partition: e.partition, sequence: e.sequence, key: e.key}
+  end)
+)
+```
+
+Hole rule: ACK 1 and 3 while 2 is still leased → frontier stays at 1.
+
+```elixir
+:ok = Rheo.create_group(stream, "frontier-demo")
+{:ok, _} = Rheo.append(stream, %{type: "t"}, partition: 0)
+{:ok, _} = Rheo.append(stream, %{type: "t"}, partition: 0)
+{:ok, _} = Rheo.append(stream, %{type: "t"}, partition: 0)
+
+{:ok, [l1, l2, l3]} = Rheo.fetch(stream, "frontier-demo", partition: 0, limit: 3)
+:ok = Rheo.ack(l1)
+:ok = Rheo.ack(l3)
+
+{:ok, lag_hole} = Rheo.lag(stream, "frontier-demo")
+:ok = Rheo.ack(l2)
+{:ok, lag_full} = Rheo.lag(stream, "frontier-demo")
+
+%{
+  while_hole: lag_hole.partitions[0],
+  after_fill: lag_full.partitions[0],
+  aggregate_lag: lag_full.lag
+}
+```
+
+---
+
+## 9. Idiomatic `Rheo.Consumer`
 
 ```elixir
 defmodule Livebook.RiskConsumer do
@@ -395,20 +450,19 @@ seen = Agent.get(agent, &Enum.reverse/1)
 ## Takeaways
 
 * **Immutable log** — consumption never deletes events (ETS or Mongo)
-
 * **Independent groups** — risk, surveillance, and risk-replay progress separately
-
 * **Leases + fencing** — stale ACKs fail; expired work is redelivered (at-least-once)
-
 * **Search** — filters, sequence bounds, `query_page`, `stream_query`
-
 * **Lineage** — `Rheo.Event.Lineage` metadata is queryable
-
 * **Replay** — new group + start cursor (preferred), `replay/3`, or loud `reset_group`
-
+* **Partitions** — per-partition sequences; key routing via `phash2`; no global order
+* **Frontier** — ACKs are not a cursor; holes block `Rheo.lag/3`
 * **OTP** — supervise `{Rheo, backend: Rheo.Backend.ETS | Mongo}` and `Rheo.Consumer`
 
-Further reading: [Article 11](../docs/tutorials/11-search-and-replay-the-event-history.md),
-[ADR 015](../docs/adr/015-replay-semantics.md), [0.3 → 0.4 migration](../docs/migrations/0.3-to-0.4.md).
+Further reading (HexDocs):
+
+* [Article 12 — ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
+* [ADR 016 — Partitions and ACK frontier](https://hexdocs.pm/rheo/016-partitions-and-ack-frontier.html)
+* [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html)
 
 CLI alternative from the repo root: `mix rheo.demo`

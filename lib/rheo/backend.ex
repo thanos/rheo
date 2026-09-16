@@ -28,7 +28,8 @@ defmodule Rheo.Backend do
 
   Required keys for v0.3+: `:durable`, `:distributed`, `:atomic_compare_and_set`,
   `:notifications`, `:change_feed`, `:secondary_indexes`, `:batch_writes`,
-  `:ordered_range_scan`. Optional from v0.4+: `:replay`.
+  `:ordered_range_scan`. Optional from v0.4+: `:replay`. Optional from v0.5+:
+  `:partitions`, `:contiguous_frontier`.
   """
   @type capabilities :: %{
           optional(atom()) => boolean(),
@@ -105,6 +106,11 @@ defmodule Rheo.Backend do
   Never deletes immutable events. Callers must pass `confirm: true` via `Rheo`.
   """
   @callback reset_group(handle(), stream(), group(), opts()) :: :ok | {:error, term()}
+
+  @doc """
+  Returns committed frontier vs high-watermark lag for a group (v0.5+).
+  """
+  @callback lag(handle(), stream(), group(), opts()) :: {:ok, Rheo.Lag.t()} | {:error, term()}
 
   @doc "Health-checks the backend connection."
   @callback ping(handle()) :: :ok | {:error, term()}
