@@ -1,10 +1,10 @@
-# Rheo Livebook Demo (v0.6.0)
+# Rheo Livebook Demo (v0.7.0)
 
 ```elixir
 Mix.install(
   [
     # {:rheo, path: Path.join(__DIR__, "..")},
-    {:rheo, "~> 0.6.0"},
+    {:rheo, "~> 0.7.0"},
     {:ecto_sqlite3, "~> 0.17"},
     {:kino, "~> 0.14"}
   ],
@@ -25,7 +25,7 @@ Mix.install(
 2. Evaluate cells **top to bottom**
 3. **No Docker required** — this demo uses `Rheo.Backend.ETS` by default (optional SQLite/Ecto section below)
 
-Rheo **v0.6.0** is an embedded Elixir/OTP library: consumer groups over a
+Rheo **v0.7.0** is an embedded Elixir/OTP library: consumer groups over a
 searchable event log (Mongo / Postgres / SQLite durable, ETS ephemeral).
 Delivery is **at-least-once** — use event IDs for idempotency.
 
@@ -36,6 +36,7 @@ This notebook covers:
 * event lineage metadata
 * replay / reset **without copying events**
 * partitions, contiguous frontier, and `Rheo.lag`
+* feeding a **Broadway** pipeline with `Rheo.Producer`
 * optional **Ecto + SQLite** backend (same consumer API)
 
 ---
@@ -449,7 +450,85 @@ seen = Agent.get(agent, &Enum.reverse/1)
 
 ---
 
-## 10. Optional: same API on Ecto + SQLite
+## 10. Feeding a Broadway pipeline
+
+`Rheo.Producer` is a GenStage producer: demand becomes `Rheo.fetch/3`, and each
+event is emitted as a `%Rheo.Lease{}`. `Rheo.Broadway.transform/2` wraps it into a
+`%Broadway.Message{}` whose acknowledger ACKs on success and NACKs on failure.
+Rheo keeps the durable semantics; Broadway owns the topology.
+
+This uses its own group (`"broadway"`), so it does not compete with the
+`Rheo.Consumer` from section 9.
+
+```elixir
+:ok = Rheo.create_group(stream, "broadway")
+
+{:ok, collector} = Agent.start_link(fn -> [] end)
+
+defmodule Livebook.RiskBroadway do
+  use Broadway
+
+  def start_link(opts) do
+    Broadway.start_link(__MODULE__,
+      name: __MODULE__,
+      context: %{collector: Keyword.fetch!(opts, :collector)},
+      producer: [
+        module:
+          {Rheo.Producer,
+           stream: Keyword.fetch!(opts, :stream),
+           group: "broadway",
+           max_demand: 20,
+           poll_ms: 100},
+        transformer: {Rheo.Broadway, :transform, []},
+        concurrency: 1
+      ],
+      processors: [default: [concurrency: 4]]
+    )
+  end
+
+  @impl true
+  def handle_message(_processor, message, %{collector: collector}) do
+    Agent.update(collector, fn seen ->
+      [{message.data.partition, message.data.sequence, message.metadata.attempt} | seen]
+    end)
+
+    message
+  end
+end
+
+{:ok, _pipeline} = Livebook.RiskBroadway.start_link(stream: stream, collector: collector)
+
+Process.sleep(1_500)
+
+{:ok, lag} = Rheo.lag(stream, "broadway")
+
+%{
+  processed: collector |> Agent.get(&Enum.reverse/1) |> length(),
+  sample: collector |> Agent.get(&Enum.reverse/1) |> Enum.take(5),
+  frontiers: Map.new(lag.partitions, fn {p, info} -> {p, info.frontier} end),
+  lag: lag.lag
+}
+```
+
+Failing a message sends the lease back instead of ACKing it:
+
+```elixir
+# handle_message/3 returning Broadway.Message.failed(message, :reason)
+#   → Rheo.nack/3   (retry until the group's max_attempts, then dead-letter)
+#
+# with on_failure: :reject on the producer, or per message:
+#   Broadway.Message.configure_ack(message, on_failure: :reject)
+#   → Rheo.reject/3 (dead-letter immediately)
+:ok = Broadway.stop(Livebook.RiskBroadway)
+```
+
+> `:max_demand` bounds unsettled **leases**; Broadway's `:concurrency` bounds
+> pipeline work. Pick one consumption surface per `{rheo, stream, group}` —
+> `Rheo.Consumer` or `Rheo.Producer`.
+
+---
+
+## 11. Optional: same API on Ecto + SQLite
 
 Same consumer semantics on a durable file database — no Docker. Stop the ETS
 instance first if you already ran section 1.
@@ -521,13 +600,16 @@ sql_stream = "sqlite-demo"
 * **Partitions** — per-partition sequences; key routing via `phash2`; no global order
 * **Frontier** — ACKs are not a cursor; holes block `Rheo.lag/3`
 * **Ecto SQL** — host-owned Repo; Postgres or SQLite; same `Rheo.Consumer` API
+* **Broadway** — `Rheo.Producer` feeds a pipeline; the acknowledger settles leases
 * **OTP** — supervise `{Rheo, backend: …}` and `Rheo.Consumer`
 
 Further reading (HexDocs):
 
+* [Article 14 — Rheo Is Not Broadway, It Feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
 * [Article 13 — One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
 * [Article 12 — ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
+* [ADR 018 — GenStage / Broadway interop](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
 * [ADR 017 — Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
-* [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
+* [0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html)
 
 CLI alternative from the repo root: `mix rheo.demo`

@@ -16,6 +16,10 @@ defmodule Rheo do
   `Ecto.Repo` (PostgreSQL or SQLite). Mongo remains `Rheo.Backend.Mongo`; ETS
   remains ephemeral.
 
+  From **v0.7**, `Rheo.Producer` exposes a durable group as a `GenStage` producer
+  so a Broadway pipeline can consume it (`Rheo.Broadway`). It is an alternative to
+  `Rheo.Consumer`, not a replacement — pick one per `{rheo, stream, group}`.
+
   ## Supervision
 
       children = [
@@ -55,7 +59,9 @@ defmodule Rheo do
   `reset_group/3` (`confirm: true`). See `Rheo.Event.Lineage` for correlation
   metadata and `Rheo.Partition` for routing helpers.
 
-  See also `Rheo.Consumer` for the OTP handler API and `Rheo.Backend` for adapters.
+  See also `Rheo.Consumer` for the OTP handler API, `Rheo.Producer` /
+  `Rheo.Broadway` for the GenStage/Broadway surface, and `Rheo.Backend` for
+  adapters.
   """
 
   use Supervisor

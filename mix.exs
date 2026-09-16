@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.6.0"
+  @version "0.7.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -50,10 +50,12 @@ defmodule Rheo.MixProject do
           "docs/adr/015-replay-semantics.md",
           "docs/adr/016-partitions-and-ack-frontier.md",
           "docs/adr/017-ecto-backend.md",
+          "docs/adr/018-broadway-genstage-interop.md",
           "docs/migrations/0.1-to-0.2.md",
           "docs/migrations/0.3-to-0.4.md",
           "docs/migrations/0.4-to-0.5.md",
           "docs/migrations/0.5-to-0.6.md",
+          "docs/migrations/0.6-to-0.7.md",
           "CHANGELOG.md",
           "docs/tutorials.md",
           "docs/tutorials/01-why-consumer-groups-on-a-database.md",
@@ -69,6 +71,7 @@ defmodule Rheo.MixProject do
           "docs/tutorials/11-search-and-replay-the-event-history.md",
           "docs/tutorials/12-acks-are-not-a-cursor.md",
           "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
+          "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md",
           "notebooks/rheo_demo.livemd"
         ],
         groups_for_extras: [
@@ -80,6 +83,7 @@ defmodule Rheo.MixProject do
             "docs/migrations/0.3-to-0.4.md",
             "docs/migrations/0.4-to-0.5.md",
             "docs/migrations/0.5-to-0.6.md",
+            "docs/migrations/0.6-to-0.7.md",
             "CHANGELOG.md",
             "notebooks/rheo_demo.livemd"
           ],
@@ -101,7 +105,8 @@ defmodule Rheo.MixProject do
             "docs/adr/014-ets-backend.md",
             "docs/adr/015-replay-semantics.md",
             "docs/adr/016-partitions-and-ack-frontier.md",
-            "docs/adr/017-ecto-backend.md"
+            "docs/adr/017-ecto-backend.md",
+            "docs/adr/018-broadway-genstage-interop.md"
           ],
           Tutorials: [
             "docs/tutorials.md",
@@ -117,7 +122,8 @@ defmodule Rheo.MixProject do
             "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
             "docs/tutorials/11-search-and-replay-the-event-history.md",
             "docs/tutorials/12-acks-are-not-a-cursor.md",
-            "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md"
+            "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
+            "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md"
           ]
         ]
       ],
@@ -165,6 +171,11 @@ defmodule Rheo.MixProject do
       {:ecto_sql, "~> 3.11"},
       {:postgrex, "~> 0.19", optional: true},
       {:ecto_sqlite3, "~> 0.17", optional: true},
+      # GenStage / Broadway interop. Hard dependencies so `Rheo.Producer` and
+      # `Rheo.Broadway.Acknowledger` compile against the real behaviours instead
+      # of `Code.ensure_loaded?/1` guards (ADR 018).
+      {:gen_stage, "~> 1.2"},
+      {:broadway, "~> 1.2"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: [:dev, :test], runtime: false},
