@@ -12,6 +12,10 @@ defmodule Rheo do
   contiguous ACK frontier (`Rheo.lag/3`). There is no global order across
   partitions.
 
+  From **v0.6**, `Rheo.Backend.Ecto` runs the same API on a **host-owned**
+  `Ecto.Repo` (PostgreSQL or SQLite). Mongo remains `Rheo.Backend.Mongo`; ETS
+  remains ephemeral.
+
   ## Supervision
 
       children = [
@@ -20,6 +24,14 @@ defmodule Rheo do
       ]
 
       Supervisor.start_link(children, strategy: :one_for_one)
+
+  Ecto (host owns the repo):
+
+      children = [
+        MyApp.Repo,
+        {Rheo, name: MyRheo, backend: {Rheo.Backend.Ecto, repo: MyApp.Repo}},
+        {MyApp.RiskConsumer, rheo: MyRheo, concurrency: 8, max_demand: 100}
+      ]
 
   Shorthand (default instance name `Rheo`):
 
@@ -795,5 +807,6 @@ defmodule Rheo do
   end
 
   defp default_backend_handle(rheo, Rheo.Backend.ETS), do: Module.concat(rheo, ETS)
+  defp default_backend_handle(rheo, Rheo.Backend.Ecto), do: Module.concat(rheo, Ecto)
   defp default_backend_handle(rheo, _), do: Rheo.Names.backend_handle(rheo)
 end

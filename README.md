@@ -6,10 +6,10 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.5.0** — Durable consumer-group semantics over searchable databases.
-Backends today: **MongoDB** (durable) and **ETS** (ephemeral, zero-infra).
-Rheo is an Elixir/OTP library you embed in your supervision tree, not a
-standalone messaging server.
+**v0.6.0** — Durable consumer-group semantics over searchable databases.
+Backends today: **MongoDB**, **PostgreSQL / SQLite** (via a host-owned
+`Ecto.Repo`), and **ETS** (ephemeral, zero-infra). Rheo is an Elixir/OTP library
+you embed in your supervision tree, not a standalone messaging server.
 
 **Delivery guarantee:** at-least-once. Duplicates are possible after failures —
 use stable event IDs for idempotency. Ordering is guaranteed **within a
@@ -23,6 +23,7 @@ Use Rheo when you want:
 - **Consumer groups** with leases, ACK, retry, and dead-lettering
 - **Competing consumers** and **independent groups** on the same stream
 - **Partitions** with key routing, a contiguous ACK frontier, and `Rheo.lag/3`
+- **SQL backends** via a host-owned `Ecto.Repo` (PostgreSQL or SQLite)
 - OTP-native demand, concurrency, and lease renewal — without standing up Kafka,
   RabbitMQ, or a separate broker cluster
 
@@ -34,6 +35,8 @@ clients, exactly-once claims) or when a simple job queue is enough.
 | Approach | Strengths | Trade-offs |
 |---|---|---|
 | **Rheo + MongoDB** | Searchable history + durable groups in one store; embeds in OTP | At-least-once only |
+| **Rheo + PostgreSQL** | Uses the database you already run; `jsonb` event log you can query in SQL; `SKIP LOCKED` claims across nodes | At-least-once only; you own the repo and migrations |
+| **Rheo + SQLite** | Durable with no service at all; same API | Single node only (`distributed: false`) |
 | **Rheo + ETS** | Same API with no Docker/DB; great for tests and Livebook | Ephemeral — data dies with the owner process |
 | **Kafka / Pulsar** | Huge throughput, mature ops, many languages | Separate cluster; history search is not the primary model |
 | **RabbitMQ / NATS** | Classic messaging, routing | Not an immutable searchable event log |
@@ -42,8 +45,8 @@ clients, exactly-once claims) or when a simple job queue is enough.
 
 Databases already store and search historical events well. Message brokers
 already coordinate consumers well. Rheo combines those strengths: immutable,
-queryable events in MongoDB, with leases, acknowledgement, retry, and competing
-consumers in OTP.
+queryable events in a database you run (MongoDB or PostgreSQL/SQLite), with
+leases, acknowledgement, retry, and competing consumers in OTP.
 
 ## Installation
 
@@ -52,7 +55,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.5.0"}
+    {:rheo, "~> 0.6.0"}
   ]
 end
 ```
@@ -71,7 +74,13 @@ Choose a backend:
 
 # Durable MongoDB
 {Rheo, name: MyRheo, backend: {Rheo.Backend.Mongo, url: "mongodb://localhost:27017/rheo"}}
+
+# Durable SQL on a repo your app already supervises (PostgreSQL or SQLite)
+{Rheo, name: MyRheo, backend: {Rheo.Backend.Ecto, repo: MyApp.Repo}}
 ```
+
+The Ecto backend needs the driver your repo uses — `{:postgrex, "~> 0.19"}` or
+`{:ecto_sqlite3, "~> 0.17"}` — since Rheo leaves that choice to you.
 
 ## Quick start
 
@@ -96,6 +105,34 @@ children = [
 
 Supervisor.start_link(children, strategy: :one_for_one)
 ```
+
+### PostgreSQL or SQLite (Ecto)
+
+Your app owns the repo; Rheo borrows it and never starts the pool:
+
+```elixir
+children = [
+  MyApp.Repo,
+  {Rheo, name: MyRheo, backend: {Rheo.Backend.Ecto, repo: MyApp.Repo}},
+  {MyApp.RiskConsumer, rheo: MyRheo, concurrency: 8, max_demand: 100}
+]
+
+Supervisor.start_link(children, strategy: :one_for_one)
+```
+
+Create the five `rheo_*` tables with a migration (preferred in production, so it
+runs once under your release's migration step):
+
+```bash
+mix rheo.ecto.gen_migration --repo MyApp.Repo
+mix ecto.migrate
+```
+
+`Rheo.ensure_indexes(rheo: MyRheo)` also creates them idempotently on boot. Pass
+`notify: true` for a PostgreSQL `NOTIFY rheo_events` wakeup hint, or
+`prefix: "rheo"` to keep the tables in their own schema. On PostgreSQL,
+`metadata` and `payload` are `jsonb`, so the event log stays queryable in plain
+SQL. See [ADR 017](https://hexdocs.pm/rheo/017-ecto-backend.html).
 
 Define a consumer — handlers only implement `handle_event/2`; a local
 `Rheo.Group` owns fetch, concurrency, lease renewal, and settle:
@@ -148,6 +185,7 @@ in [Livebook](https://livebook.dev) (or browse it on
 
 Upgrading:
 
+- [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) (additive — Ecto SQL backend)
 - [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html) (partitions, frontier, lag)
 - [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) (additive — search, replay, lineage)
 - [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html) (breaking Group / Query changes)
@@ -166,6 +204,9 @@ because those files are not in the Hex tarball.
 - [Article 10: Prove it with ETS](https://hexdocs.pm/rheo/10-if-rheo-is-database-agnostic-prove-it-with-ets.html)
 - [Article 11: Search and Replay](https://hexdocs.pm/rheo/11-search-and-replay-the-event-history.html)
 - [Article 12: ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
+- [Article 13: One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
+- [ADR 017: Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
+- [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
 - [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html)
 - [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html)
 - [0.1 → 0.2 migration](https://hexdocs.pm/rheo/0-1-to-0-2.html)
@@ -297,8 +338,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.3.0** | `Rheo.Backend.ETS`, capabilities, backend conformance suite, Docker-free demo |
 | **0.4.0** | Search pagination/streaming, replay/reset, event lineage conventions |
 | **0.4.1** | Hex README links point at HexDocs / GitHub |
-| **0.5.0** (current) | Partitions, key routing, contiguous ACK frontier, lag |
-| **0.6.0** | PostgreSQL (or second durable) backend |
+| **0.5.0** | Partitions, key routing, contiguous ACK frontier, lag |
+| **0.6.0** (current) | Ecto SQL backend: PostgreSQL + SQLite on a host-owned repo |
 | **0.7.0** | Mongo change-stream wakeups |
 | **0.8.0** | Ops surface: DLQ inspection, lag metrics, admin helpers |
 | **0.9.0** | API freeze candidate |
@@ -347,6 +388,15 @@ Unit-only (excludes Mongo):
 
 ```bash
 mix test.unit
+```
+
+The Ecto backend contract suite runs on SQLite on every `mix test` (a throwaway
+temp database, no service needed). PostgreSQL cases are tagged `:ecto_postgres`
+and run only when a URL is set:
+
+```bash
+docker compose up -d postgres
+RHEO_POSTGRES_URL=ecto://postgres:postgres@localhost:5432/rheo_test mix test
 ```
 
 Livebook from a clone (ETS by default — no Docker):

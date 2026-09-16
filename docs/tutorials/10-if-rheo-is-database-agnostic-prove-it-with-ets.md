@@ -61,7 +61,9 @@ log. Document that. Do not pretend ETS is a production durable backend.
 
 ## What comes next
 
-Search, replay, and lineage (0.4) build on a contract that two backends already
-satisfy. See [ADR 011](../adr/011-backend-capabilities.md),
-[ADR 012](../adr/012-backend-conformance-suite.md), and
-[ADR 014](../adr/014-ets-backend.md).
+Search, replay, and lineage (0.4), partitions and frontiers (0.5), and an Ecto
+SQL backend (0.6) all build on a contract multiple backends already satisfy.
+See [ADR 011](https://hexdocs.pm/rheo/011-backend-capabilities.html),
+[ADR 012](https://hexdocs.pm/rheo/012-backend-conformance-suite.html),
+[ADR 014](https://hexdocs.pm/rheo/014-ets-backend.html), and
+[Article 13](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html).

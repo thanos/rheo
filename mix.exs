@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.5.0"
+  @version "0.6.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -49,9 +49,11 @@ defmodule Rheo.MixProject do
           "docs/adr/014-ets-backend.md",
           "docs/adr/015-replay-semantics.md",
           "docs/adr/016-partitions-and-ack-frontier.md",
+          "docs/adr/017-ecto-backend.md",
           "docs/migrations/0.1-to-0.2.md",
           "docs/migrations/0.3-to-0.4.md",
           "docs/migrations/0.4-to-0.5.md",
+          "docs/migrations/0.5-to-0.6.md",
           "CHANGELOG.md",
           "docs/tutorials.md",
           "docs/tutorials/01-why-consumer-groups-on-a-database.md",
@@ -66,6 +68,7 @@ defmodule Rheo.MixProject do
           "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
           "docs/tutorials/11-search-and-replay-the-event-history.md",
           "docs/tutorials/12-acks-are-not-a-cursor.md",
+          "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
           "notebooks/rheo_demo.livemd"
         ],
         groups_for_extras: [
@@ -76,6 +79,7 @@ defmodule Rheo.MixProject do
             "docs/migrations/0.1-to-0.2.md",
             "docs/migrations/0.3-to-0.4.md",
             "docs/migrations/0.4-to-0.5.md",
+            "docs/migrations/0.5-to-0.6.md",
             "CHANGELOG.md",
             "notebooks/rheo_demo.livemd"
           ],
@@ -96,7 +100,8 @@ defmodule Rheo.MixProject do
             "docs/adr/013-portable-query-model.md",
             "docs/adr/014-ets-backend.md",
             "docs/adr/015-replay-semantics.md",
-            "docs/adr/016-partitions-and-ack-frontier.md"
+            "docs/adr/016-partitions-and-ack-frontier.md",
+            "docs/adr/017-ecto-backend.md"
           ],
           Tutorials: [
             "docs/tutorials.md",
@@ -111,7 +116,8 @@ defmodule Rheo.MixProject do
             "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
             "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
             "docs/tutorials/11-search-and-replay-the-event-history.md",
-            "docs/tutorials/12-acks-are-not-a-cursor.md"
+            "docs/tutorials/12-acks-are-not-a-cursor.md",
+            "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md"
           ]
         ]
       ],
@@ -152,6 +158,13 @@ defmodule Rheo.MixProject do
       {:mongodb_driver, "~> 1.5"},
       {:telemetry, "~> 1.2"},
       {:jason, "~> 1.4"},
+      # Ecto SQL backend. `ecto_sql` is a hard dependency so `Rheo.Backend.Ecto`
+      # compiles without conditional guards; adapters stay optional because the
+      # host app owns the Repo and picks its own driver.
+      {:ecto, "~> 3.11"},
+      {:ecto_sql, "~> 3.11"},
+      {:postgrex, "~> 0.19", optional: true},
+      {:ecto_sqlite3, "~> 0.17", optional: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: [:dev, :test], runtime: false},
@@ -198,8 +211,9 @@ defmodule Rheo.MixProject do
   end
 
   defp description do
-    "Durable consumer-group semantics over searchable databases (MongoDB + ETS). " <>
-      "Partitions, contiguous ACK frontier, and lag in v0.5."
+    "Durable consumer-group semantics over searchable databases " <>
+      "(MongoDB, PostgreSQL/SQLite via Ecto, ETS). Partitions, contiguous ACK " <>
+      "frontier, lag, and replay."
   end
 
   defp package do

@@ -19,3 +19,12 @@ append/read/query, fetch/ack/retry/reject, ping, indexes. Implement only Mongo.
 
 - Clear module boundary
 - Second backend will validate or reshape the callbacks
+
+## Follow-up
+
+`Rheo.Backend.ETS` (ADR 014) and `Rheo.Backend.Ecto` (ADR 017) implemented the
+behaviour without reshaping it. SQL was the real test: it has no
+`findOneAndUpdate` and no atomic increment inside a document, yet the callbacks
+held. Backend-specific mechanics (`FOR UPDATE SKIP LOCKED`, `jsonb` vs JSON
+text, `?` vs `$1` placeholders) stayed inside the implementation, which is the
+boundary working as intended.

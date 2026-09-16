@@ -1,10 +1,11 @@
-# Rheo Livebook Demo (v0.5.0)
+# Rheo Livebook Demo (v0.6.0)
 
 ```elixir
 Mix.install(
   [
     # {:rheo, path: Path.join(__DIR__, "..")},
-    {:rheo, "~> 0.5.0"},
+    {:rheo, "~> 0.6.0"},
+    {:ecto_sqlite3, "~> 0.17"},
     {:kino, "~> 0.14"}
   ],
   config: [
@@ -22,11 +23,11 @@ Mix.install(
 
 1. Open this notebook from the repo (`notebooks/rheo_demo.livemd`) so `Mix.install` can resolve `{:rheo, path: ...}`
 2. Evaluate cells **top to bottom**
-3. **No Docker required** — this demo uses `Rheo.Backend.ETS` by default
+3. **No Docker required** — this demo uses `Rheo.Backend.ETS` by default (optional SQLite/Ecto section below)
 
-Rheo **v0.5.0** is an embedded Elixir/OTP library: consumer groups over a
-searchable event log (Mongo durable, ETS ephemeral). Delivery is
-**at-least-once** — use event IDs for idempotency.
+Rheo **v0.6.0** is an embedded Elixir/OTP library: consumer groups over a
+searchable event log (Mongo / Postgres / SQLite durable, ETS ephemeral).
+Delivery is **at-least-once** — use event IDs for idempotency.
 
 This notebook covers:
 
@@ -35,6 +36,7 @@ This notebook covers:
 * event lineage metadata
 * replay / reset **without copying events**
 * partitions, contiguous frontier, and `Rheo.lag`
+* optional **Ecto + SQLite** backend (same consumer API)
 
 ---
 
@@ -447,9 +449,70 @@ seen = Agent.get(agent, &Enum.reverse/1)
 
 ---
 
+## 10. Optional: same API on Ecto + SQLite
+
+Same consumer semantics on a durable file database — no Docker. Stop the ETS
+instance first if you already ran section 1.
+
+```elixir
+defmodule Livebook.RheoSqliteRepo do
+  use Ecto.Repo, otp_app: :rheo, adapter: Ecto.Adapters.SQLite3
+end
+
+db = Path.join(System.tmp_dir!(), "rheo_livebook_#{System.unique_integer([:positive])}.db")
+
+case Process.whereis(Rheo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
+end
+
+case Process.whereis(Livebook.RheoSqliteRepo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
+end
+
+{:ok, _} =
+  Livebook.RheoSqliteRepo.start_link(
+    database: db,
+    pool_size: 5,
+    name: Livebook.RheoSqliteRepo
+  )
+
+{:ok, _} =
+  Rheo.start_link(
+    backend: {Rheo.Backend.Ecto, repo: Livebook.RheoSqliteRepo}
+  )
+
+:ok = Rheo.ensure_indexes()
+
+sql_stream = "sqlite-demo"
+:ok = Rheo.create_stream(sql_stream, partition_count: 2)
+:ok = Rheo.create_group(sql_stream, "risk")
+
+{:ok, ev} =
+  Rheo.append(sql_stream, %{type: "curve_update", key: "EUR-1", price: 1.0})
+
+{:ok, [lease]} = Rheo.fetch(sql_stream, "risk", limit: 1)
+:ok = Rheo.ack(lease)
+{:ok, lag} = Rheo.lag(sql_stream, "risk")
+
+%{
+  backend: Rheo.Backend.Ecto.capabilities(:sqlite),
+  event_partition: ev.partition,
+  frontier: lag.partitions[ev.partition].frontier,
+  db: db
+}
+```
+
+> PostgreSQL uses the same `{Rheo.Backend.Ecto, repo: MyApp.Repo}` tuple with
+> `Ecto.Adapters.Postgres`. Prefer Postgres for multi-node deployments
+> (`distributed: true`, `FOR UPDATE SKIP LOCKED`).
+
+---
+
 ## Takeaways
 
-* **Immutable log** — consumption never deletes events (ETS or Mongo)
+* **Immutable log** — consumption never deletes events (ETS, Mongo, or SQL)
 * **Independent groups** — risk, surveillance, and risk-replay progress separately
 * **Leases + fencing** — stale ACKs fail; expired work is redelivered (at-least-once)
 * **Search** — filters, sequence bounds, `query_page`, `stream_query`
@@ -457,12 +520,14 @@ seen = Agent.get(agent, &Enum.reverse/1)
 * **Replay** — new group + start cursor (preferred), `replay/3`, or loud `reset_group`
 * **Partitions** — per-partition sequences; key routing via `phash2`; no global order
 * **Frontier** — ACKs are not a cursor; holes block `Rheo.lag/3`
-* **OTP** — supervise `{Rheo, backend: Rheo.Backend.ETS | Mongo}` and `Rheo.Consumer`
+* **Ecto SQL** — host-owned Repo; Postgres or SQLite; same `Rheo.Consumer` API
+* **OTP** — supervise `{Rheo, backend: …}` and `Rheo.Consumer`
 
 Further reading (HexDocs):
 
+* [Article 13 — One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
 * [Article 12 — ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
-* [ADR 016 — Partitions and ACK frontier](https://hexdocs.pm/rheo/016-partitions-and-ack-frontier.html)
-* [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html)
+* [ADR 017 — Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
+* [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
 
 CLI alternative from the repo root: `mix rheo.demo`
