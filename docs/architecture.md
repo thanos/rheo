@@ -1,6 +1,6 @@
 # Architecture
 
-Rheo **v0.6.0** is an embedded Elixir/OTP library. Durable truth lives in the
+Rheo **v0.7.0** is an embedded Elixir/OTP library. Durable truth lives in the
 backend (**MongoDB**, **PostgreSQL/SQLite via Ecto**, or **ETS** for ephemeral
 use). OTP owns process lifecycle and concurrency, not consumer-group correctness.
 
@@ -20,6 +20,17 @@ Application Supervision Tree
         |
         +-- RiskConsumer (bridge → Group)
         +-- SurveillanceConsumer (bridge → Group)
+```
+
+Broadway (or plain GenStage) is an alternative consumption surface for the same
+durable group. `Rheo.Producer` replaces the Group's handler runtime rather than
+wrapping it:
+
+```text
+        +-- MyApp.RiskBroadway (Broadway topology)
+              +-- Rheo.Producer         (demand → fetch, renew inflight)
+              +-- processors / batchers  (your work)
+                    +-- Rheo.Broadway.Acknowledger → ack | nack | reject
 ```
 
 ## Core invariant
@@ -53,6 +64,11 @@ with `:concurrency`. Durable ACK state stays in the backend. Groups may take a
 static `:partitions` assignment (`:all` or a list); automatic rebalancing is
 deferred.
 
+`Rheo.Producer` applies the same `:max_demand` bound to GenStage demand: it
+fetches at most `min(demand, max_demand - inflight)` leases, renews what is
+inflight, and learns about settled leases through `Rheo.Producer.confirm/2`.
+Pipeline concurrency belongs to Broadway (ADR 018).
+
 ## Backend boundary
 
 `Rheo.Backend` defines operations over an opaque `handle`, plus
@@ -68,7 +84,8 @@ host-owned Repo (ADR 017).
 - CLI: `mix rheo.demo`
 - Interactive: [Livebook demo](https://hexdocs.pm/rheo/rheo_demo.html)
   ([source](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd))
-- Migrations: [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) ·
+- Migrations: [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) ·
+  [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) ·
   [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html) ·
   [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) ·
   [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html)

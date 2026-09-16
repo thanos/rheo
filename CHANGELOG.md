@@ -5,6 +5,46 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-16
+
+GenStage / Broadway interoperability. Additive — `Rheo.Consumer` and
+`Rheo.Group` are unchanged. See
+[0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html).
+
+### Added
+
+- `Rheo.Producer` — `GenStage` producer that turns demand into `Rheo.fetch/3`
+  and emits `%Rheo.Lease{}`. Bounds unsettled leases with `:max_demand`, renews
+  inflight leases every `lease_ms / 2`, drops stale leases for redelivery, polls
+  when idle, and backs off exponentially on fetch errors. Options: `:rheo`,
+  `:stream`, `:group`, `:max_demand`, `:lease_ms`, `:poll_ms`, `:consumer_id`,
+  `:partitions`, `:on_failure`, `:name`
+- `Rheo.Producer.confirm/2` — tells the producer a lease was settled durably so
+  renewal stops and a demand slot is released
+- `Rheo.Producer.drain/2`, `inflight_count/1`, `config/0`, and Broadway's
+  `prepare_for_draining/1` callback
+- `Rheo.Broadway.transform/2` — Broadway `:transformer` building a
+  `%Broadway.Message{}` with `data: lease.event` and
+  `metadata: %{lease:, stream:, group:, partition:, attempt:}`
+- `Rheo.Broadway.Acknowledger` — successful → `Rheo.ack/2`; failed →
+  `Rheo.nack/3`, or `Rheo.reject/3` with `on_failure: :reject` (settable per
+  message via `Broadway.Message.configure_ack/2`)
+- Telemetry `[:rheo, :producer, :start | :stop]` and
+  `[:rheo, :broadway, :ack | :retry | :reject]`
+- ADR [018](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html); tutorial
+  [article 14](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
+- Livebook Broadway + ETS section;
+  [0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html)
+
+### Changed
+
+- `gen_stage` and `broadway` are dependencies, because `Rheo.Producer` and
+  `Rheo.Broadway.Acknowledger` compile against those behaviours rather than
+  `Code.ensure_loaded?/1` guards. A `rheo_broadway` package split is deferred —
+  see ADR 018 "Alternatives".
+- ADR 007 now points at ADR 018: GenStage is still not used internally, but it is
+  a supported consumption surface
+
 ## [0.6.0] - 2026-09-16
 
 Ecto SQL backend for PostgreSQL and SQLite.
@@ -157,6 +197,7 @@ v0.3.0. See [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html).
 
 Initial Mongo-backed MVP: streams, groups, leases, Consumer, docs, Livebook.
 
+[0.7.0]: https://github.com/thanos/rheo/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/thanos/rheo/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thanos/rheo/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/thanos/rheo/compare/v0.4.0...v0.4.1

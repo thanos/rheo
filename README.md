@@ -6,10 +6,11 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.6.0** — Durable consumer-group semantics over searchable databases.
+**v0.7.0** — Durable consumer-group semantics over searchable databases.
 Backends today: **MongoDB**, **PostgreSQL / SQLite** (via a host-owned
 `Ecto.Repo`), and **ETS** (ephemeral, zero-infra). Rheo is an Elixir/OTP library
-you embed in your supervision tree, not a standalone messaging server.
+you embed in your supervision tree, not a standalone messaging server. Consume
+with `Rheo.Consumer` or feed a **Broadway** pipeline with `Rheo.Producer`.
 
 **Delivery guarantee:** at-least-once. Duplicates are possible after failures —
 use stable event IDs for idempotency. Ordering is guaranteed **within a
@@ -24,6 +25,7 @@ Use Rheo when you want:
 - **Competing consumers** and **independent groups** on the same stream
 - **Partitions** with key routing, a contiguous ACK frontier, and `Rheo.lag/3`
 - **SQL backends** via a host-owned `Ecto.Repo` (PostgreSQL or SQLite)
+- A **durable source for Broadway/GenStage** instead of a second broker
 - OTP-native demand, concurrency, and lease renewal — without standing up Kafka,
   RabbitMQ, or a separate broker cluster
 
@@ -40,7 +42,7 @@ clients, exactly-once claims) or when a simple job queue is enough.
 | **Rheo + ETS** | Same API with no Docker/DB; great for tests and Livebook | Ephemeral — data dies with the owner process |
 | **Kafka / Pulsar** | Huge throughput, mature ops, many languages | Separate cluster; history search is not the primary model |
 | **RabbitMQ / NATS** | Classic messaging, routing | Not an immutable searchable event log |
-| **Oban / Broadway alone** | Great job/pipeline DX on Elixir | Different problem: jobs/pipelines, not durable consumer groups over an event log |
+| **Oban / Broadway alone** | Great job/pipeline DX on Elixir | Different problem: jobs/pipelines, not durable consumer groups over an event log — so Rheo feeds Broadway rather than replacing it (`Rheo.Producer`) |
 | **Raw Mongo change streams** | Live updates | No leases, ACK fencing, competing groups, or retry/DLQ |
 
 Databases already store and search historical events well. Message brokers
@@ -55,7 +57,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.6.0"}
+    {:rheo, "~> 0.7.0"}
   ]
 end
 ```
@@ -185,6 +187,7 @@ in [Livebook](https://livebook.dev) (or browse it on
 
 Upgrading:
 
+- [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) (additive — Broadway/GenStage interop)
 - [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) (additive — Ecto SQL backend)
 - [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html) (partitions, frontier, lag)
 - [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) (additive — search, replay, lineage)
@@ -205,7 +208,10 @@ because those files are not in the Hex tarball.
 - [Article 11: Search and Replay](https://hexdocs.pm/rheo/11-search-and-replay-the-event-history.html)
 - [Article 12: ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
 - [Article 13: One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
+- [Article 14: Rheo Is Not Broadway — It Feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
 - [ADR 017: Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
+- [ADR 018: GenStage / Broadway interop](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
+- [0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html)
 - [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
 - [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html)
 - [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html)
@@ -316,6 +322,53 @@ Rheo.create_group("market-events", "surveillance")
  poll_ms: 200}
 ```
 
+### Broadway pipeline (or plain GenStage)
+
+`Rheo.Producer` is a GenStage producer that turns demand into `Rheo.fetch/3` and
+emits `%Rheo.Lease{}`. Under Broadway, `Rheo.Broadway.transform/2` wraps each
+lease into a `%Broadway.Message{}` whose acknowledger settles it — ACK on
+success, NACK (or reject) on failure.
+
+```elixir
+defmodule MyApp.RiskBroadway do
+  use Broadway
+
+  def start_link(_opts) do
+    Broadway.start_link(__MODULE__,
+      name: __MODULE__,
+      producer: [
+        module:
+          {Rheo.Producer,
+           rheo: MyRheo, stream: "market-events", group: "risk", max_demand: 50},
+        transformer: {Rheo.Broadway, :transform, []},
+        concurrency: 1
+      ],
+      processors: [default: [concurrency: 8]]
+    )
+  end
+
+  @impl true
+  def handle_message(_processor, message, _context) do
+    case Risk.process(message.data) do
+      :ok -> message
+      {:error, reason} -> Broadway.Message.failed(message, reason)
+    end
+  end
+end
+```
+
+`message.data` is the `%Rheo.Event{}`; `message.metadata` carries `:lease`,
+`:stream`, `:group`, `:partition`, and `:attempt`. `:max_demand` bounds unsettled
+**leases**, while Broadway's `:concurrency` bounds pipeline work — they are
+separate knobs.
+
+Pick one surface per `{rheo, stream, group}`: `Rheo.Consumer` for the OTP handler
+API, `Rheo.Producer` when you want Broadway's batching, rate limiting, or
+fan-out. Plain GenStage consumers can handle leases directly, settling with
+`Rheo.ack/2` and then `Rheo.Producer.confirm/2`. See
+[Article 14](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
+and [ADR 018](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html).
+
 ### Named instances
 
 Run more than one Rheo instance in the same BEAM:
@@ -339,9 +392,9 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.4.0** | Search pagination/streaming, replay/reset, event lineage conventions |
 | **0.4.1** | Hex README links point at HexDocs / GitHub |
 | **0.5.0** | Partitions, key routing, contiguous ACK frontier, lag |
-| **0.6.0** (current) | Ecto SQL backend: PostgreSQL + SQLite on a host-owned repo |
-| **0.7.0** | Mongo change-stream wakeups |
-| **0.8.0** | Ops surface: DLQ inspection, lag metrics, admin helpers |
+| **0.6.0** | Ecto SQL backend: PostgreSQL + SQLite on a host-owned repo |
+| **0.7.0** (current) | GenStage/Broadway interop: `Rheo.Producer`, lease-aware acknowledger |
+| **0.8.0** | Ops surface: DLQ inspection, lag metrics, admin helpers; change-stream wakeups |
 | **0.9.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 

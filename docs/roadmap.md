@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.6.0** (2026-09-16).
+Current release: **v0.7.0** (2026-09-16).
 
 ## Done in 0.1.0
 
@@ -60,9 +60,18 @@ Current release: **v0.6.0** (2026-09-16).
 - SQLite durable single-node path; `distributed: false`
 - ADR 017 + Article 13 + [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
 
-## Next (0.7+)
+## Done in 0.7.0
 
-- Broadway / GenStage interop (evaluate)
+- `Rheo.Producer` — GenStage producer emitting `%Rheo.Lease{}` (demand → fetch,
+  inflight renewal, idle poll, backoff, drain)
+- `Rheo.Broadway.transform/2` + `Rheo.Broadway.Acknowledger` (ack / nack / reject)
+- `Rheo.Producer.confirm/2` so settled leases stop renewing and free demand
+- `Rheo.Consumer` / `Rheo.Group` unchanged — the producer is an alternative surface
+- ADR 018 + Article 14 + [0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html)
+
+## Next (0.8+)
+
+- Ops surface: DLQ inspection, lag metrics, admin helpers
 - Change-stream / richer wakeup integration
 - Mnesia (later)
 - Optional Hex package split if dependency hygiene demands it

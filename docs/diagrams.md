@@ -92,3 +92,27 @@ flowchart TB
 
 The host owns the Repo. Mongo stays on `Rheo.Backend.Mongo`; Ecto here means
 SQL only (see ADR 017).
+
+## Broadway / GenStage interop (v0.7)
+
+```mermaid
+flowchart LR
+  demand[Broadway_or_GenStage_demand]
+  prod[Rheo.Producer]
+  fetch[Rheo.fetch]
+  backend[Backend_leases]
+  proc[Broadway_processors]
+  ack[Rheo.Broadway.Acknowledger]
+  settle[ack_nack_reject]
+
+  demand --> prod
+  prod --> fetch --> backend
+  prod -->|Lease| proc
+  proc --> ack --> settle --> backend
+  ack -->|confirm| prod
+  prod -->|renew_inflight| backend
+```
+
+The producer owns fetch and renewal; the acknowledger owns settle and reports
+back with `Rheo.Producer.confirm/2` so renewal stops and demand is released
+(see ADR 018).
