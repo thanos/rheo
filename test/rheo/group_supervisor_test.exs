@@ -7,7 +7,7 @@ defmodule Rheo.GroupSupervisorTest do
     @behaviour Rheo.Consumer
 
     @impl true
-    def handle_event(_event, state), do: {:ack, state}
+    def handle_event(_event, state), do: :ack
   end
 
   setup do

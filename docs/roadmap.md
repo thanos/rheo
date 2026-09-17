@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.7.1** (2026-09-17). Runtime API matches **v0.7.0**.
+Current release: **v0.8.0** (2026-09-17). Architectural reset over the v0.7 API.
 
 ## Done in 0.1.0
 
@@ -76,12 +76,21 @@ Current release: **v0.7.1** (2026-09-17). Runtime API matches **v0.7.0**.
 - Mermaid diagrams render on HexDocs
 - Livebook Broadway demo aligned with the published v0.7 API
 
-## Next (0.8+)
+## Done in 0.8.0
 
+- Architectural reset (ADR 019): Model C receipts, Consumer Option A, package
+  layout (`rheo_mongo` / `rheo_ecto` / `rheo_broadway`)
+- `Rheo.Inflight`, `Rheo.Settle`, Capabilities v2, Wakeup contract
+- Native-stream test double; Flow + Redis readiness spikes
+- [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html)
+
+## Next (0.9+)
+
+- Redis Streams native backend (`rheo_redis`)
 - Ops surface: DLQ inspection, lag metrics, admin helpers
 - Change-stream / richer wakeup integration
 - Mnesia (later)
-- Optional Hex package split if dependency hygiene demands it
+- Optional further Hex package hygiene
 
 ## Explicitly deferred
 

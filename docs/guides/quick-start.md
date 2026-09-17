@@ -8,7 +8,7 @@ stream, and consume them with a durable consumer group. Delivery is
 
 ```elixir
 def deps do
-  [{:rheo, "~> 0.7.0"}]
+  [{:rheo, "~> 0.8.0"}]
 end
 ```
 
@@ -48,7 +48,7 @@ defmodule MyApp.FulfillmentConsumer do
   @impl true
   def handle_event(event, state) do
     :ok = MyApp.Fulfillment.process(event)
-    {:ack, state}
+    :ack
   end
 end
 

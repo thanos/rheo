@@ -12,7 +12,7 @@ defmodule Rheo.GroupTest do
     @impl true
     def handle_event(event, %{agent: agent} = state) do
       Agent.update(agent, fn xs -> [event.id | xs] end)
-      {:ack, state}
+      :ack
     end
   end
 
@@ -33,7 +33,7 @@ defmodule Rheo.GroupTest do
       if crash? do
         raise "boom before ack"
       else
-        {:ack, state}
+        :ack
       end
     end
   end
@@ -48,7 +48,7 @@ defmodule Rheo.GroupTest do
     def handle_event(event, %{agent: agent} = state) do
       Process.sleep(200)
       Agent.update(agent, fn xs -> [event.id | xs] end)
-      {:ack, state}
+      :ack
     end
   end
 

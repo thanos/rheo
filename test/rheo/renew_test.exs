@@ -13,7 +13,7 @@ defmodule Rheo.RenewTest do
     def handle_event(event, %{agent: agent} = state) do
       Process.sleep(300)
       Agent.update(agent, fn ids -> [event.id | ids] end)
-      {:ack, state}
+      :ack
     end
   end
 

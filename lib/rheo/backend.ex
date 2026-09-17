@@ -7,6 +7,25 @@ defmodule Rheo.Backend do
   name, ETS table prefix, Repo, …) — not necessarily a GenServer.
 
   Application code normally calls `Rheo` rather than backends directly.
+
+  ## Semantic contract (v0.8)
+
+  Callbacks describe **semantic operations**, not storage algorithms:
+
+    * append / read / query — immutable log
+    * fetch / renew / ack / retry / reject — fenced delivery
+    * replay / reset_group / lag — group progress
+
+  Row/document claim loops, SQL locking, and Redis `XACK` details stay
+  **inside** the adapter. Leases may carry an opaque `receipt` for native
+  settle identity (ADR 021). Declare capabilities via
+  `Rheo.Backend.Capabilities` (ADR 023).
+
+  ## Native-stream backends
+
+  Future Redis Streams adapters must preserve portable `event.sequence` while
+  settling with backend-native receipts. See the native-stream conformance
+  double under `test/support`.
   """
 
   alias Rheo.{Event, Lease, Query}

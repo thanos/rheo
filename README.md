@@ -6,7 +6,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.7.1** — Durable consumer-group semantics over searchable databases.
+**v0.8.0** — Durable consumer-group semantics over searchable databases.
 Backends today: **MongoDB**, **PostgreSQL / SQLite** (via a host-owned
 `Ecto.Repo`), and **ETS** (ephemeral, zero-infra). Rheo is an Elixir/OTP library
 you embed in your supervision tree, not a standalone messaging server. Consume
@@ -57,7 +57,11 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.7.0"}
+    {:rheo, "~> 0.8.0"}
+    # plus integrations you use:
+    # {:rheo_mongo, "~> 0.8.0"},
+    # {:rheo_ecto, "~> 0.8.0"},
+    # {:rheo_broadway, "~> 0.8.0"}
   ]
 end
 ```
@@ -151,13 +155,13 @@ defmodule MyApp.RiskConsumer do
   def handle_event(event, state) do
     case Risk.process(event) do
       :ok ->
-        {:ack, state}
+        :ack
 
       {:temporary_error, reason} ->
-        {:retry, reason, state}
+        {:retry, reason}
 
       {:permanent_error, reason} ->
-        {:reject, reason, state}
+        {:reject, reason}
     end
   end
 end
@@ -187,6 +191,7 @@ in [Livebook](https://livebook.dev) (or browse it on
 
 Upgrading:
 
+- [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) (architectural reset)
 - [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) (additive — Broadway/GenStage interop)
 - [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) (additive — Ecto SQL backend)
 - [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html) (partitions, frontier, lag)
@@ -410,8 +415,9 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.5.0** | Partitions, key routing, contiguous ACK frontier, lag |
 | **0.6.0** | Ecto SQL backend: PostgreSQL + SQLite on a host-owned repo |
 | **0.7.0** | GenStage/Broadway interop: `Rheo.Producer`, lease-aware acknowledger |
-| **0.7.1** (current) | HexDocs Guides + Mermaid; Livebook Broadway section |
-| **0.8.0** | Ops surface: DLQ inspection, lag metrics, admin helpers; change-stream wakeups |
+| **0.7.1** | HexDocs Guides + Mermaid; Livebook Broadway section |
+| **0.8.0** (current) | Architectural reset: packages, receipts, Consumer Option A, Redis/Flow readiness |
+| **0.9.0** | Redis Streams native backend |
 | **0.9.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 

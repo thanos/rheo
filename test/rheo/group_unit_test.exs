@@ -9,7 +9,7 @@ defmodule Rheo.GroupUnitTest do
     @behaviour Rheo.Consumer
 
     @impl true
-    def handle_event(_event, state), do: {:ack, state}
+    def handle_event(_event, state), do: :ack
   end
 
   defmodule StopSetupConsumer do
@@ -19,7 +19,7 @@ defmodule Rheo.GroupUnitTest do
     def setup(_opts), do: {:stop, :setup_refused}
 
     @impl true
-    def handle_event(_event, state), do: {:ack, state}
+    def handle_event(_event, state), do: :ack
   end
 
   defmodule InvalidReturnConsumer do
@@ -57,7 +57,7 @@ defmodule Rheo.GroupUnitTest do
     @impl true
     def handle_event(event, %{agent: agent} = state) do
       Agent.update(agent, fn xs -> [{:reject, event.id} | xs] end)
-      {:reject, :bad_payload, state}
+      {:reject, :bad_payload}
     end
   end
 
@@ -67,7 +67,7 @@ defmodule Rheo.GroupUnitTest do
     @impl true
     def handle_event(_event, state) do
       Process.sleep(400)
-      {:ack, state}
+      :ack
     end
   end
 
@@ -77,7 +77,7 @@ defmodule Rheo.GroupUnitTest do
     @impl true
     def handle_event(_event, state) do
       Process.sleep(400)
-      {:retry, :boom, state}
+      {:retry, :boom}
     end
   end
 
@@ -87,7 +87,7 @@ defmodule Rheo.GroupUnitTest do
     @impl true
     def handle_event(_event, state) do
       Process.sleep(400)
-      {:reject, :bad, state}
+      {:reject, :bad}
     end
   end
 
@@ -101,7 +101,7 @@ defmodule Rheo.GroupUnitTest do
     def handle_event(event, %{agent: agent} = state) do
       Process.sleep(400)
       Agent.update(agent, fn xs -> [event.id | xs] end)
-      {:ack, state}
+      :ack
     end
   end
 
@@ -111,7 +111,7 @@ defmodule Rheo.GroupUnitTest do
     @impl true
     def handle_event(_event, state) do
       Process.sleep(800)
-      {:ack, state}
+      :ack
     end
   end
 
@@ -126,7 +126,7 @@ defmodule Rheo.GroupUnitTest do
       worker = self()
       Agent.update(agent, fn _ -> %{pid: worker, event_id: event.id} end)
       Process.sleep(:infinity)
-      {:ack, state}
+      :ack
     end
   end
 

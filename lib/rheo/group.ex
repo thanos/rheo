@@ -12,7 +12,7 @@ defmodule Rheo.Group do
   use GenServer
   require Logger
 
-  alias Rheo.{Lease, Telemetry}
+  alias Rheo.{Inflight, Lease, Settle, Telemetry}
 
   @min_backoff_ms 100
   @max_backoff_ms 5_000
@@ -88,7 +88,8 @@ defmodule Rheo.Group do
 
     user_state =
       case maybe_setup(module, opts) do
-        {:ok, state} -> state
+        {:ok, state} when is_map(state) -> state
+        {:ok, _other} -> %{}
         {:stop, reason} -> throw({:stop, reason})
       end
 
@@ -103,7 +104,8 @@ defmodule Rheo.Group do
       poll_ms: poll_ms,
       consumer_id: consumer_id,
       partitions: partitions,
-      user_state: user_state
+      user_state: user_state,
+      inflight: Inflight.new()
     }
 
     Telemetry.execute([:rheo, :consumer, :start], %{count: 1}, %{
@@ -191,9 +193,8 @@ defmodule Rheo.Group do
   end
 
   defp available_slots(state) do
-    inflight = map_size(state.inflight)
-    demand_left = max(state.max_demand - inflight, 0)
-    concurrency_left = max(state.concurrency - inflight, 0)
+    demand_left = Inflight.capacity(state.inflight, state.max_demand)
+    concurrency_left = max(state.concurrency - Inflight.size(state.inflight), 0)
     min(demand_left, concurrency_left)
   end
 
@@ -235,13 +236,13 @@ defmodule Rheo.Group do
   defp maybe_put_partitions(opts, partitions), do: Keyword.put(opts, :partitions, partitions)
 
   defp spawn_worker(%Lease{} = lease, state) do
-    user_state = state.user_state
+    context = state.user_state
     module = state.module
 
     task =
       Task.Supervisor.async_nolink(Rheo.Names.task_supervisor(state.rheo), fn ->
         try do
-          module.handle_event(lease.event, user_state)
+          module.handle_event(lease.event, context)
         rescue
           error -> {:handler_error, {error, __STACKTRACE__}}
         catch
@@ -249,7 +250,7 @@ defmodule Rheo.Group do
         end
       end)
 
-    put_in(state.inflight[task.ref], %{lease: lease, task: task})
+    %{state | inflight: Inflight.put(state.inflight, task.ref, lease, %{task: task})}
   end
 
   defp handle_worker_result(ref, outcome, state) do
@@ -285,38 +286,41 @@ defmodule Rheo.Group do
     end
   end
 
-  defp apply_outcome(state, lease, {:ack, new_state}) do
+  defp apply_outcome(state, lease, :ack) do
     case Rheo.ack(lease, rheo: state.rheo) do
       :ok ->
-        %{state | user_state: new_state}
+        state
 
       {:error, reason} ->
-        emit_persist_error(state, :ack, lease, reason)
-        # Incomplete: treat as failed settle; leave for redelivery via nack attempt
-        _ = Rheo.nack(lease, {:ack_failed, reason}, rheo: state.rheo)
-        %{state | user_state: new_state}
+        emit_persist_error(state, :ack, lease, Settle.classify(reason))
+
+        unless Settle.lost?(reason) do
+          _ = Rheo.nack(lease, {:ack_failed, reason}, rheo: state.rheo)
+        end
+
+        state
     end
   end
 
-  defp apply_outcome(state, lease, {:retry, reason, new_state}) do
+  defp apply_outcome(state, lease, {:retry, reason}) do
     case Rheo.nack(lease, reason, rheo: state.rheo) do
       :ok ->
-        %{state | user_state: new_state}
+        state
 
       {:error, err} ->
-        emit_persist_error(state, :retry, lease, err)
-        %{state | user_state: new_state}
+        emit_persist_error(state, :retry, lease, Settle.classify(err))
+        state
     end
   end
 
-  defp apply_outcome(state, lease, {:reject, reason, new_state}) do
+  defp apply_outcome(state, lease, {:reject, reason}) do
     case Rheo.reject(lease, reason, rheo: state.rheo) do
       :ok ->
-        %{state | user_state: new_state}
+        state
 
       {:error, err} ->
-        emit_persist_error(state, :reject, lease, err)
-        %{state | user_state: new_state}
+        emit_persist_error(state, :reject, lease, Settle.classify(err))
+        state
     end
   end
 
@@ -327,8 +331,8 @@ defmodule Rheo.Group do
   end
 
   defp apply_outcome(state, lease, other) do
-    Logger.error("Rheo.Group invalid handler return: #{inspect(other)}")
-    _ = Rheo.nack(lease, {:invalid_return, other}, rheo: state.rheo)
+    Logger.error("Rheo.Group invalid handler outcome: #{inspect(other)}")
+    _ = Rheo.nack(lease, {:invalid_outcome, other}, rheo: state.rheo)
     state
   end
 
@@ -351,18 +355,23 @@ defmodule Rheo.Group do
               result: :ok
             })
 
-            put_in(acc.inflight[ref].lease, lease)
+            %{acc | inflight: Inflight.update_lease(acc.inflight, ref, lease)}
 
           {:error, reason} ->
             Telemetry.execute([:rheo, :lease, :renew], %{count: 1}, %{
               stream: acc.stream,
               group: acc.group,
               event_id: meta.lease.event_id,
-              result: reason
+              result: Settle.classify(reason)
             })
 
             Logger.warning("Rheo.Group renew failed: #{inspect(reason)}")
-            acc
+
+            if Settle.lost?(reason) do
+              %{acc | inflight: Inflight.delete(acc.inflight, ref)}
+            else
+              acc
+            end
         end
       end)
 

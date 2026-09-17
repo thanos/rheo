@@ -7,7 +7,7 @@ defmodule Rheo.ConsumerBridgeTest do
     use Rheo.Consumer, stream: "unused", group: "unused"
 
     @impl true
-    def handle_event(_event, state), do: {:ack, state}
+    def handle_event(_event, state), do: :ack
   end
 
   setup do

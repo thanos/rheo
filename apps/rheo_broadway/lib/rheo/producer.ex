@@ -79,7 +79,7 @@ defmodule Rheo.Producer do
 
   require Logger
 
-  alias Rheo.{Lease, Telemetry}
+  alias Rheo.{Inflight, Lease, Settle, Telemetry}
 
   @config_key {__MODULE__, :config}
   @min_backoff_ms 100
@@ -98,7 +98,7 @@ defmodule Rheo.Producer do
     :on_failure,
     :renew_timer,
     :poll_timer,
-    inflight: %{},
+    inflight: Inflight.new(),
     pending: 0,
     draining: false,
     backoff_ms: 0
@@ -215,9 +215,8 @@ defmodule Rheo.Producer do
 
   @impl true
   def handle_cast({:confirm, lease_ids}, state) do
-    state
-    |> drop_inflight(lease_ids)
-    |> dispatch()
+    state = %{state | inflight: Inflight.drop(state.inflight, lease_ids)}
+    dispatch(state)
   end
 
   def handle_cast(_other, state), do: {:noreply, [], state}
@@ -229,7 +228,7 @@ defmodule Rheo.Producer do
   end
 
   def handle_call(:inflight_count, _from, state) do
-    {:reply, map_size(state.inflight), [], state}
+    {:reply, Inflight.size(state.inflight), [], state}
   end
 
   @impl true
@@ -280,7 +279,7 @@ defmodule Rheo.Producer do
 
   defp fetch_limit(state) do
     state.pending
-    |> min(state.max_demand - map_size(state.inflight))
+    |> min(Inflight.capacity(state.inflight, state.max_demand))
     |> max(0)
   end
 
@@ -321,18 +320,18 @@ defmodule Rheo.Producer do
   end
 
   defp track_inflight(%Lease{} = lease, state) do
-    put_in(state.inflight[lease.lease_id], lease)
+    %{state | inflight: Inflight.put(state.inflight, lease.lease_id, lease)}
   end
 
   defp drop_inflight(state, lease_ids) do
-    %{state | inflight: Map.drop(state.inflight, lease_ids)}
+    %{state | inflight: Inflight.drop(state.inflight, lease_ids)}
   end
 
   defp backoff(state, reason) do
     Telemetry.execute([:rheo, :fetch, :error], %{count: 1}, %{
       stream: state.stream,
       group: state.group,
-      reason: reason
+      reason: Settle.classify(reason)
     })
 
     delay = next_backoff(state.backoff_ms)
@@ -349,26 +348,29 @@ defmodule Rheo.Producer do
   defp next_backoff(current), do: min(current * 2, @max_backoff_ms)
 
   defp renew_inflight(state) do
-    Enum.reduce(state.inflight, state, fn {lease_id, lease}, acc ->
+    Enum.reduce(state.inflight, state, fn {lease_id, meta}, acc ->
+      lease = meta.lease
+
       case Rheo.renew(lease, rheo: acc.rheo, lease_ms: acc.lease_ms) do
         {:ok, renewed} ->
           emit_renew(acc, lease.event_id, :ok)
-          put_in(acc.inflight[lease_id], renewed)
-
-        {:error, :stale_lease} ->
-          emit_renew(acc, lease.event_id, :stale_lease)
-
-          Logger.warning(
-            "Rheo.Producer dropping stale lease stream=#{acc.stream} " <>
-              "group=#{acc.group} event_id=#{lease.event_id}"
-          )
-
-          drop_inflight(acc, [lease_id])
+          %{acc | inflight: Inflight.update_lease(acc.inflight, lease_id, renewed)}
 
         {:error, reason} ->
-          emit_renew(acc, lease.event_id, reason)
-          Logger.warning("Rheo.Producer renew failed: #{inspect(reason)}")
-          acc
+          classified = Settle.classify(reason)
+          emit_renew(acc, lease.event_id, classified)
+
+          if Settle.lost?(reason) do
+            Logger.warning(
+              "Rheo.Producer dropping stale lease stream=#{acc.stream} " <>
+                "group=#{acc.group} event_id=#{lease.event_id}"
+            )
+
+            drop_inflight(acc, [lease_id])
+          else
+            Logger.warning("Rheo.Producer renew failed: #{inspect(reason)}")
+            acc
+          end
       end
     end)
   end

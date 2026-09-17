@@ -5,7 +5,7 @@ defmodule Rheo.ConsumerUnitTest do
     use Rheo.Consumer, stream: "unit-stream", group: "unit-group"
 
     @impl true
-    def handle_event(_event, state), do: {:ack, state}
+    def handle_event(_event, state), do: :ack
   end
 
   test "child_spec defaults and overrides" do
@@ -41,29 +41,19 @@ defmodule Rheo.ConsumerUnitTest do
     GenServer.stop(bridge)
   end
 
-  test "bridge joins already-started group without terminating it" do
+  test "bridge refuses to share an already-started local group" do
+    Process.flag(:trap_exit, true)
     group = spawn(fn -> Process.sleep(:infinity) end)
-    terminated? = :atomics.new(1, signed: false)
-
     starter = fn _rheo, _opts -> {:error, {:already_started, group}} end
 
-    terminator = fn _rheo, _pid ->
-      :atomics.put(terminated?, 1, 1)
-      :ok
-    end
-
-    assert {:ok, bridge} =
+    assert {:error, {:group_already_started, ^group}} =
              Rheo.Consumer.start_link(TinyConsumer,
                stream: "s",
                group: "g",
                name: :"shared-#{System.unique_integer()}",
-               __group_starter__: starter,
-               __group_terminator__: terminator
+               __group_starter__: starter
              )
 
-    GenServer.stop(bridge)
-    assert Process.alive?(group)
-    assert :atomics.get(terminated?, 1) == 0
     Process.exit(group, :kill)
   end
 

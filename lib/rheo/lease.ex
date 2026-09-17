@@ -20,6 +20,7 @@ defmodule Rheo.Lease do
   | `attempt` | `pos_integer()` | Delivery attempt count (starts at 1) |
   | `leased_at` | `DateTime.t()` | When the lease was granted |
   | `expires_at` | `DateTime.t()` | When the lease becomes reclaimable |
+  | `receipt` | `term() \\| nil` | Opaque backend-native settle identity (ADR 021) |
 
   ## Example
 
@@ -41,10 +42,11 @@ defmodule Rheo.Lease do
       ...>   consumer_id: "risk-worker-1",
       ...>   attempt: 1,
       ...>   leased_at: ~U[2026-01-15 12:00:00.000Z],
-      ...>   expires_at: ~U[2026-01-15 12:00:30.000Z]
+      ...>   expires_at: ~U[2026-01-15 12:00:30.000Z],
+      ...>   receipt: "lease_abc"
       ...> }
-      iex> {lease.group, lease.event.type, lease.attempt}
-      {"risk", "curve_update", 1}
+      iex> {lease.group, lease.event.type, lease.attempt, lease.receipt}
+      {"risk", "curve_update", 1, "lease_abc"}
   """
 
   @enforce_keys [
@@ -67,13 +69,19 @@ defmodule Rheo.Lease do
     :consumer_id,
     :attempt,
     :leased_at,
-    :expires_at
+    :expires_at,
+    receipt: nil
   ]
 
   @typedoc """
   A fenced lease on a single event for a consumer group.
 
   Pass this struct to `Rheo.ack/1`, `Rheo.nack/2`, or `Rheo.reject/2`.
+
+  `receipt` is an opaque backend-native settle token (ADR 021). Database
+  backends typically mirror `lease_id`; native-stream backends may store a
+  Redis ID / PEL claim identity. Do not pattern-match on receipt contents in
+  application code.
   """
   @type t :: %__MODULE__{
           lease_id: String.t(),
@@ -84,6 +92,7 @@ defmodule Rheo.Lease do
           consumer_id: String.t(),
           attempt: pos_integer(),
           leased_at: DateTime.t(),
-          expires_at: DateTime.t()
+          expires_at: DateTime.t(),
+          receipt: term() | nil
         }
 end

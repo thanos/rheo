@@ -51,9 +51,9 @@ defmodule MyApp.RiskConsumer do
   @impl true
   def handle_event(event, state) do
     case Risk.process(event) do
-      :ok -> {:ack, state}
-      {:temporary, reason} -> {:retry, reason, state}
-      {:permanent, reason} -> {:reject, reason, state}
+      :ok -> :ack
+      {:temporary, reason} -> {:retry, reason}
+      {:permanent, reason} -> {:reject, reason}
     end
   end
 end

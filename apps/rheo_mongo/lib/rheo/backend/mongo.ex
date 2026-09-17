@@ -92,7 +92,7 @@ defmodule Rheo.Backend.Mongo do
 
   @impl true
   def capabilities do
-    %{
+    Rheo.Backend.Capabilities.new(%{
       durable: true,
       distributed: false,
       atomic_compare_and_set: true,
@@ -104,7 +104,8 @@ defmodule Rheo.Backend.Mongo do
       replay: true,
       partitions: true,
       contiguous_frontier: true
-    }
+    })
+    |> Rheo.Backend.Capabilities.to_legacy_map()
   end
 
   @impl true
@@ -1122,7 +1123,8 @@ defmodule Rheo.Backend.Mongo do
            consumer_id: consumer_id,
            attempt: attempt,
            leased_at: now,
-           expires_at: expires_at
+           expires_at: expires_at,
+           receipt: lease_id
          }}
     end
   end
@@ -1277,16 +1279,16 @@ defmodule Rheo.Backend.Mongo do
 
   defp apply_where_opt(_, acc), do: acc
 
+  defp order_to_sort([]) do
+    %{"sequence" => 1}
+  end
+
   defp order_to_sort(order_by) when is_list(order_by) do
     Map.new(order_by, fn
       {field, :asc} -> {Atom.to_string(field), 1}
       {field, :desc} -> {Atom.to_string(field), -1}
-      {field, 1} -> {to_string(field), 1}
-      {field, -1} -> {to_string(field), -1}
     end)
   end
-
-  defp order_to_sort(_), do: %{"sequence" => 1}
 
   defp put_in_range(acc, field, op, value) do
     existing = Map.get(acc, field, %{})

@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-17
+
+Architectural reset. v0.1–v0.7 were successful discovery releases; v0.8
+consolidates abstractions learned from MongoDB, ETS, Ecto, partitions, replay,
+GenStage, and Broadway, and validates settlement for Flow and native-stream
+backends such as Redis Streams — without shipping Redis or Flow yet.
+
+See [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html) and
+[ADR 019](https://hexdocs.pm/rheo/019-v0-8-architectural-reset.html).
+
+### Added
+
+- `%Rheo.Lease{}.receipt` — opaque native settle identity (Model C / ADR 021)
+- `Rheo.Backend.Capabilities` — guarantees vs mechanisms (ADR 023)
+- `Rheo.Inflight` — shared inflight bookkeeping for Group and Producer
+- `Rheo.Settle` — portable settlement error classification
+- `Rheo.Backend.Wakeup` — optional hint-only wakeup contract (ADR 025)
+- Native-stream test double + receipt fencing tests
+- Flow readiness tests (`Rheo.Producer` → Flow map/partition/reduce/window)
+- Multi-instance ETS + SQLite isolation tests
+- Hex package layout under `apps/rheo_mongo`, `apps/rheo_ecto`, `apps/rheo_broadway`
+- ADRs 019–025; Flow and Redis readiness spikes; Article 15
+- Migration guide `docs/migrations/0.7-to-0.8.md`
+
+### Changed
+
+- `Rheo.Consumer` handler returns `:ack | {:retry, reason} | {:reject, reason}`
+  with read-only context (ADR 022)
+- Second local consumer for the same `{rheo, stream, group}` is rejected
+  (`{:group_already_started, pid}`)
+- Backend behaviour docs emphasize semantic contract (ADR 024)
+- HexDocs regrouped (Guides Introduction/Advanced/Cookbook + Design groups)
+
+### Removed
+
+- Silent multi-bridge join of a shared local `Rheo.Group`
+
 ## [0.7.1] - 2026-09-17
 
 Documentation-only release. No runtime API changes. Prefer
@@ -218,6 +255,7 @@ v0.3.0. See [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html).
 
 Initial Mongo-backed MVP: streams, groups, leases, Consumer, docs, Livebook.
 
+[0.8.0]: https://github.com/thanos/rheo/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/thanos/rheo/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/thanos/rheo/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/thanos/rheo/compare/v0.5.0...v0.6.0

@@ -12,9 +12,9 @@ defmodule Rheo.ConsumerTest do
     end
 
     @impl true
-    def handle_event(event, %{agent: agent} = state) do
+    def handle_event(event, %{agent: agent}) do
       Agent.update(agent, fn events -> [event.id | events] end)
-      {:ack, state}
+      :ack
     end
   end
 
@@ -22,17 +22,19 @@ defmodule Rheo.ConsumerTest do
     use Rheo.Consumer, stream: "unused", group: "unused"
 
     @impl true
-    def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent), fail_once: true}}
+    def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
 
     @impl true
-    def handle_event(event, %{agent: agent, fail_once: true} = state) do
-      Agent.update(agent, fn xs -> [{:retry, event.id} | xs] end)
-      {:retry, :boom, %{state | fail_once: false}}
-    end
+    def handle_event(event, %{agent: agent}) do
+      seen? = Agent.get(agent, fn xs -> {:retry, event.id} in xs end)
 
-    def handle_event(event, %{agent: agent} = state) do
-      Agent.update(agent, fn xs -> [{:ack, event.id} | xs] end)
-      {:ack, state}
+      if seen? do
+        Agent.update(agent, fn xs -> [{:ack, event.id} | xs] end)
+        :ack
+      else
+        Agent.update(agent, fn xs -> [{:retry, event.id} | xs] end)
+        {:retry, :boom}
+      end
     end
   end
 
@@ -84,7 +86,7 @@ defmodule Rheo.ConsumerTest do
     end)
   end
 
-  test "second consumer joins already-started group", %{stream: stream, agent: agent} do
+  test "second consumer for same local group is rejected", %{stream: stream, agent: agent} do
     {:ok, _} = Rheo.append_batch(stream, [%{type: "x"}])
 
     id1 = :"join-a-#{System.unique_integer()}"
@@ -95,14 +97,10 @@ defmodule Rheo.ConsumerTest do
         {RiskConsumer, stream: stream, group: "risk", agent: agent, id: id1, poll_ms: 50}
       )
 
-    {:ok, _} =
-      start_supervised(
-        {RiskConsumer, stream: stream, group: "risk", agent: agent, id: id2, poll_ms: 50}
-      )
-
-    wait_until(fn -> Agent.get(agent, & &1) != [] end)
-    assert :ok = stop_supervised(id2)
-    assert :ok = stop_supervised(id1)
+    assert {:error, {{:group_already_started, _pid}, _child}} =
+             start_supervised(
+               {RiskConsumer, stream: stream, group: "risk", agent: agent, id: id2, poll_ms: 50}
+             )
   end
 
   defp wait_until(fun, attempts \\ 50) do

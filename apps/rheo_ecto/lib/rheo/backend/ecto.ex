@@ -894,7 +894,8 @@ defmodule Rheo.Backend.Ecto do
          consumer_id: ctx.consumer_id,
          attempt: attempt,
          leased_at: ctx.now,
-         expires_at: expires_at
+         expires_at: expires_at,
+         receipt: lease_id
        }}
     end
   end
@@ -1416,7 +1417,7 @@ defmodule Rheo.Backend.Ecto do
   end
 
   defp build_capabilities(dialect, notify?) do
-    %{
+    Rheo.Backend.Capabilities.new(%{
       durable: true,
       distributed: dialect == :postgres,
       atomic_compare_and_set: true,
@@ -1428,7 +1429,8 @@ defmodule Rheo.Backend.Ecto do
       replay: true,
       partitions: true,
       contiguous_frontier: true
-    }
+    })
+    |> Rheo.Backend.Capabilities.to_legacy_map()
   end
 
   defp validate_repo!(opts) do

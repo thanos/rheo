@@ -21,7 +21,7 @@ defmodule Rheo.Integration.MongoTest do
     @impl true
     def handle_event(event, %{agent: agent} = state) do
       Agent.update(agent, fn ids -> [event.id | ids] end)
-      {:ack, state}
+      :ack
     end
   end
 
