@@ -6,7 +6,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.7.0** — Durable consumer-group semantics over searchable databases.
+**v0.7.1** — Durable consumer-group semantics over searchable databases.
 Backends today: **MongoDB**, **PostgreSQL / SQLite** (via a host-owned
 `Ecto.Repo`), and **ETS** (ephemeral, zero-infra). Rheo is an Elixir/OTP library
 you embed in your supervision tree, not a standalone messaging server. Consume
@@ -199,25 +199,41 @@ Links below use [HexDocs](https://hexdocs.pm/rheo/) (and GitHub for the Livebook
 source). Relative `docs/…` paths break on [hex.pm](https://hex.pm/packages/rheo)
 because those files are not in the Hex tarball.
 
-- [HexDocs](https://hexdocs.pm/rheo/) — API reference
-- [Architecture](https://hexdocs.pm/rheo/architecture.html)
-- [Tutorials](https://hexdocs.pm/rheo/tutorials.html)
-- [ADRs](https://hexdocs.pm/rheo/adr.html)
+**Guides**
+
+- Introduction: [Quick Start](https://hexdocs.pm/rheo/quick-start.html) ·
+  [Configuration](https://hexdocs.pm/rheo/configuration.html) ·
+  [Consumer Groups](https://hexdocs.pm/rheo/consumer-groups.html) ·
+  [Enqueuing](https://hexdocs.pm/rheo/enqueuing.html) ·
+  [Dequeuing](https://hexdocs.pm/rheo/dequeuing.html)
+- Advanced: [Replay](https://hexdocs.pm/rheo/replay.html) ·
+  [Querying](https://hexdocs.pm/rheo/querying.html) ·
+  [Partitions and lag](https://hexdocs.pm/rheo/partitions-and-lag.html) ·
+  [Broadway](https://hexdocs.pm/rheo/broadway.html) ·
+  [GenStage](https://hexdocs.pm/rheo/genstage.html) ·
+  [Building your own backend](https://hexdocs.pm/rheo/building-your-own-backend.html)
+- Cookbook: [ETS](https://hexdocs.pm/rheo/ets.html) ·
+  [Mongo](https://hexdocs.pm/rheo/mongo.html) ·
+  [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html)
 - [Livebook demo](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html))
-- [Article 10: Prove it with ETS](https://hexdocs.pm/rheo/10-if-rheo-is-database-agnostic-prove-it-with-ets.html)
-- [Article 11: Search and Replay](https://hexdocs.pm/rheo/11-search-and-replay-the-event-history.html)
+- [Changelog](https://hexdocs.pm/rheo/changelog.html)
+
+**Migrating from previous versions**
+
+- [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) · [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) · [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html)
+- [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) · [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html)
+
+**Design**
+
+- Architecture: [Architecture](https://hexdocs.pm/rheo/architecture.html) ·
+  [Diagrams](https://hexdocs.pm/rheo/diagrams.html) ·
+  [Roadmap](https://hexdocs.pm/rheo/roadmap.html)
+- [ADRs](https://hexdocs.pm/rheo/adr.html) · [Tutorials index](https://hexdocs.pm/rheo/tutorials.html)
 - [Article 12: ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
 - [Article 13: One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
 - [Article 14: Rheo Is Not Broadway — It Feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
 - [ADR 017: Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
 - [ADR 018: GenStage / Broadway interop](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
-- [0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html)
-- [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
-- [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html)
-- [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html)
-- [0.1 → 0.2 migration](https://hexdocs.pm/rheo/0-1-to-0-2.html)
-- [Changelog](https://hexdocs.pm/rheo/changelog.html)
-- [Roadmap](https://hexdocs.pm/rheo/roadmap.html)
 
 ## More examples
 
@@ -393,7 +409,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.4.1** | Hex README links point at HexDocs / GitHub |
 | **0.5.0** | Partitions, key routing, contiguous ACK frontier, lag |
 | **0.6.0** | Ecto SQL backend: PostgreSQL + SQLite on a host-owned repo |
-| **0.7.0** (current) | GenStage/Broadway interop: `Rheo.Producer`, lease-aware acknowledger |
+| **0.7.0** | GenStage/Broadway interop: `Rheo.Producer`, lease-aware acknowledger |
+| **0.7.1** (current) | HexDocs Guides + Mermaid; Livebook Broadway section |
 | **0.8.0** | Ops surface: DLQ inspection, lag metrics, admin helpers; change-stream wakeups |
 | **0.9.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |

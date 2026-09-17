@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.7.0** (2026-09-16).
+Current release: **v0.7.1** (2026-09-17). Runtime API matches **v0.7.0**.
 
 ## Done in 0.1.0
 
@@ -68,6 +68,13 @@ Current release: **v0.7.0** (2026-09-16).
 - `Rheo.Producer.confirm/2` so settled leases stop renewing and free demand
 - `Rheo.Consumer` / `Rheo.Group` unchanged — the producer is an alternative surface
 - ADR 018 + Article 14 + [0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html)
+
+## Done in 0.7.1
+
+- HexDocs **Guides** (Introduction / Advanced / Cookbook) plus Design groups
+  (Architecture, ADRs, Tutorials) and Migrating from previous versions
+- Mermaid diagrams render on HexDocs
+- Livebook Broadway demo aligned with the published v0.7 API
 
 ## Next (0.8+)
 

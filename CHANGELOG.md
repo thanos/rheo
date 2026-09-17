@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-09-17
+
+Documentation-only release. No runtime API changes. Prefer
+`{:rheo, "~> 0.7.0"}` (or `"~> 0.7.1"`).
+
+### Added
+
+- Practical HexDocs **Guides**: Quick Start, Configuration, Consumer Groups,
+  Enqueuing, Dequeuing, Replay, Querying, Partitions and lag, ETS, Mongo,
+  Using Ecto, Broadway, GenStage, Building your own backend
+
+### Changed
+
+- HexDocs extras regrouped into collapsible groups:
+  **Guides: Introduction / Advanced / Cookbook**, **Migrating from previous
+  versions**, **Design: Architecture / ADRs / Tutorials**
+- Mermaid diagrams render on HexDocs via ExDoc's `before_closing_body_tag` hook
+- README documentation index updated for the new guide layout
+- Livebook demo titled/versioned for **v0.7.1** (Broadway + Ecto sections match
+  the v0.7 API)
+
 ## [0.7.0] - 2026-09-16
 
 GenStage / Broadway interoperability. Additive — `Rheo.Consumer` and
@@ -197,6 +218,7 @@ v0.3.0. See [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html).
 
 Initial Mongo-backed MVP: streams, groups, leases, Consumer, docs, Livebook.
 
+[0.7.1]: https://github.com/thanos/rheo/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/thanos/rheo/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/thanos/rheo/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thanos/rheo/compare/v0.4.1...v0.5.0
