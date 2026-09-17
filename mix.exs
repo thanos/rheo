@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.7.0"
+  @version "0.7.1"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -29,6 +29,27 @@ defmodule Rheo.MixProject do
         extras: [
           "README.md",
           "LICENSE",
+          "CHANGELOG.md",
+          "notebooks/rheo_demo.livemd",
+          "docs/guides/quick-start.md",
+          "docs/guides/configuration.md",
+          "docs/guides/consumer-groups.md",
+          "docs/guides/enqueuing.md",
+          "docs/guides/dequeuing.md",
+          "docs/guides/replay.md",
+          "docs/guides/querying.md",
+          "docs/guides/partitions-and-lag.md",
+          "docs/guides/ets.md",
+          "docs/guides/mongo.md",
+          "docs/guides/using-ecto.md",
+          "docs/guides/broadway.md",
+          "docs/guides/genstage.md",
+          "docs/guides/building-your-own-backend.md",
+          "docs/migrations/0.1-to-0.2.md",
+          "docs/migrations/0.3-to-0.4.md",
+          "docs/migrations/0.4-to-0.5.md",
+          "docs/migrations/0.5-to-0.6.md",
+          "docs/migrations/0.6-to-0.7.md",
           "docs/architecture.md",
           "docs/roadmap.md",
           "docs/diagrams.md",
@@ -51,12 +72,6 @@ defmodule Rheo.MixProject do
           "docs/adr/016-partitions-and-ack-frontier.md",
           "docs/adr/017-ecto-backend.md",
           "docs/adr/018-broadway-genstage-interop.md",
-          "docs/migrations/0.1-to-0.2.md",
-          "docs/migrations/0.3-to-0.4.md",
-          "docs/migrations/0.4-to-0.5.md",
-          "docs/migrations/0.5-to-0.6.md",
-          "docs/migrations/0.6-to-0.7.md",
-          "CHANGELOG.md",
           "docs/tutorials.md",
           "docs/tutorials/01-why-consumer-groups-on-a-database.md",
           "docs/tutorials/02-what-is-a-consumer-group.md",
@@ -71,23 +86,37 @@ defmodule Rheo.MixProject do
           "docs/tutorials/11-search-and-replay-the-event-history.md",
           "docs/tutorials/12-acks-are-not-a-cursor.md",
           "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
-          "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md",
-          "notebooks/rheo_demo.livemd"
+          "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md"
         ],
         groups_for_extras: [
           Guides: [
-            "docs/architecture.md",
-            "docs/roadmap.md",
-            "docs/diagrams.md",
+            "docs/guides/quick-start.md",
+            "docs/guides/configuration.md",
+            "docs/guides/consumer-groups.md",
+            "docs/guides/enqueuing.md",
+            "docs/guides/dequeuing.md",
+            "docs/guides/replay.md",
+            "docs/guides/querying.md",
+            "docs/guides/partitions-and-lag.md",
+            "docs/guides/ets.md",
+            "docs/guides/mongo.md",
+            "docs/guides/using-ecto.md",
+            "docs/guides/broadway.md",
+            "docs/guides/genstage.md",
+            "docs/guides/building-your-own-backend.md",
+            "CHANGELOG.md",
+            "notebooks/rheo_demo.livemd"
+          ],
+          "Migrating from previous versions": [
             "docs/migrations/0.1-to-0.2.md",
             "docs/migrations/0.3-to-0.4.md",
             "docs/migrations/0.4-to-0.5.md",
             "docs/migrations/0.5-to-0.6.md",
-            "docs/migrations/0.6-to-0.7.md",
-            "CHANGELOG.md",
-            "notebooks/rheo_demo.livemd"
+            "docs/migrations/0.6-to-0.7.md"
           ],
-          ADRs: [
+          Design: [
+            "docs/architecture.md",
+            "docs/diagrams.md",
             "docs/adr.md",
             "docs/adr/001-at-least-once-delivery.md",
             "docs/adr/002-events-immutable-consumer-state-separate.md",
@@ -106,9 +135,7 @@ defmodule Rheo.MixProject do
             "docs/adr/015-replay-semantics.md",
             "docs/adr/016-partitions-and-ack-frontier.md",
             "docs/adr/017-ecto-backend.md",
-            "docs/adr/018-broadway-genstage-interop.md"
-          ],
-          Tutorials: [
+            "docs/adr/018-broadway-genstage-interop.md",
             "docs/tutorials.md",
             "docs/tutorials/01-why-consumer-groups-on-a-database.md",
             "docs/tutorials/02-what-is-a-consumer-group.md",
@@ -125,7 +152,8 @@ defmodule Rheo.MixProject do
             "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
             "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md"
           ]
-        ]
+        ],
+        before_closing_body_tag: &before_closing_body_tag/1
       ],
       package: package(),
       description: description(),
@@ -220,6 +248,41 @@ defmodule Rheo.MixProject do
 
     Mix.shell().info([:green, :bright, "\nAll verification checks passed!", :reset])
   end
+
+  defp before_closing_body_tag(:html) do
+    """
+    <script defer src="https://cdn.jsdelivr.net/npm/mermaid@10.2.3/dist/mermaid.min.js"></script>
+    <script>
+      let initialized = false;
+
+      window.addEventListener("exdoc:loaded", () => {
+        if (!initialized) {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: document.body.className.includes("dark") ? "dark" : "default"
+          });
+          initialized = true;
+        }
+
+        let id = 0;
+        for (const codeEl of document.querySelectorAll("pre code.mermaid")) {
+          const preEl = codeEl.parentElement;
+          const graphDefinition = codeEl.textContent;
+          const graphEl = document.createElement("div");
+          const graphId = "mermaid-graph-" + id++;
+          mermaid.render(graphId, graphDefinition).then(({svg, bindFunctions}) => {
+            graphEl.innerHTML = svg;
+            bindFunctions?.(graphEl);
+            preEl.insertAdjacentElement("afterend", graphEl);
+            preEl.remove();
+          });
+        }
+      });
+    </script>
+    """
+  end
+
+  defp before_closing_body_tag(_), do: ""
 
   defp description do
     "Durable consumer-group semantics over searchable databases " <>

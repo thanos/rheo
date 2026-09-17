@@ -1,10 +1,11 @@
-# Rheo Livebook Demo (v0.7.0)
+# Rheo Livebook Demo (v0.7.1)
 
 ```elixir
 Mix.install(
   [
-    # {:rheo, path: Path.join(__DIR__, "..")},
-    {:rheo, "~> 0.7.0"},
+    # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
+    # {:rheo, "~> 0.7.1"},
+    {:rheo, path: Path.join(__DIR__, "..")},
     {:ecto_sqlite3, "~> 0.17"},
     {:kino, "~> 0.14"}
   ],
@@ -25,7 +26,7 @@ Mix.install(
 2. Evaluate cells **top to bottom**
 3. **No Docker required** — this demo uses `Rheo.Backend.ETS` by default (optional SQLite/Ecto section below)
 
-Rheo **v0.7.0** is an embedded Elixir/OTP library: consumer groups over a
+Rheo **v0.7.1** is an embedded Elixir/OTP library: consumer groups over a
 searchable event log (Mongo / Postgres / SQLite durable, ETS ephemeral).
 Delivery is **at-least-once** — use event IDs for idempotency.
 
@@ -605,6 +606,8 @@ sql_stream = "sqlite-demo"
 
 Further reading (HexDocs):
 
+* [Quick Start](https://hexdocs.pm/rheo/quick-start.html)
+* [Broadway](https://hexdocs.pm/rheo/broadway.html) · [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html)
 * [Article 14 — Rheo Is Not Broadway, It Feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
 * [Article 13 — One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
 * [Article 12 — ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)

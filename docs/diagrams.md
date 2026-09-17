@@ -1,4 +1,7 @@
-# Diagrams
+# Architecture and Flow Diagrams
+
+Mermaid diagrams for Rheo architecture and flows. On HexDocs they render via
+ExDoc's Mermaid integration; on GitHub they render natively in Markdown preview.
 
 ## Overall architecture
 
