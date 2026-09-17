@@ -1,24 +1,29 @@
 defmodule Rheo do
   @moduledoc """
-  Rheo provides durable consumer-group semantics over searchable databases.
+  Rheo provides durable, searchable, replayable consumer-group semantics over
+  storage systems.
 
-  Events are **immutable**. Consumption records progress, leases, retries, and
-  dead-letters in separate consumer-group state. Delivery is **at-least-once**:
-  after a crash or lease expiry an event may be delivered again. Make handlers
-  idempotent using stable event ids (`Rheo.Event.id`).
+  Events are immutable. Consumption records progress, leases, retries, and
+  dead-letters in separate consumer-group state. Delivery is at-least-once:
+  after a crash or lease expiry an event may be delivered again, so handlers
+  must be idempotent on `Rheo.Event.id`.
 
-  From **v0.5**, streams may use multiple partitions: sequences and ordering are
-  **per partition**, key routing uses `:erlang.phash2/2`, and group progress is a
+  Streams may have several partitions. Sequences and ordering are per
+  partition, key routing uses `:erlang.phash2/2`, and group progress is a
   contiguous ACK frontier (`Rheo.lag/3`). There is no global order across
   partitions.
 
-  From **v0.6**, `Rheo.Backend.Ecto` runs the same API on a **host-owned**
-  `Ecto.Repo` (PostgreSQL or SQLite). Mongo remains `Rheo.Backend.Mongo`; ETS
-  remains ephemeral.
+  ## Backends
 
-  From **v0.7**, `Rheo.Producer` exposes a durable group as a `GenStage` producer
-  so a Broadway pipeline can consume it (`Rheo.Broadway`). It is an alternative to
-  `Rheo.Consumer`, not a replacement — pick one per `{rheo, stream, group}`.
+  A Rheo instance runs on one `Rheo.Backend`:
+
+    * `Rheo.Backend.ETS` — in-memory, ephemeral; always available
+    * `Rheo.Backend.Mongo` — MongoDB; requires `mongodb_driver`
+    * `Rheo.Backend.Ecto` — PostgreSQL or SQLite on a host-owned `Ecto.Repo`;
+      requires `ecto_sql` and the repo's adapter
+
+  Integration modules compile only when their dependency is present
+  (ADR 020).
 
   ## Supervision
 
@@ -29,17 +34,13 @@ defmodule Rheo do
 
       Supervisor.start_link(children, strategy: :one_for_one)
 
-  Ecto (host owns the repo):
+  Ecto (the host owns the repo):
 
       children = [
         MyApp.Repo,
         {Rheo, name: MyRheo, backend: {Rheo.Backend.Ecto, repo: MyApp.Repo}},
         {MyApp.RiskConsumer, rheo: MyRheo, concurrency: 8, max_demand: 100}
       ]
-
-  Shorthand (default instance name `Rheo`):
-
-      {Rheo, url: "mongodb://localhost:27017/rheo"}
 
   Public APIs accept an optional `:rheo` option targeting a named instance
   (default `Rheo`).
@@ -54,12 +55,12 @@ defmodule Rheo do
       {:ok, _} = Rheo.query("market-events", type: "curve_update")
       {:ok, lag} = Rheo.lag("market-events", "risk")
 
-  Search history with `query` / `query_page` / `stream_query`. Replay without
-  copying events via `create_group` start cursors, `replay/3`, or
+  Search history with `query/2`, `query_page/2`, and `stream_query/2`. Replay
+  without copying events via `create_group/3` start cursors, `replay/3`, or
   `reset_group/3` (`confirm: true`). See `Rheo.Event.Lineage` for correlation
   metadata and `Rheo.Partition` for routing helpers.
 
-  See also `Rheo.Consumer` for the OTP handler API, `Rheo.Producer` /
+  See `Rheo.Consumer` for the OTP handler API, `Rheo.Producer` and
   `Rheo.Broadway` for the GenStage/Broadway surface, and `Rheo.Backend` for
   adapters.
   """
@@ -80,10 +81,9 @@ defmodule Rheo do
   ## Options
 
     * `:name` — instance name (default `Rheo`). Also used as the supervisor name.
-    * `:backend` — `{module, opts}` or module (default `Rheo.Backend.Mongo`).
-      When omitted, remaining options are forwarded to the Mongo backend.
-    * `:url` — MongoDB URL (Mongo backend)
-    * `:pool_size` — Mongo pool size (default `5`)
+    * `:backend` — `{module, opts}` or a module. Required unless `:url` is
+      given, in which case `Rheo.Backend.Mongo` is used with the remaining
+      options (`:url`, `:pool_size`) when that module is available.
 
   ## Examples
 
@@ -98,22 +98,26 @@ defmodule Rheo do
     * `{:ok, pid}` on success
     * `{:error, {:already_started, pid}}` if the instance name is taken
     * `{:error, reason}` on backend start failure
+
+  ## Errors
+
+  Raises `ArgumentError` when no `:backend` is given and the Mongo shorthand
+  cannot be used.
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
-    Supervisor.start_link(__MODULE__, opts, name: name)
+    # Resolved here so a configuration error raises in the caller.
+    backend = resolve_backend_opts(opts)
+    Supervisor.start_link(__MODULE__, {name, backend}, name: name)
   end
 
   @impl true
-  def init(opts) do
-    rheo = Keyword.get(opts, :name, __MODULE__)
-    {backend_mod, backend_opts} = resolve_backend_opts(opts)
+  def init({rheo, {backend_mod, backend_opts}}) do
     handle = Keyword.get(backend_opts, :name) || default_backend_handle(rheo, backend_mod)
     backend_opts = Keyword.put(backend_opts, :name, handle)
 
     children = [
-      {Registry, keys: :unique, name: Rheo.Names.registry(rheo)},
       backend_mod.child_spec(backend_opts),
       {Instance, name: rheo, backend: backend_mod, handle: handle},
       {Task.Supervisor, name: Rheo.Names.task_supervisor(rheo)},
@@ -799,6 +803,8 @@ defmodule Rheo do
     {backend, handle, Keyword.delete(opts, :rheo)}
   end
 
+  @mongo_backend Rheo.Backend.Mongo
+
   defp resolve_backend_opts(opts) do
     case Keyword.get(opts, :backend) do
       {mod, backend_opts} when is_atom(mod) and is_list(backend_opts) ->
@@ -808,11 +814,25 @@ defmodule Rheo do
         {mod, Keyword.drop(opts, [:backend, :name])}
 
       nil ->
-        {Rheo.Backend.Mongo, Keyword.drop(opts, [:backend, :name])}
+        mongo_shorthand!(opts)
     end
   end
 
-  defp default_backend_handle(rheo, Rheo.Backend.ETS), do: Module.concat(rheo, ETS)
-  defp default_backend_handle(rheo, Rheo.Backend.Ecto), do: Module.concat(rheo, Ecto)
-  defp default_backend_handle(rheo, _), do: Rheo.Names.backend_handle(rheo)
+  # `{Rheo, url: ...}` predates explicit backends. It stays only while Mongo
+  # ships in the same package; core never references the module otherwise.
+  defp mongo_shorthand!(opts) do
+    if Keyword.has_key?(opts, :url) and Code.ensure_loaded?(@mongo_backend) do
+      {@mongo_backend, Keyword.drop(opts, [:backend, :name])}
+    else
+      raise ArgumentError,
+            "Rheo requires a :backend, e.g. {Rheo, backend: Rheo.Backend.ETS} or " <>
+              "{Rheo, backend: {Rheo.Backend.Mongo, url: \"mongodb://...\"}}"
+    end
+  end
+
+  defp default_backend_handle(rheo, backend), do: Module.concat(rheo, backend_suffix(backend))
+
+  defp backend_suffix(backend) do
+    backend |> Module.split() |> List.last()
+  end
 end

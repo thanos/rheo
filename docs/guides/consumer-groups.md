@@ -49,7 +49,7 @@ defmodule MyApp.RiskConsumer do
   use Rheo.Consumer, stream: "market-events", group: "risk"
 
   @impl true
-  def handle_event(event, state) do
+  def handle_event(event, _context) do
     case Risk.process(event) do
       :ok -> :ack
       {:temporary, reason} -> {:retry, reason}

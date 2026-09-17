@@ -81,6 +81,8 @@ jobs:
       - run: mix deps.get
       - run: mix compile --warnings-as-errors
       - run: mix test
+      - name: Core-only build (no optional integrations)
+        run: mix core.check
 
   quality:
     name: Quality (format, credo, dialyzer, coveralls)

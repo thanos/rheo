@@ -8,39 +8,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.8.0] - 2026-09-17
 
 Architectural reset. v0.1–v0.7 were successful discovery releases; v0.8
-consolidates abstractions learned from MongoDB, ETS, Ecto, partitions, replay,
-GenStage, and Broadway, and validates settlement for Flow and native-stream
-backends such as Redis Streams — without shipping Redis or Flow yet.
+consolidates the abstractions learned from MongoDB, ETS, Ecto, partitions,
+replay, GenStage, and Broadway, and validates that the same settlement model
+can support Flow and native-stream backends such as Redis Streams — without
+shipping Redis or Flow yet.
 
 See [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html) and
 [ADR 019](https://hexdocs.pm/rheo/019-v0-8-architectural-reset.html).
 
 ### Added
 
-- `%Rheo.Lease{}.receipt` — opaque native settle identity (Model C / ADR 021)
-- `Rheo.Backend.Capabilities` — guarantees vs mechanisms (ADR 023)
-- `Rheo.Inflight` — shared inflight bookkeeping for Group and Producer
-- `Rheo.Settle` — portable settlement error classification
-- `Rheo.Backend.Wakeup` — optional hint-only wakeup contract (ADR 025)
-- Native-stream test double + receipt fencing tests
-- Flow readiness tests (`Rheo.Producer` → Flow map/partition/reduce/window)
+- `%Rheo.Lease{}.receipt` — opaque backend-native settle identity (ADR 021)
+- `Rheo.Backend.Capabilities` — validated guarantees vs mechanisms struct
+  (ADR 023); unknown keys, non-boolean values, and disabled invariants raise
+- `Rheo.Settle` — portable settlement vocabulary (`:stale_lease`,
+  `:receipt_mismatch`, `:backend_unavailable`, `{:ambiguous, _}`,
+  `{:failed, _}`, `{:invalid, _}`) and the `nack_after_failed_ack?/1` policy
+- `Rheo.Inflight` (`renew_all/2`, `pop/2`, capacity) and `Rheo.Backoff`,
+  shared by `Rheo.Group` and `Rheo.Producer`
+- `Rheo.Producer.ack/3`, `nack/4`, `reject/4` — settle durably and release the
+  producer's inflight entry in one call
+- Telemetry `[:rheo, :handler, :error]` when a handler raises or throws
+- Conformance suite grouped by guarantee; native-stream test double
+  (`Rheo.Backend.NativeStreamDouble`) runs the full suite; flaky-backend double
+  for settle failure injection
+- Property tests on ETS (partition routing, sequences, frontier, group
+  isolation, fencing, replay, paging); failure-injection tests (settle failures,
+  backend crash, drain)
+- Flow readiness tests (`Rheo.Producer` → Flow map / partition / reduce /
+  window / crash-before-settle)
 - Multi-instance ETS + SQLite isolation tests
-- Hex package layout under `apps/rheo_mongo`, `apps/rheo_ecto`, `apps/rheo_broadway`
+- Optional integrations (ADR 020): `mongodb_driver`, `ecto` / `ecto_sql`,
+  `gen_stage`, and `broadway` are `optional: true`; `Rheo.Backend.Mongo`,
+  `Rheo.Backend.Ecto`, `Rheo.Producer`, and `Rheo.Broadway` compile only when
+  their dependency is present. `mix core.check` proves the core-only build
 - ADRs 019–025; Flow and Redis readiness spikes; Article 15
-- Migration guide `docs/migrations/0.7-to-0.8.md`
 
 ### Changed
 
-- `Rheo.Consumer` handler returns `:ack | {:retry, reason} | {:reject, reason}`
-  with read-only context (ADR 022)
-- Second local consumer for the same `{rheo, stream, group}` is rejected
-  (`{:group_already_started, pid}`)
-- Backend behaviour docs emphasize semantic contract (ADR 024)
-- HexDocs regrouped (Guides Introduction/Advanced/Cookbook + Design groups)
+- `Rheo.Consumer` handlers return `:ack | {:retry, reason} | {:reject, reason}`
+  and receive a read-only context; `setup/1` must return a map (ADR 022)
+- `use Rheo.Consumer` is a child spec for `Rheo.Group`; the host supervisor owns
+  the group and a second start returns `{:error, {:already_started, pid}}`
+- Groups are registered under a local name; the per-instance `Registry` is gone
+- `Rheo.Group.drain/2` and `Rheo.Producer.drain/2` no longer block the process
+  while waiting; the group traps exits and drains on supervisor shutdown
+- After a failed ACK the group nacks only definite failures; unavailable or
+  ambiguous outcomes are left to lease expiry (fencing protects a committed ACK)
+- `c:Rheo.Backend.capabilities/0` returns the struct; `Rheo.Backend.Ecto.capabilities/1` too
+- Backends map driver errors into `Rheo.Settle` reasons instead of returning
+  exception structs; `[:rheo, :fetch, :error]`, `[:rheo, :ack | :retry | :reject, :error]`,
+  and renew `:result` metadata carry the classified reason
+- `Rheo.Broadway.Acknowledger` settles through the producer helpers
+- `{Rheo, opts}` requires `:backend`; the `url:` shorthand raises unless
+  `Rheo.Backend.Mongo` is available
+- `Rheo.Query.new/2` normalizes `order_by` directions `1` / `-1`
+- Stored nack / reject reasons are truncated diagnostics, not verbatim terms
+- Logs carry stream / group / event ids, not handler return values
 
 ### Removed
 
-- Silent multi-bridge join of a shared local `Rheo.Group`
+- `Rheo.Consumer.Bridge` and the silent multi-bridge join of a shared group
+- Flat capability maps (`to_legacy_map`, `normalize`)
+- The unused `Rheo.Backend.Wakeup` contract (ADR 025 is a proposal for v0.9)
 
 ## [0.7.1] - 2026-09-17
 

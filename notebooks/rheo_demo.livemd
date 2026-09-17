@@ -32,7 +32,7 @@ Delivery is **at-least-once** — use event IDs for idempotency.
 
 This notebook covers:
 
-* leases, ACK fencing, competing / independent groups
+* leases, receipts, ACK fencing, competing / independent groups
 * searchable history (`query`, sequence bounds, `query_page`, `stream_query`)
 * event lineage metadata
 * replay / reset **without copying events**
@@ -56,8 +56,17 @@ end
 :ok = Rheo.ensure_indexes()
 :ok = Rheo.ping()
 
-%{backend: Rheo.Backend.ETS.capabilities()}
+caps = Rheo.Backend.ETS.capabilities()
+
+%{
+  guarantees: caps.guarantees,
+  mechanisms: Enum.filter(caps.mechanisms, fn {_k, v} -> v end) |> Map.new()
+}
 ```
+
+Capabilities are a validated struct: guarantees (what Rheo promises through
+this backend) and mechanisms (how the backend implements delivery). ETS is not
+durable and not distributed; it still guarantees fencing and at-least-once.
 
 > Optional Mongo path: `docker compose up -d`, then
 > `Rheo.start_link(url: System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_livebook"))`.
@@ -132,9 +141,14 @@ Kino.DataTable.new(
 %{
   risk_count: length(risk_leases),
   surveillance_count: length(surv_leases),
-  same_event_ids?: Enum.map(risk_leases, & &1.event_id) == Enum.map(surv_leases, & &1.event_id)
+  same_event_ids?: Enum.map(risk_leases, & &1.event_id) == Enum.map(surv_leases, & &1.event_id),
+  lease: Map.take(hd(risk_leases), [:lease_id, :receipt, :attempt, :expires_at])
 }
 ```
+
+Each lease carries a `lease_id` (the fencing token) and a `receipt` (the
+backend's native claim identity — equal to the token on database backends, a
+stream entry id on a native-stream backend).
 
 Acknowledge surveillance; leave risk leases hanging (simulate a crash before ACK).
 
@@ -293,7 +307,9 @@ Enum.each(replay_leases, &Rheo.ack/1)
 
 ### 7b. Reopen an existing group (`Rheo.replay/3`)
 
-Drain remaining `risk` work first, then replay from sequence 0 (duplicates expected).
+Drain remaining `risk` work first, then replay from sequence 0. Replay
+re-opens deliveries; it does not reset `attempt`, so the group's
+`max_attempts` still applies to the redelivered events.
 
 ```elixir
 # Finish whatever risk still has available
@@ -322,10 +338,17 @@ Drain remaining `risk` work first, then replay from sequence 0 (duplicates expec
 }
 ```
 
-Query-selected replay (EUR only):
+Query-selected replay (EUR only). Settle everything the full replay
+re-opened first, so the next fetch shows only what the query selected:
 
 ```elixir
-Enum.each(after_replay, &Rheo.ack/1)
+:ok =
+  Enum.reduce_while(1..100, :ok, fn _, _ ->
+    case Rheo.fetch(stream, "risk", limit: 20, consumer_id: "risk-drain-2") do
+      {:ok, []} -> {:halt, :ok}
+      {:ok, leases} -> Enum.each(leases, &Rheo.ack/1) && {:cont, :ok}
+    end
+  end)
 
 :ok =
   Rheo.replay(stream, "risk",
@@ -415,6 +438,11 @@ Hole rule: ACK 1 and 3 while 2 is still leased → frontier stays at 1.
 
 ## 9. Idiomatic `Rheo.Consumer`
 
+`handle_event/2` receives the event and a read-only context built once by
+`setup/1`, and returns `:ack`, `{:retry, reason}`, or `{:reject, reason}`.
+Mutable state lives in a process you own — here an Agent passed through the
+options.
+
 ```elixir
 defmodule Livebook.RiskConsumer do
   use Rheo.Consumer, stream: "market-events", group: "risk"
@@ -425,7 +453,7 @@ defmodule Livebook.RiskConsumer do
   end
 
   @impl true
-  def handle_event(event, %{agent: agent} = state) do
+  def handle_event(event, %{agent: agent}) do
     Agent.update(agent, fn ids -> [event.id | ids] end)
     :ack
   end
@@ -433,12 +461,11 @@ end
 
 {:ok, agent} = Agent.start_link(fn -> [] end)
 
-{:ok, _pid} =
+{:ok, consumer} =
   Livebook.RiskConsumer.start_link(
     stream: stream,
     group: "risk",
     agent: agent,
-    name: Livebook.RiskConsumer,
     max_demand: 10,
     poll_ms: 100
   )
@@ -447,6 +474,14 @@ Process.sleep(1_500)
 seen = Agent.get(agent, &Enum.reverse/1)
 
 %{processed: length(seen), sample_ids: Enum.take(seen, 5)}
+```
+
+`start_link/1` started a `Rheo.Group` for `{Rheo, "market-events", "risk"}`;
+starting a second one for the same identity returns
+`{:error, {:already_started, pid}}`:
+
+```elixir
+Livebook.RiskConsumer.start_link(stream: stream, group: "risk", agent: agent)
 ```
 
 ---
@@ -531,8 +566,8 @@ Failing a message sends the lease back instead of ACKing it:
 
 ## 11. Optional: same API on Ecto + SQLite
 
-Same consumer semantics on a durable file database — no Docker. Stop the ETS
-instance first if you already ran section 1.
+Same consumer semantics on a durable file database — no Docker. Stop the
+section 9 consumer and the ETS instance first.
 
 ```elixir
 defmodule Livebook.RheoSqliteRepo do
@@ -540,6 +575,8 @@ defmodule Livebook.RheoSqliteRepo do
 end
 
 db = Path.join(System.tmp_dir!(), "rheo_livebook_#{System.unique_integer([:positive])}.db")
+
+if Process.alive?(consumer), do: :ok = GenServer.stop(consumer)
 
 case Process.whereis(Rheo) do
   nil -> :ok
@@ -577,7 +614,7 @@ sql_stream = "sqlite-demo"
 {:ok, lag} = Rheo.lag(sql_stream, "risk")
 
 %{
-  backend: Rheo.Backend.Ecto.capabilities(:sqlite),
+  guarantees: Rheo.Backend.Ecto.capabilities(:sqlite).guarantees,
   event_partition: ev.partition,
   frontier: lag.partitions[ev.partition].frontier,
   db: db
@@ -594,7 +631,7 @@ sql_stream = "sqlite-demo"
 
 * **Immutable log** — consumption never deletes events (ETS, Mongo, or SQL)
 * **Independent groups** — risk, surveillance, and risk-replay progress separately
-* **Leases + fencing** — stale ACKs fail; expired work is redelivered (at-least-once)
+* **Leases + fencing** — `lease_id` fences, `receipt` carries native identity; stale ACKs fail; expired work is redelivered (at-least-once)
 * **Search** — filters, sequence bounds, `query_page`, `stream_query`
 * **Lineage** — `Rheo.Event.Lineage` metadata is queryable
 * **Replay** — new group + start cursor (preferred), `replay/3`, or loud `reset_group`
@@ -602,7 +639,7 @@ sql_stream = "sqlite-demo"
 * **Frontier** — ACKs are not a cursor; holes block `Rheo.lag/3`
 * **Ecto SQL** — host-owned Repo; Postgres or SQLite; same `Rheo.Consumer` API
 * **Broadway** — `Rheo.Producer` feeds a pipeline; the acknowledger settles leases
-* **OTP** — supervise `{Rheo, backend: …}` and `Rheo.Consumer`
+* **OTP** — supervise `{Rheo, backend: …}` and `Rheo.Consumer`; handlers return outcomes, context is read-only
 
 Further reading (HexDocs):
 
@@ -612,7 +649,8 @@ Further reading (HexDocs):
 * [Article 13 — One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
 * [Article 12 — ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
 * [ADR 018 — GenStage / Broadway interop](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
-* [ADR 017 — Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
-* [0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html)
+* [Article 15 — Breaking Rheo Before Anyone Depends on the Wrong Abstraction](https://hexdocs.pm/rheo/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.html)
+* [ADR 019 — v0.8 architectural reset](https://hexdocs.pm/rheo/019-v0-8-architectural-reset.html)
+* [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html)
 
 CLI alternative from the repo root: `mix rheo.demo`

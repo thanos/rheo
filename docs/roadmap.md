@@ -78,19 +78,29 @@ Current release: **v0.8.0** (2026-09-17). Architectural reset over the v0.7 API.
 
 ## Done in 0.8.0
 
-- Architectural reset (ADR 019): Model C receipts, Consumer Option A, package
-  layout (`rheo_mongo` / `rheo_ecto` / `rheo_broadway`)
-- `Rheo.Inflight`, `Rheo.Settle`, Capabilities v2, Wakeup contract
-- Native-stream test double; Flow + Redis readiness spikes
-- [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html)
+- Architectural reset (ADR 019): read-only handler context and one Group owner
+  per `{rheo, stream, group}` (ADR 022); lease `receipt` (ADR 021); typed
+  capabilities (ADR 023); semantic backend contract and settlement vocabulary
+  (ADR 024); `Rheo.Inflight` / `Rheo.Backoff` shared by Group and Producer
+- `Rheo.Producer.ack/3`, `nack/4`, `reject/4` — one-call settle and release
+- Conformance suite grouped by guarantee, run by ETS, Mongo, Ecto, and a
+  native-stream double; failure-injection and property tests on ETS
+- Optional integrations with compile-time guards and a core-only build check; Flow and Redis readiness spikes
+- ADRs 019–025; Article 15; [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html)
 
-## Next (0.9+)
+## Next (0.9)
 
-- Redis Streams native backend (`rheo_redis`)
-- Ops surface: DLQ inspection, lag metrics, admin helpers
-- Change-stream / richer wakeup integration
-- Mnesia (later)
-- Optional further Hex package hygiene
+- Redis Streams native backend (`Rheo.Backend.Redis`, optional `redix`)
+- Wakeup contract implementation (ADR 025): reader task, blocking reads, `NOTIFY`
+
+## Later (0.10–0.12)
+
+- 0.10: Mnesia / BEAM-native distributed backend
+- 0.11: operations — DLQ inspection, lag metrics, LiveDashboard, benchmarks
+- 0.12: API freeze candidate
+- Article candidate: "Rheo + Flow: Durable Event Streams Meet Parallel Elixir
+  Computation", to be written once the settlement model has been exercised by
+  a Flow pipeline in working code
 
 ## Explicitly deferred
 

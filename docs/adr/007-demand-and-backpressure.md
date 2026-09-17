@@ -1,5 +1,9 @@
 # ADR 007: Demand and backpressure
 
+## Status
+
+Accepted (v0.1.0). GenStage interop is [ADR 018](018-broadway-genstage-interop.html); the settlement boundary is refined by [ADR 022](022-consumer-runtime-and-handler-state.html) (v0.8.0).
+
 ## Context
 
 Unbounded polling floods consumers and holds too many leases. GenStage already

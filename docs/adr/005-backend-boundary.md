@@ -1,5 +1,9 @@
 # ADR 005: Backend boundary
 
+## Status
+
+Accepted (v0.1.0). Refined by [ADR 024](024-backend-contract-v2.html) (v0.8.0).
+
 ## Context
 
 Future databases may back Rheo. A behaviour helps isolate Mongo details without

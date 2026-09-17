@@ -46,7 +46,7 @@ defmodule MyApp.FulfillmentConsumer do
   use Rheo.Consumer, stream: "orders", group: "fulfillment"
 
   @impl true
-  def handle_event(event, state) do
+  def handle_event(event, _context) do
     :ok = MyApp.Fulfillment.process(event)
     :ack
   end

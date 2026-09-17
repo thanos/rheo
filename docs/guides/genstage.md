@@ -23,18 +23,21 @@ Ensure the group exists (`Rheo.create_group/3`).
 ```elixir
 def handle_events(leases, _from, state) do
   Enum.each(leases, fn lease ->
-    :ok = Risk.process(lease.event)
-    :ok = Rheo.ack(lease, rheo: MyRheo)
-    Rheo.Producer.confirm(state.producer, lease.lease_id)
+    case Risk.process(lease.event) do
+      :ok -> :ok = Rheo.Producer.ack(state.producer, lease, rheo: MyRheo)
+      {:error, reason} -> :ok = Rheo.Producer.nack(state.producer, lease, reason, rheo: MyRheo)
+    end
   end)
 
   {:noreply, [], state}
 end
 ```
 
-Settling in the backend is only half the job: call `Rheo.Producer.confirm/2` so
-the producer stops renewing the lease and frees a `:max_demand` slot.
-`Rheo.Broadway.Acknowledger` does this automatically for Broadway.
+`Rheo.Producer.ack/3`, `nack/4`, and `reject/4` settle the lease in the backend
+and release the producer's inflight entry in one call, so renewal stops and a
+`:max_demand` slot is freed. Settling with `Rheo.ack/2` directly requires a
+separate `Rheo.Producer.confirm/2`. `Rheo.Broadway.Acknowledger` uses the same
+helpers.
 
 ## Options
 

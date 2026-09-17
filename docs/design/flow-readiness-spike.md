@@ -17,10 +17,7 @@ Flow.from_stages([producer])
 end)
 |> Flow.on_trigger(fn acc ->
   Enum.each(acc, fn {_key, leases} ->
-    Enum.each(leases, fn lease ->
-      :ok = Rheo.ack(lease, rheo: MyRheo)
-      Rheo.Producer.confirm(producer, lease.lease_id)
-    end)
+    Enum.each(leases, &(:ok = Rheo.Producer.ack(producer, &1, rheo: MyRheo)))
   end)
 
   {[], %{}}
@@ -39,11 +36,27 @@ end)
 Crashing before settle ⇒ at-least-once redelivery (lease expiry). Never ACK in
 `reduce` before the aggregate is safely stored.
 
+## Case answers
+
+| Case | Lease carrier | Renewal | Success event | Settles | Crash before success |
+|---|---|---|---|---|---|
+| one-to-one map | the lease itself | producer | map side effect done | `Producer.ack/3` in `map` | lease expires, redelivered |
+| filter | the lease | producer | filtered out is success | `Producer.ack/3` on drop | same |
+| partition by key | the lease travels with the key | producer | downstream stage's success | downstream | same |
+| reduce | accumulator holds the leases | producer | `on_trigger` after aggregate stored | `Producer.ack/3` per lease in `on_trigger` | all leases in the accumulator expire and are redelivered |
+| window | accumulator holds up to a window of leases | producer; `lease_ms` must exceed the window | window close plus durable sink write | same | same |
+| sink failure | accumulator | producer | none | `Producer.nack/4` per lease | redelivery |
+| pipeline restart | nothing survives | producer restarts with empty inflight | first trigger after restart | as above | at-least-once replay from the backend |
+
+Memory and renewal work are bounded by the producer's `:max_demand`: a
+window cannot hold more leases than the producer will hand out unsettled.
+
 ## Exit criterion
 
-No Flow-specific lease type is required. The same `%Rheo.Lease{}` +
-`confirm/2` boundary used by Broadway works if reduce/window retain leases
-until trigger.
+No Flow-specific lease type is required. The same `%Rheo.Lease{}` and
+`Rheo.Producer.ack/3` / `nack/4` / `reject/4` boundary used by Broadway works
+if reduce/window retain leases until trigger. No `rheo_flow` package is
+justified in v0.8.
 
 Executable coverage: `test/rheo/flow_readiness_test.exs` (map, partition+reduce,
 window trigger, crash-before-settle redelivery). Flow is a **test-only**

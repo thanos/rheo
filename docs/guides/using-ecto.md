@@ -44,8 +44,8 @@ mix rheo.ecto.gen_migration
 | Typical use | Production SQL | Embedded / local durable |
 
 ```elixir
-Rheo.Backend.Ecto.capabilities(:postgres)
-Rheo.Backend.Ecto.capabilities(:sqlite)
+Rheo.Backend.Ecto.capabilities(:postgres).guarantees.distributed # => true
+Rheo.Backend.Ecto.capabilities(:sqlite).guarantees.distributed   # => false
 ```
 
 ## Same consumer code

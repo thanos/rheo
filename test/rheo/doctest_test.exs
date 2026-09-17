@@ -16,4 +16,5 @@ defmodule Rheo.DoctestTest do
   doctest Rheo.Telemetry
   doctest Rheo.Instance
   doctest Rheo.Broadway
+  doctest Rheo.Producer
 end

@@ -13,7 +13,8 @@ defmodule Rheo.Query do
     * `:from` / `:to` — optional `DateTime` bounds on `timestamp`
     * `:after_sequence` — exclusive lower bound on `sequence` (like `Rheo.read/2` `:after`)
     * `:until_sequence` — inclusive upper bound on `sequence`
-    * `:order_by` — `[{field, :asc | :desc}]` (default `[sequence: :asc]`)
+    * `:order_by` — `[{field, :asc | :desc}]` (default `[sequence: :asc]`);
+      `1` / `-1` are accepted and normalized
     * `:limit` — max events (default `100`)
     * `:cursor` — opaque page cursor from `%Rheo.Page{next_cursor}` (sequence-asc pages)
 
@@ -192,10 +193,17 @@ defmodule Rheo.Query do
       to: Keyword.get(known, :to),
       after_sequence: Keyword.get(known, :after_sequence),
       until_sequence: Keyword.get(known, :until_sequence),
-      order_by: Keyword.get(known, :order_by, sequence: :asc),
+      order_by: normalize_order_by(Keyword.get(known, :order_by, sequence: :asc)),
       limit: Keyword.get(known, :limit, 100),
       cursor: Keyword.get(known, :cursor)
     }
+  end
+
+  defp normalize_order_by(order_by) when is_list(order_by) do
+    Enum.map(order_by, fn
+      {field, dir} when dir in [:asc, 1] -> {field, :asc}
+      {field, dir} when dir in [:desc, -1] -> {field, :desc}
+    end)
   end
 
   @doc """

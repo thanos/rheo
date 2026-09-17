@@ -2,14 +2,37 @@ defmodule Rheo.Telemetry do
   @moduledoc """
   Thin helpers around `:telemetry` for Rheo operations.
 
-  Events emitted (prefix varies by operation):
+  ## Events
 
-    * `[:rheo, :append, :start | :stop | :exception]`
-    * `[:rheo, :fetch, …]`, `[:rheo, :ack, …]`, `[:rheo, :query, …]`, …
-    * `[:rheo, :lease]`, `[:rheo, :redelivery]`, `[:rheo, :dead_letter]`
-    * `[:rheo, :consumer, :start]`, `[:rheo, :consumer, :stop]`
+  Backend spans (`:start` / `:stop` / `:exception` suffix, metadata `stream`
+  and, where relevant, `group`):
 
-  Attach handlers with `:telemetry.attach/4` in your application.
+    * `[:rheo, :append]`, `[:rheo, :append_batch]`, `[:rheo, :query]`,
+      `[:rheo, :fetch]`, `[:rheo, :lease, :renew]`, `[:rheo, :ack]`,
+      `[:rheo, :retry]`, `[:rheo, :reject]`
+
+  Backend counters (`count` measurement):
+
+    * `[:rheo, :stream, :create]`, `[:rheo, :group, :create]` — `stream`, `group`
+    * `[:rheo, :lease]` — leases handed out by one fetch; `stream`, `group`, `consumer_id`
+    * `[:rheo, :redelivery]`, `[:rheo, :dead_letter]` — `stream`, `group`, `event_id`
+    * `[:rheo, :group, :frontier]`, `[:rheo, :group, :replay]`, `[:rheo, :group, :reset]`
+
+  Runtime (`Rheo.Group`, `Rheo.Producer`, `Rheo.Broadway.Acknowledger`):
+
+    * `[:rheo, :consumer, :start | :stop]`, `[:rheo, :producer, :start | :stop]`
+      — `stream`, `group`, `consumer_id`
+    * `[:rheo, :fetch, :error]` — `stream`, `group`, `reason` (`Rheo.Settle`)
+    * `[:rheo, :lease, :renew]` — `stream`, `group`, `event_id`, `result`
+      (`:ok` or a `Rheo.Settle` reason)
+    * `[:rheo, :ack | :retry | :reject, :error]` — `stream`, `group`,
+      `event_id`, `reason` (`Rheo.Settle`)
+    * `[:rheo, :handler, :error]` — a handler raised or threw; `event_id`, `reason`
+    * `[:rheo, :worker, :crash]` — a handler task exited; `event_id`, `reason`
+    * `[:rheo, :broadway, :ack | :retry | :reject]` — settled through the acknowledger
+
+  Metadata never includes event payloads. Attach handlers with
+  `:telemetry.attach/4` in your application.
   """
 
   @doc """

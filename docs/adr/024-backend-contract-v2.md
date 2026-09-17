@@ -12,11 +12,20 @@ delivery documents" cannot host Redis honestly.
 
 ## Decision
 
-1. Treat `Rheo.Backend` callbacks as **semantic**: log, claim, renew, settle,
-   replay, lag, health.
-2. Keep storage algorithms private to each adapter.
-3. Require opaque lease `receipt` support for native-stream settle (ADR 021).
-4. Executable contract remains the conformance suite (+ native-stream double).
+1. `Rheo.Backend` callbacks are semantic: log (`append`, `read`, `query`),
+   delivery (`fetch`, `renew`, `ack`, `retry`, `reject`), group progress
+   (`replay`, `reset_group`, `lag`), lifecycle and health (`child_spec`,
+   `capabilities`, `ensure_indexes`, `ping`). The callback list is unchanged
+   from v0.7; the contract text now states what each must guarantee.
+2. Storage algorithms stay private to each adapter.
+3. Settle callbacks fence on `lease_id` and, when the adapter sets it, on
+   `lease.receipt` with term equality ([ADR 021](021-logical-sequence-and-native-delivery-receipts.html)).
+4. Adapters map driver errors into the `Rheo.Settle` vocabulary
+   (`:backend_unavailable`, `{:failed, cause}`, `{:ambiguous, cause}`) instead
+   of returning driver exceptions.
+5. The executable contract is `test/support/backend_contract.ex`, organized by
+   guarantee, run by ETS, Mongo, Ecto (SQLite and PostgreSQL), and the
+   native-stream double.
 
 ## Consequences
 

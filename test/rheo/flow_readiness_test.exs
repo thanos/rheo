@@ -2,9 +2,9 @@ defmodule Rheo.FlowReadinessTest do
   @moduledoc """
   Executable Flow readiness checks for v0.8 (ADR 019 / design spike).
 
-  Proves `%Rheo.Lease{}` + `Producer.confirm/2` compose with Flow map /
-  partition / reduce / window without inventing a Flow-specific lease type.
-  Flow is a **test-only** dependency — not a published Rheo package.
+  Proves `%Rheo.Lease{}` plus `Rheo.Producer.ack/3` compose with Flow map /
+  partition / reduce / window without a Flow-specific lease type or a second
+  settlement protocol. Flow is a test-only dependency, not a Rheo package.
   """
   use ExUnit.Case, async: false
 
@@ -29,9 +29,8 @@ defmodule Rheo.FlowReadinessTest do
       Flow.from_stages([producer])
       |> Flow.map(fn %Lease{} = lease ->
         assert is_binary(lease.lease_id)
-        assert lease.receipt == lease.lease_id or is_binary(lease.receipt)
-        :ok = Rheo.ack(lease, rheo: ctx.rheo)
-        :ok = Producer.confirm(producer, lease.lease_id)
+        assert lease.receipt == lease.lease_id
+        :ok = Producer.ack(producer, lease, rheo: ctx.rheo)
         lease.event.id
       end)
       |> Enum.take(3)
@@ -68,11 +67,7 @@ defmodule Rheo.FlowReadinessTest do
         [lease | acc]
       end)
       |> Flow.on_trigger(fn leases ->
-        Enum.each(leases, fn lease ->
-          :ok = Rheo.ack(lease, rheo: ctx.rheo)
-          :ok = Producer.confirm(producer, lease.lease_id)
-        end)
-
+        Enum.each(leases, &(:ok = Producer.ack(producer, &1, rheo: ctx.rheo)))
         send(parent, {:triggered, length(leases)})
         {[{0, leases}], []}
       end)
@@ -101,11 +96,7 @@ defmodule Rheo.FlowReadinessTest do
       |> Flow.partition(key: fn _ -> :one end, window: window, stages: 1)
       |> Flow.reduce(fn -> [] end, fn lease, acc -> [lease | acc] end)
       |> Flow.on_trigger(fn leases ->
-        Enum.each(leases, fn lease ->
-          :ok = Rheo.ack(lease, rheo: ctx.rheo)
-          :ok = Producer.confirm(producer, lease.lease_id)
-        end)
-
+        Enum.each(leases, &(:ok = Producer.ack(producer, &1, rheo: ctx.rheo)))
         {[length(leases)], []}
       end)
       |> Enum.take(2)
@@ -140,8 +131,7 @@ defmodule Rheo.FlowReadinessTest do
     [%Lease{event: %{id: ^event_id}, attempt: attempt, lease_id: new_id}] =
       Flow.from_stages([producer2])
       |> Flow.map(fn %Lease{} = lease ->
-        :ok = Rheo.ack(lease, rheo: ctx.rheo)
-        :ok = Producer.confirm(producer2, lease.lease_id)
+        :ok = Producer.ack(producer2, lease, rheo: ctx.rheo)
         lease
       end)
       |> Enum.take(1)

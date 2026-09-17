@@ -16,6 +16,10 @@ with `Rheo.Consumer` or feed a **Broadway** pipeline with `Rheo.Producer`.
 use stable event IDs for idempotency. Ordering is guaranteed **within a
 partition** only (not globally across partitions).
 
+Rheo is pre-1.0 and under active architectural development. Breaking changes
+between minor releases may occur while the backend and consumer-group
+contracts are refined; each one ships with a migration guide.
+
 ## When to use
 
 Use Rheo when you want:
@@ -58,13 +62,22 @@ Add Rheo to your `mix.exs` dependencies:
 def deps do
   [
     {:rheo, "~> 0.8.0"}
-    # plus integrations you use:
-    # {:rheo_mongo, "~> 0.8.0"},
-    # {:rheo_ecto, "~> 0.8.0"},
-    # {:rheo_broadway, "~> 0.8.0"}
   ]
 end
 ```
+
+### Optional integrations
+
+Rheo core needs only `telemetry` and `jason`; ETS works out of the box. Add
+the dependencies for the integrations you use and the matching modules are
+compiled:
+
+| Dependency | Enables |
+|---|---|
+| `{:mongodb_driver, "~> 1.5"}` | `Rheo.Backend.Mongo` |
+| `{:ecto_sql, "~> 3.11"}` + `{:postgrex, "~> 0.19"}` or `{:ecto_sqlite3, "~> 0.17"}` | `Rheo.Backend.Ecto`, `mix rheo.ecto.gen_migration` |
+| `{:gen_stage, "~> 1.2"}` | `Rheo.Producer` |
+| `{:broadway, "~> 1.2"}` | `Rheo.Broadway` and its acknowledger |
 
 Then fetch deps:
 
@@ -85,8 +98,6 @@ Choose a backend:
 {Rheo, name: MyRheo, backend: {Rheo.Backend.Ecto, repo: MyApp.Repo}}
 ```
 
-The Ecto backend needs the driver your repo uses — `{:postgrex, "~> 0.19"}` or
-`{:ecto_sqlite3, "~> 0.17"}` — since Rheo leaves that choice to you.
 
 ## Quick start
 
@@ -140,8 +151,9 @@ mix ecto.migrate
 `metadata` and `payload` are `jsonb`, so the event log stays queryable in plain
 SQL. See [ADR 017](https://hexdocs.pm/rheo/017-ecto-backend.html).
 
-Define a consumer — handlers only implement `handle_event/2`; a local
-`Rheo.Group` owns fetch, concurrency, lease renewal, and settle:
+Define a consumer — handlers implement `handle_event/2` and return an outcome;
+the local `Rheo.Group` started by the child spec owns fetch, concurrency, lease
+renewal, and settlement:
 
 ```elixir
 defmodule MyApp.RiskConsumer do
@@ -152,7 +164,7 @@ defmodule MyApp.RiskConsumer do
     max_demand: 100
 
   @impl true
-  def handle_event(event, state) do
+  def handle_event(event, _context) do
     case Risk.process(event) do
       :ok ->
         :ack
@@ -225,7 +237,7 @@ because those files are not in the Hex tarball.
 
 **Migrating from previous versions**
 
-- [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) · [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) · [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html)
+- [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) · [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) · [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) · [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html)
 - [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) · [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html)
 
 **Design**
@@ -237,6 +249,7 @@ because those files are not in the Hex tarball.
 - [Article 12: ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
 - [Article 13: One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
 - [Article 14: Rheo Is Not Broadway — It Feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
+- [Article 15: Breaking Rheo Before Anyone Depends on the Wrong Abstraction](https://hexdocs.pm/rheo/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.html)
 - [ADR 017: Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
 - [ADR 018: GenStage / Broadway interop](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
 
@@ -385,8 +398,8 @@ separate knobs.
 
 Pick one surface per `{rheo, stream, group}`: `Rheo.Consumer` for the OTP handler
 API, `Rheo.Producer` when you want Broadway's batching, rate limiting, or
-fan-out. Plain GenStage consumers can handle leases directly, settling with
-`Rheo.ack/2` and then `Rheo.Producer.confirm/2`. See
+fan-out. Plain GenStage consumers handle leases directly and settle with
+`Rheo.Producer.ack/3`, `nack/4`, or `reject/4`. See
 [Article 14](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
 and [ADR 018](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html).
 
@@ -416,9 +429,11 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.6.0** | Ecto SQL backend: PostgreSQL + SQLite on a host-owned repo |
 | **0.7.0** | GenStage/Broadway interop: `Rheo.Producer`, lease-aware acknowledger |
 | **0.7.1** | HexDocs Guides + Mermaid; Livebook Broadway section |
-| **0.8.0** (current) | Architectural reset: packages, receipts, Consumer Option A, Redis/Flow readiness |
-| **0.9.0** | Redis Streams native backend |
-| **0.9.0** | API freeze candidate |
+| **0.8.0** (current) | Architectural reset: read-only handler context, single group owner, lease receipts, typed capabilities, settlement vocabulary, Redis/Flow readiness |
+| **0.9.0** | Redis Streams native backend (optional `redix` integration) |
+| **0.10.0** | Mnesia / BEAM-native distributed backend |
+| **0.11.0** | Operations: wakeups, DLQ inspection, LiveDashboard, benchmarks |
+| **0.12.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 
 Still out of scope through 1.0 unless demand forces it: standalone Rheo server,
@@ -441,7 +456,7 @@ mix rheo.demo
 docker compose up -d && RHEO_BACKEND=mongo mix rheo.demo
 ```
 
-Quality gates:
+Quality gates (`mix ci` runs them all):
 
 ```bash
 mix format --check-formatted
@@ -449,6 +464,8 @@ mix compile --warnings-as-errors
 mix credo --strict
 mix dialyzer
 mix coveralls
+mix docs --warnings-as-errors
+mix core.check   # builds a project on rheo with no optional integration
 ```
 
 Mongo-backed tests run by default when Mongo is available. Heavier end-to-end

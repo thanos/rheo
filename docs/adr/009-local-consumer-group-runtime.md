@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v0.2.0)
+Accepted (v0.2.0). Amended by [ADR 022](022-consumer-runtime-and-handler-state.html) (v0.8.0): the bridge process is removed and handler state is read-only.
 
 ## Context
 

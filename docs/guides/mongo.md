@@ -27,7 +27,10 @@ Always run indexes once per deployment:
 
 ```elixir
 Rheo.Backend.Mongo.capabilities()
-# durable: true, distributed: true, secondary_indexes: true, …
+# %Rheo.Backend.Capabilities{
+#   guarantees: %{durable: true, distributed: false, partitions: true, …},
+#   mechanisms: %{secondary_indexes: true, batch_writes: true, …}
+# }
 ```
 
 ## Local development

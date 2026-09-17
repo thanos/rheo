@@ -37,7 +37,6 @@ defmodule Rheo.Backend.ETS do
       partitions: true,
       contiguous_frontier: true
     })
-    |> Rheo.Backend.Capabilities.to_legacy_map()
   end
 
   @impl true

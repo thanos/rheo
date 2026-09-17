@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v0.8.0)
+Accepted (v0.8.0). Supersedes [ADR 011](011-backend-capabilities.html).
 
 ## Context
 
@@ -13,13 +13,19 @@ gating ambiguous.
 
 ## Decision
 
-1. Introduce `Rheo.Backend.Capabilities` with two maps: **guarantees** and
-   **mechanisms**.
-2. Always imply `at_least_once` and `lease_fencing` unless explicitly false
-   (they are Rheo product invariants).
-3. Keep `capabilities/0` on backends but return either the struct or a legacy
-   flat map normalized via `Capabilities.normalize/1`.
-4. Conformance gates on guarantees; mechanism flags skip optional cases only.
+1. `Rheo.Backend.Capabilities` is a validated struct with two maps:
+   **guarantees** (`durable`, `distributed`, `at_least_once`, `lease_fencing`,
+   `partitions`, `contiguous_frontier`, `replay`) and **mechanisms**
+   (`atomic_compare_and_set`, `ordered_range_scan`, `secondary_indexes`,
+   `batch_writes`, `notifications`, `change_feed`, `native_consumer_groups`,
+   `native_pending_list`, `native_reclaim`, `blocking_reads`,
+   `native_group_lag`). Every key is present; unknown keys and non-boolean
+   values raise.
+2. `at_least_once` and `lease_fencing` are Rheo invariants: they default to
+   `true` and cannot be declared `false`.
+3. `c:Rheo.Backend.capabilities/0` returns the struct. There is no legacy map.
+4. The conformance suite gates optional cases on guarantees only; correctness
+   cases always run.
 
 ## Consequences
 

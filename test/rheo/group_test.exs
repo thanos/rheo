@@ -10,7 +10,7 @@ defmodule Rheo.GroupTest do
     def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
 
     @impl true
-    def handle_event(event, %{agent: agent} = state) do
+    def handle_event(event, %{agent: agent}) do
       Agent.update(agent, fn xs -> [event.id | xs] end)
       :ack
     end
@@ -23,7 +23,7 @@ defmodule Rheo.GroupTest do
     def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
 
     @impl true
-    def handle_event(event, %{agent: agent} = state) do
+    def handle_event(event, %{agent: agent}) do
       crash? =
         Agent.get_and_update(agent, fn
           %{crash?: true} = s -> {true, %{s | crash?: false, seen: [event.id | s.seen]}}
@@ -45,7 +45,7 @@ defmodule Rheo.GroupTest do
     def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
 
     @impl true
-    def handle_event(event, %{agent: agent} = state) do
+    def handle_event(event, %{agent: agent}) do
       Process.sleep(200)
       Agent.update(agent, fn xs -> [event.id | xs] end)
       :ack

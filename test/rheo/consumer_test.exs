@@ -92,12 +92,12 @@ defmodule Rheo.ConsumerTest do
     id1 = :"join-a-#{System.unique_integer()}"
     id2 = :"join-b-#{System.unique_integer()}"
 
-    {:ok, _} =
+    {:ok, pid} =
       start_supervised(
         {RiskConsumer, stream: stream, group: "risk", agent: agent, id: id1, poll_ms: 50}
       )
 
-    assert {:error, {{:group_already_started, _pid}, _child}} =
+    assert {:error, {:already_started, ^pid}} =
              start_supervised(
                {RiskConsumer, stream: stream, group: "risk", agent: agent, id: id2, poll_ms: 50}
              )

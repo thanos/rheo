@@ -1,37 +1,36 @@
 defmodule Rheo.Backend.NativeStreamDouble do
   @moduledoc false
-  # Test-only native-stream shaped backend (v0.8 Stage 5).
-  # Keeps portable event.sequence while settling via Redis-like receipts.
-  # Not a production Redis adapter.
+
+  # Test-only backend shaped like a native stream (Redis Streams): events carry
+  # a backend-native id that becomes the lease receipt, and settlement is
+  # fenced on both `lease_id` and `receipt`. It keeps the portable
+  # `event.sequence` per partition. It is a conformance fixture, not a Redis
+  # adapter, and it runs the same `Rheo.BackendContract` suite as the
+  # database backends.
 
   @behaviour Rheo.Backend
   use GenServer
 
-  alias Rheo.{Clock, Event, Id, Lag, Lease, Partition}
+  alias Rheo.{Clock, Event, Id, Lag, Lease, Partition, Query}
 
-  defstruct name: nil, streams: %{}, events: %{}, groups: %{}, deliveries: %{}, seq_wall: 0
+  defstruct name: nil, streams: %{}, events: %{}, groups: %{}, deliveries: %{}, native_seq: 0
 
   @impl true
   def capabilities do
     Rheo.Backend.Capabilities.new(%{
       durable: false,
       distributed: false,
-      atomic_compare_and_set: true,
-      notifications: false,
-      change_feed: false,
-      secondary_indexes: false,
-      batch_writes: true,
-      ordered_range_scan: true,
-      replay: true,
       partitions: true,
       contiguous_frontier: true,
+      replay: true,
+      atomic_compare_and_set: true,
+      batch_writes: true,
+      ordered_range_scan: true,
       native_consumer_groups: true,
       native_pending_list: true,
       native_reclaim: true,
-      blocking_reads: false,
       native_group_lag: true
     })
-    |> Rheo.Backend.Capabilities.to_legacy_map()
   end
 
   @impl true
@@ -115,6 +114,8 @@ defmodule Rheo.Backend.NativeStreamDouble do
 
   defp call(handle, msg) do
     GenServer.call(handle, msg, 5_000)
+  catch
+    :exit, {:noproc, _} -> {:error, :backend_unavailable}
   end
 
   @impl true
@@ -127,266 +128,270 @@ defmodule Rheo.Backend.NativeStreamDouble do
       {:reply, {:error, :already_exists}, state}
     else
       count = Keyword.get(opts, :partition_count, 1)
-
-      stream_meta = %{
-        partition_count: count,
-        sequences: Map.new(0..(count - 1), &{&1, 0})
-      }
-
-      {:reply, :ok, %{state | streams: Map.put(state.streams, stream, stream_meta)}}
+      meta = %{partition_count: count, sequences: Map.new(0..(count - 1), &{&1, 0})}
+      {:reply, :ok, %{state | streams: Map.put(state.streams, stream, meta)}}
     end
   end
 
   def handle_call({:create_group, stream, group, opts}, _from, state) do
     key = {stream, group}
 
-    if Map.has_key?(state.groups, key) do
-      {:reply, {:error, :already_exists}, state}
-    else
-      start_after = Keyword.get(opts, :start_after, 0)
-      meta = Map.fetch!(state.streams, stream)
+    cond do
+      not Map.has_key?(state.streams, stream) ->
+        {:reply, {:error, :stream_not_found}, state}
 
-      group_meta = %{
-        cursors: Map.new(0..(meta.partition_count - 1), &{&1, start_after}),
-        frontiers: Map.new(0..(meta.partition_count - 1), &{&1, start_after}),
-        max_attempts: Keyword.get(opts, :max_attempts, 5)
-      }
+      Map.has_key?(state.groups, key) ->
+        {:reply, {:error, :already_exists}, state}
 
-      {:reply, :ok, %{state | groups: Map.put(state.groups, key, group_meta)}}
+      true ->
+        start_after = Keyword.get(opts, :start_after, 0)
+        partitions = partitions_of(state, stream)
+
+        group_meta = %{
+          cursors: Map.new(partitions, &{&1, start_after}),
+          frontiers: Map.new(partitions, &{&1, start_after}),
+          max_attempts:
+            Keyword.get(opts, :max_attempts, Application.get_env(:rheo, :default_max_attempts, 5))
+        }
+
+        {:reply, :ok, %{state | groups: Map.put(state.groups, key, group_meta)}}
     end
   end
 
   def handle_call({:append_batch, stream, payloads, opts}, _from, state) do
-    meta = Map.fetch!(state.streams, stream)
+    case Map.fetch(state.streams, stream) do
+      :error ->
+        {:reply, {:error, :stream_not_found}, state}
 
-    {events, meta, state, wall} =
-      Enum.reduce(payloads, {[], meta, state, state.seq_wall}, fn payload, {acc, m, st, w} ->
-        partition = partition_for(payload, opts, m.partition_count)
-        seq = Map.fetch!(m.sequences, partition) + 1
-        w = w + 1
-        receipt = "#{System.system_time(:millisecond)}-#{w}"
-        id = Id.generate()
+      {:ok, meta} ->
+        {events, meta, state} =
+          Enum.reduce(payloads, {[], meta, state}, fn payload, {acc, m, st} ->
+            partition = partition_for(payload, opts, m.partition_count)
+            seq = Map.fetch!(m.sequences, partition) + 1
+            native_id = "#{System.system_time(:millisecond)}-#{st.native_seq}"
+            id = Id.generate()
 
-        event = %Event{
-          id: id,
-          stream: stream,
-          partition: partition,
-          sequence: seq,
-          timestamp: Clock.utc_now(),
-          key: payload[:key] || payload["key"],
-          type: payload[:type] || payload["type"],
-          metadata: payload[:metadata] || payload["metadata"] || %{},
-          payload: stringify_keys(Map.drop(payload, [:metadata, "metadata"]))
-        }
+            event = %Event{
+              id: id,
+              stream: stream,
+              partition: partition,
+              sequence: seq,
+              timestamp: Keyword.get(opts, :timestamp, Clock.utc_now()),
+              key: Keyword.get(opts, :key) || payload[:key] || payload["key"],
+              type: payload[:type] || payload["type"],
+              metadata: stringify_keys(payload[:metadata] || payload["metadata"] || %{}),
+              payload: stringify_keys(Map.drop(payload, [:metadata, "metadata"]))
+            }
 
-        m = %{m | sequences: Map.put(m.sequences, partition, seq)}
-        st = put_in(st.events[id], Map.put(Map.from_struct(event), :native_id, receipt))
-        {[event | acc], m, st, w}
-      end)
+            m = %{m | sequences: Map.put(m.sequences, partition, seq)}
+            row = event |> Map.from_struct() |> Map.put(:native_id, native_id)
+            st = %{st | events: Map.put(st.events, id, row), native_seq: st.native_seq + 1}
+            {[event | acc], m, st}
+          end)
 
-    state = %{
-      state
-      | streams: Map.put(state.streams, stream, meta),
-        seq_wall: wall
-    }
-
-    {:reply, {:ok, Enum.reverse(events)}, state}
+        state = %{state | streams: Map.put(state.streams, stream, meta)}
+        {:reply, {:ok, Enum.reverse(events)}, state}
+    end
   end
 
   def handle_call({:read, stream, opts}, _from, state) do
+    partition = Keyword.get(opts, :partition, 0)
     after_seq = Keyword.get(opts, :after, 0)
     limit = Keyword.get(opts, :limit, 100)
 
     events =
       state.events
       |> Map.values()
-      |> Enum.filter(&(&1.stream == stream and &1.sequence > after_seq))
-      |> Enum.sort_by(&{&1.partition, &1.sequence})
+      |> Enum.filter(&(&1.stream == stream and &1.partition == partition))
+      |> Enum.filter(&(&1.sequence > after_seq))
+      |> Enum.sort_by(& &1.sequence)
       |> Enum.take(limit)
-      |> Enum.map(&struct(Event, Map.drop(&1, [:native_id])))
+      |> Enum.map(&to_event/1)
 
     {:reply, {:ok, events}, state}
   end
 
-  def handle_call({:query, query}, _from, state) do
+  def handle_call({:query, %Query{} = query}, _from, state) do
+    query = Query.apply_cursor(query)
+
     events =
       state.events
       |> Map.values()
-      |> Enum.filter(&(&1.stream == query.stream))
-      |> Enum.sort_by(&{&1.partition, &1.sequence})
-      |> Enum.take(query.limit || 100)
-      |> Enum.map(&struct(Event, Map.drop(&1, [:native_id])))
+      |> Enum.filter(&(&1.stream == query.stream and matches?(&1, query)))
+      |> Enum.sort(order_fun(query.order_by))
+      |> Enum.take(query.limit)
+      |> Enum.map(&to_event/1)
 
     {:reply, {:ok, events}, state}
   end
 
   def handle_call({:fetch, stream, group, opts}, _from, state) do
-    limit = Keyword.get(opts, :limit, 10)
-    consumer_id = Keyword.get(opts, :consumer_id, "native-1")
-    lease_ms = Keyword.get(opts, :lease_ms, 30_000)
-    now = Clock.utc_now()
-    group_key = {stream, group}
-    group_meta = Map.fetch!(state.groups, group_key)
+    with {:ok, group_meta} <- fetch_group(state, group_key(stream, group)),
+         {:ok, partitions} <- assignment(state, stream, opts) do
+      limit = Keyword.get(opts, :limit, 10)
+      consumer_id = Keyword.get(opts, :consumer_id, "native-1")
+      lease_ms = Keyword.get(opts, :lease_ms, 30_000)
+      now = Clock.utc_now()
 
-    state = materialize(state, stream, group)
+      state = materialize(state, stream, group, group_meta, partitions)
 
-    claimable =
-      state.deliveries
-      |> Map.values()
-      |> Enum.filter(fn d ->
-        d.stream == stream and d.group == group and claimable?(d, now)
-      end)
-      |> Enum.sort_by(&{&1.partition, &1.sequence})
-      |> Enum.take(limit)
+      claimable =
+        state.deliveries
+        |> Map.values()
+        |> Enum.filter(fn d ->
+          d.stream == stream and d.group == group and d.partition in partitions and
+            claimable?(d, now)
+        end)
+        |> Enum.sort_by(&{&1.partition, &1.sequence})
+        |> Enum.take(limit)
 
-    {leases, state} =
-      Enum.map_reduce(claimable, state, fn d, st ->
-        lease_id = Id.generate()
-        expires = DateTime.add(now, lease_ms, :millisecond)
-        attempt = max(d.attempt, 0) + 1
-        event_row = Map.fetch!(st.events, d.event_id)
-        receipt = event_row.native_id
+      {leases, state} =
+        Enum.map_reduce(claimable, state, fn d, st ->
+          lease_id = Id.generate()
+          expires = DateTime.add(now, lease_ms, :millisecond)
+          attempt = d.attempt + 1
+          row = Map.fetch!(st.events, d.event_id)
 
-        d = %{
-          d
-          | status: :leased,
+          d = %{
+            d
+            | status: :leased,
+              lease_id: lease_id,
+              attempt: attempt,
+              expires_at: expires,
+              consumer_id: consumer_id
+          }
+
+          lease = %Lease{
             lease_id: lease_id,
-            attempt: attempt,
-            expires_at: expires,
+            stream: stream,
+            group: group,
+            event_id: d.event_id,
+            event: to_event(row),
             consumer_id: consumer_id,
-            receipt: receipt
-        }
+            attempt: attempt,
+            leased_at: now,
+            expires_at: expires,
+            receipt: row.native_id
+          }
 
-        st = put_in(st.deliveries[d.key], d)
+          {lease, put_in(st.deliveries[d.key], d)}
+        end)
 
-        lease = %Lease{
-          lease_id: lease_id,
-          stream: stream,
-          group: group,
-          event_id: d.event_id,
-          event: struct(Event, Map.drop(event_row, [:native_id])),
-          consumer_id: consumer_id,
-          attempt: attempt,
-          leased_at: now,
-          expires_at: expires,
-          receipt: receipt
-        }
-
-        {lease, st}
-      end)
-
-    _ = group_meta
-    {:reply, {:ok, leases}, state}
+      {:reply, {:ok, leases}, state}
+    else
+      {:error, _} = error -> {:reply, error, state}
+    end
   end
 
   def handle_call({:renew, lease, opts}, _from, state) do
-    key = delivery_key(lease)
-    now = Clock.utc_now()
     lease_ms = Keyword.get(opts, :lease_ms, 30_000)
 
-    case Map.get(state.deliveries, key) do
-      %{status: :leased, lease_id: lid} = d when lid == lease.lease_id ->
-        expires = DateTime.add(now, lease_ms, :millisecond)
-        d = %{d | expires_at: expires}
-        {:reply, {:ok, %{lease | expires_at: expires}}, put_in(state.deliveries[key], d)}
-
-      _ ->
-        {:reply, {:error, :stale_lease}, state}
-    end
+    settle(state, lease, fn d ->
+      expires = DateTime.add(Clock.utc_now(), lease_ms, :millisecond)
+      {{:ok, %{lease | expires_at: expires}}, %{d | expires_at: expires}}
+    end)
   end
 
   def handle_call({:ack, lease}, _from, state) do
-    key = delivery_key(lease)
-
-    case Map.get(state.deliveries, key) do
-      %{status: :leased, lease_id: lid, receipt: receipt} = d
-      when lid == lease.lease_id and receipt == lease.receipt ->
-        d = %{d | status: :acked, lease_id: nil, expires_at: nil}
-        state = put_in(state.deliveries[key], d)
-        state = advance_frontier(state, lease)
-        {:reply, :ok, state}
-
-      %{status: :leased, lease_id: lid} when lid == lease.lease_id ->
-        {:reply, {:error, :receipt_mismatch}, state}
-
-      _ ->
-        {:reply, {:error, :stale_lease}, state}
-    end
+    settle(state, lease, fn d -> {:ok, %{d | status: :acked, lease_id: nil, expires_at: nil}} end)
   end
 
-  def handle_call({:retry, lease, _reason}, _from, state) do
-    key = delivery_key(lease)
+  def handle_call({:retry, lease, reason}, _from, state) do
+    max_attempts = get_in(state.groups, [group_key(lease.stream, lease.group), :max_attempts])
 
-    case Map.get(state.deliveries, key) do
-      %{status: :leased, lease_id: lid} = d when lid == lease.lease_id ->
-        d = %{d | status: :available, lease_id: nil, expires_at: nil}
-        {:reply, :ok, put_in(state.deliveries[key], d)}
-
-      _ ->
-        {:reply, {:error, :stale_lease}, state}
-    end
+    settle(state, lease, fn d ->
+      if d.attempt >= max_attempts do
+        {:ok,
+         %{d | status: :rejected, reason: {:max_attempts, reason}, lease_id: nil, expires_at: nil}}
+      else
+        {:ok, %{d | status: :available, lease_id: nil, expires_at: nil}}
+      end
+    end)
   end
 
-  def handle_call({:reject, lease, _reason}, _from, state) do
-    key = delivery_key(lease)
-
-    case Map.get(state.deliveries, key) do
-      %{status: :leased, lease_id: lid} = d when lid == lease.lease_id ->
-        d = %{d | status: :rejected, lease_id: nil, expires_at: nil}
-        state = put_in(state.deliveries[key], d) |> advance_frontier(lease)
-        {:reply, :ok, state}
-
-      _ ->
-        {:reply, {:error, :stale_lease}, state}
-    end
+  def handle_call({:reject, lease, reason}, _from, state) do
+    settle(state, lease, fn d ->
+      {:ok, %{d | status: :rejected, reason: reason, lease_id: nil, expires_at: nil}}
+    end)
   end
 
   def handle_call({:replay, stream, group, opts}, _from, state) do
-    from = Keyword.get(opts, :from_sequence, 0)
-    group_key = {stream, group}
-    g = Map.fetch!(state.groups, group_key)
-    meta = Map.fetch!(state.streams, stream)
-
-    g = %{
-      g
-      | cursors: Map.new(0..(meta.partition_count - 1), &{&1, from}),
-        frontiers: Map.new(0..(meta.partition_count - 1), &{&1, from})
-    }
-
-    deliveries =
-      state.deliveries
-      |> Enum.reject(fn {_k, d} -> d.stream == stream and d.group == group end)
-      |> Map.new()
-
-    {:reply, :ok, %{state | groups: Map.put(state.groups, group_key, g), deliveries: deliveries}}
+    reopen(state, stream, group, Keyword.get(opts, :from_sequence, 0))
   end
 
   def handle_call({:reset_group, stream, group, opts}, _from, state) do
-    handle_call({:replay, stream, group, opts}, nil, state)
+    reopen(state, stream, group, Keyword.get(opts, :start_after, 0))
   end
 
-  def handle_call({:lag, stream, group, _opts}, _from, state) do
-    g = Map.fetch!(state.groups, {stream, group})
-    meta = Map.fetch!(state.streams, stream)
-
-    high =
-      Map.new(0..(meta.partition_count - 1), fn p ->
-        {p, Map.get(meta.sequences, p, 0)}
-      end)
-
-    {:reply, {:ok, Lag.from_maps(stream, group, g.frontiers, high, Map.keys(high))}, state}
+  def handle_call({:lag, stream, group, opts}, _from, state) do
+    with {:ok, g} <- fetch_group(state, group_key(stream, group)),
+         {:ok, partitions} <- assignment(state, stream, opts) do
+      high = Map.new(partitions, &{&1, get_in(state.streams, [stream, :sequences, &1])})
+      {:reply, {:ok, Lag.from_maps(stream, group, g.frontiers, high, partitions)}, state}
+    else
+      {:error, _} = error -> {:reply, error, state}
+    end
   end
 
-  defp materialize(state, stream, group) do
-    group_key = {stream, group}
-    g = Map.fetch!(state.groups, group_key)
-    meta = Map.fetch!(state.streams, stream)
+  # Fenced settle: `lease_id` and `receipt` must both match the current claim.
+  defp settle(state, %Lease{} = lease, fun) do
+    key = delivery_key(lease)
 
-    Enum.reduce(0..(meta.partition_count - 1), state, fn partition, st ->
+    case Map.get(state.deliveries, key) do
+      %{status: :leased, lease_id: lid} = d when lid == lease.lease_id ->
+        if d.receipt == lease.receipt do
+          {reply, d} =
+            case fun.(d) do
+              {:ok, d} -> {:ok, d}
+              {{:ok, _} = ok, d} -> {ok, d}
+            end
+
+          state = put_in(state.deliveries[key], d)
+
+          state =
+            if d.status in [:acked, :rejected], do: advance_frontier(state, lease), else: state
+
+          {:reply, reply, state}
+        else
+          {:reply, {:error, :receipt_mismatch}, state}
+        end
+
+      _ ->
+        {:reply, {:error, :stale_lease}, state}
+    end
+  end
+
+  defp reopen(state, stream, group, from) do
+    key = group_key(stream, group)
+
+    case fetch_group(state, key) do
+      {:ok, g} ->
+        partitions = partitions_of(state, stream)
+
+        g = %{
+          g
+          | cursors: Map.new(partitions, &{&1, from}),
+            frontiers: Map.new(partitions, &{&1, from})
+        }
+
+        deliveries =
+          state.deliveries
+          |> Enum.reject(fn {_k, d} -> d.stream == stream and d.group == group end)
+          |> Map.new()
+
+        {:reply, :ok, %{state | groups: Map.put(state.groups, key, g), deliveries: deliveries}}
+
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
+  end
+
+  defp materialize(state, stream, group, g, partitions) do
+    Enum.reduce(partitions, state, fn partition, st ->
       cursor = Map.fetch!(g.cursors, partition)
-      high = Map.fetch!(meta.sequences, partition)
+      high = get_in(st.streams, [stream, :sequences, partition])
 
-      new_events =
+      new_rows =
         st.events
         |> Map.values()
         |> Enum.filter(fn e ->
@@ -395,41 +400,40 @@ defmodule Rheo.Backend.NativeStreamDouble do
         end)
         |> Enum.sort_by(& &1.sequence)
 
-      Enum.reduce(new_events, st, fn e, acc ->
-        key = {stream, group, e.id}
+      st =
+        Enum.reduce(new_rows, st, fn e, acc ->
+          key = {stream, group, e.id}
 
-        if Map.has_key?(acc.deliveries, key) do
-          acc
-        else
-          d = %{
-            key: key,
-            stream: stream,
-            group: group,
-            event_id: e.id,
-            partition: partition,
-            sequence: e.sequence,
-            status: :available,
-            attempt: 0,
-            lease_id: nil,
-            expires_at: nil,
-            consumer_id: nil,
-            receipt: e.native_id
-          }
+          if Map.has_key?(acc.deliveries, key) do
+            acc
+          else
+            d = %{
+              key: key,
+              stream: stream,
+              group: group,
+              event_id: e.id,
+              partition: partition,
+              sequence: e.sequence,
+              status: :available,
+              attempt: 0,
+              lease_id: nil,
+              expires_at: nil,
+              consumer_id: nil,
+              reason: nil,
+              receipt: e.native_id
+            }
 
-          put_in(acc.deliveries[key], d)
-        end
-      end)
-      |> then(fn acc ->
-        g = Map.fetch!(acc.groups, group_key)
-        g = %{g | cursors: Map.put(g.cursors, partition, high)}
-        %{acc | groups: Map.put(acc.groups, group_key, g)}
-      end)
+            put_in(acc.deliveries[key], d)
+          end
+        end)
+
+      update_in(st.groups[group_key(stream, group)].cursors, &Map.put(&1, partition, high))
     end)
   end
 
   defp advance_frontier(state, lease) do
-    group_key = {lease.stream, lease.group}
-    g = Map.fetch!(state.groups, group_key)
+    key = group_key(lease.stream, lease.group)
+    g = Map.fetch!(state.groups, key)
     partition = lease.event.partition
     frontier = Map.fetch!(g.frontiers, partition)
 
@@ -445,8 +449,7 @@ defmodule Rheo.Backend.NativeStreamDouble do
         if d.sequence == f + 1, do: {:cont, d.sequence}, else: {:halt, f}
       end)
 
-    g = %{g | frontiers: Map.put(g.frontiers, partition, next)}
-    %{state | groups: Map.put(state.groups, group_key, g)}
+    put_in(state.groups[key].frontiers, Map.put(g.frontiers, partition, next))
   end
 
   defp claimable?(%{status: :available}, _now), do: true
@@ -456,6 +459,60 @@ defmodule Rheo.Backend.NativeStreamDouble do
 
   defp claimable?(_, _), do: false
 
+  defp matches?(row, %Query{} = query) do
+    Enum.all?(query.where, &where_match?(row, &1)) and
+      (is_nil(query.from) or DateTime.compare(row.timestamp, query.from) != :lt) and
+      (is_nil(query.to) or DateTime.compare(row.timestamp, query.to) != :gt) and
+      (is_nil(query.after_sequence) or row.sequence > query.after_sequence) and
+      (is_nil(query.until_sequence) or row.sequence <= query.until_sequence)
+  end
+
+  @metadata_fields [:correlation_id, :causation_id, :producer, :schema, :schema_version]
+
+  defp where_match?(row, {:type, type}), do: row.type == type
+  defp where_match?(row, {:key, key}), do: row.key == key
+  defp where_match?(row, {:partition, partition}), do: row.partition == partition
+
+  defp where_match?(row, {field, value}) when field in @metadata_fields,
+    do: Map.get(row.metadata, Atom.to_string(field)) == value
+
+  defp where_match?(row, {field, value}),
+    do: Map.get(row.payload, Atom.to_string(field)) == value
+
+  defp order_fun(order_by) do
+    fn a, b ->
+      Enum.reduce_while(order_by, true, fn {field, dir}, _ ->
+        va = Map.get(a, field)
+        vb = Map.get(b, field)
+
+        cond do
+          va == vb -> {:cont, true}
+          dir == :desc -> {:halt, va > vb}
+          true -> {:halt, va < vb}
+        end
+      end)
+    end
+  end
+
+  defp to_event(row), do: struct(Event, Map.drop(row, [:native_id]))
+
+  defp fetch_group(state, key) do
+    case Map.fetch(state.groups, key) do
+      {:ok, g} -> {:ok, g}
+      :error -> {:error, :group_not_found}
+    end
+  end
+
+  defp assignment(state, stream, opts) do
+    count = get_in(state.streams, [stream, :partition_count])
+    scope = Keyword.get(opts, :partitions, Keyword.get(opts, :partition, :all))
+    Partition.normalize_assignment(scope, count)
+  end
+
+  defp partitions_of(state, stream),
+    do: Enum.to_list(0..(get_in(state.streams, [stream, :partition_count]) - 1))
+
+  defp group_key(stream, group), do: {stream, group}
   defp delivery_key(%Lease{} = lease), do: {lease.stream, lease.group, lease.event_id}
 
   defp partition_for(payload, opts, count) do

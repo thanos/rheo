@@ -19,7 +19,7 @@ defmodule Rheo.Integration.MongoTest do
     def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
 
     @impl true
-    def handle_event(event, %{agent: agent} = state) do
+    def handle_event(event, %{agent: agent}) do
       Agent.update(agent, fn ids -> [event.id | ids] end)
       :ack
     end

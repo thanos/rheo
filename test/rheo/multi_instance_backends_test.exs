@@ -49,7 +49,12 @@ defmodule Rheo.MultiInstanceBackendsTest do
   end
 
   test "consumer groups and frontiers are isolated per instance", ctx do
-    {:ok, _} = Rheo.append_batch(ctx.stream, [%{type: "m1"}, %{type: "m2"}], rheo: ctx.market)
+    {:ok, _} =
+      Rheo.append_batch(ctx.stream, [%{type: "m1"}, %{type: "m2"}],
+        rheo: ctx.market,
+        partition: 0
+      )
+
     {:ok, _} = Rheo.append_batch(ctx.stream, [%{type: "a1"}], rheo: ctx.audit)
 
     {:ok, [lease]} =
@@ -58,10 +63,10 @@ defmodule Rheo.MultiInstanceBackendsTest do
     assert :ok = Rheo.ack(lease, rheo: ctx.market)
 
     # Audit group must not see market's cursor / events.
-    assert {:ok, %Rheo.Lag{lag: market_lag}} =
+    assert {:ok, %Rheo.Lag{lag: 1} = market_lag} =
              Rheo.lag(ctx.stream, "traders", rheo: ctx.market)
 
-    assert market_lag in [0, 1]
+    assert market_lag.partitions[0].frontier == 1
 
     assert {:ok, %Rheo.Lag{lag: 1} = audit_lag} =
              Rheo.lag(ctx.stream, "compliance", rheo: ctx.audit)
@@ -74,8 +79,7 @@ defmodule Rheo.MultiInstanceBackendsTest do
     {:ok, [audit_lease]} =
       Rheo.fetch(ctx.stream, "compliance", limit: 1, consumer_id: "a", rheo: ctx.audit)
 
-    assert audit_lease.event.payload["type"] == "a1" or
-             audit_lease.event.payload[:type] == "a1"
+    assert audit_lease.event.type == "a1"
 
     assert :ok = Rheo.ack(audit_lease, rheo: ctx.audit)
 

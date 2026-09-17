@@ -1,20 +1,23 @@
 defmodule Rheo.Consumer do
   @moduledoc """
-  Idiomatic OTP consumer behaviour for Rheo streams.
+  OTP consumer behaviour for Rheo streams.
 
-  `use Rheo.Consumer` starts a bridge that owns a local `Rheo.Group` for
-  `{rheo, stream, group}`. The Group owns demand, concurrency, lease renewal,
-  and settlement — handlers implement `c:handle_event/2`.
+  `use Rheo.Consumer` turns a module into a child spec for one local
+  `Rheo.Group`. The Group owns demand, concurrency, lease renewal, and
+  settlement; the module implements `c:handle_event/2`.
 
-  ## Handler contract (v0.8 / ADR 022)
+  ## Handler contract
 
-  Context is **read-only**. Return outcomes without mutating callback state:
+  `handle_event/2` receives the event and a read-only context map built once by
+  `c:setup/1` (or `%{}`). It returns one outcome:
 
       :ack
       {:retry, reason}
       {:reject, reason}
 
-  Put shared mutable state in an Agent, ETS, or GenServer owned by your app.
+  Handlers run as tasks, up to `:concurrency` at a time. There is no callback
+  state: shared mutable state belongs in an Agent, ETS table, or GenServer owned
+  by the application and referenced from the context (ADR 022).
 
   ## Options (`use` and `start_link/1`)
 
@@ -27,8 +30,10 @@ defmodule Rheo.Consumer do
     * `:poll_ms` — idle poll interval (default `200`)
     * `:consumer_id` — worker identity (default: generated)
     * `:partitions` — `:all` (default) or a list of partition ids
-    * `:name` — optional bridge GenServer name
-    * `:id` — supervisor child id
+    * `:id` — supervisor child id (default `{module, rheo, stream, group}`)
+
+  Every option is also passed to `c:setup/1`, so application-specific keys
+  (an Agent pid, a repo, …) can travel through the child spec.
 
   ## Example
 
@@ -41,15 +46,14 @@ defmodule Rheo.Consumer do
 
         @impl true
         def setup(opts) do
-          {:ok, agent} = Agent.start_link(fn -> 0 end)
-          {:ok, %{agent: agent, rheo: Keyword.get(opts, :rheo, Rheo)}}
+          {:ok, %{counter: Keyword.fetch!(opts, :counter)}}
         end
 
         @impl true
-        def handle_event(event, %{agent: agent}) do
+        def handle_event(event, %{counter: counter}) do
           case Risk.process(event) do
             :ok ->
-              Agent.update(agent, &(&1 + 1))
+              :ok = MyApp.Counter.increment(counter)
               :ack
 
             {:temporary_error, reason} ->
@@ -61,17 +65,27 @@ defmodule Rheo.Consumer do
         end
       end
 
+      children = [
+        {Rheo, name: MyRheo, backend: Rheo.Backend.ETS},
+        {MyApp.Counter, name: MyApp.Counter},
+        {MyApp.RiskConsumer, rheo: MyRheo, counter: MyApp.Counter}
+      ]
+
   ## Local ownership
 
-  Only one local `Rheo.Consumer` / `Rheo.Group` may exist per
-  `{rheo, stream, group}` on a BEAM node. Scale with `:concurrency`. Starting a
-  second bridge for the same identity returns `{:error, {:already_started, pid}}`.
+  One `Rheo.Group` per `{rheo, stream, group}` may run on a BEAM node, and the
+  supervisor that starts the consumer owns it. Scale local work with
+  `:concurrency`; scale across nodes by running one consumer per node. Starting
+  a second consumer for the same identity returns
+  `{:error, {:already_started, pid}}`.
   """
 
   @doc """
   Handles a single leased event.
 
-  `context` is the read-only map from `c:setup/1` (or `%{}`).
+  `context` is the read-only map returned by `c:setup/1` (or `%{}`). The Group
+  settles the lease according to the returned outcome; raising, throwing, or
+  returning anything else releases the lease for redelivery.
   """
   @callback handle_event(Rheo.Event.t(), context :: map()) ::
               :ack
@@ -79,7 +93,10 @@ defmodule Rheo.Consumer do
               | {:reject, term()}
 
   @doc """
-  Optional callback to initialize read-only context when the group starts.
+  Builds the read-only handler context when the Group starts.
+
+  Receives every option given to the child spec. Return `{:stop, reason}` to
+  refuse to start.
   """
   @callback setup(keyword()) :: {:ok, map()} | {:stop, term()}
 
@@ -87,28 +104,32 @@ defmodule Rheo.Consumer do
 
   @doc false
   def child_spec(module, opts) when is_atom(module) and is_list(opts) do
-    rheo = Keyword.get(opts, :rheo, Rheo)
-    stream = Keyword.fetch!(opts, :stream)
-    group = Keyword.fetch!(opts, :group)
+    opts = group_opts(module, opts)
 
     %{
-      id: Keyword.get(opts, :id, {module, rheo, stream, group}),
-      start: {__MODULE__, :start_link, [module, opts]},
+      id:
+        Keyword.get(
+          opts,
+          :id,
+          {module, Keyword.fetch!(opts, :rheo), Keyword.fetch!(opts, :stream),
+           Keyword.fetch!(opts, :group)}
+        ),
+      start: {__MODULE__, :start_link, [module, Keyword.delete(opts, :id)]},
       type: :worker,
       restart: :permanent,
-      shutdown: 6_000
+      shutdown: Rheo.Group.child_spec(opts).shutdown
     }
   end
 
   @doc false
   def start_link(module, opts) when is_atom(module) and is_list(opts) do
-    name_opts =
-      case Keyword.fetch(opts, :name) do
-        {:ok, name} -> [name: name]
-        :error -> []
-      end
+    Rheo.Group.start_link(group_opts(module, opts))
+  end
 
-    GenServer.start_link(__MODULE__.Bridge, {module, opts}, name_opts)
+  defp group_opts(module, opts) do
+    opts
+    |> Keyword.put_new(:rheo, Rheo)
+    |> Keyword.put(:module, module)
   end
 
   defmacro __using__(opts) do
@@ -117,7 +138,7 @@ defmodule Rheo.Consumer do
       @rheo_consumer_opts opts
 
       @doc """
-      Returns a supervisor child spec that starts this consumer's bridge + group.
+      Returns a supervisor child spec for this consumer's local `Rheo.Group`.
       """
       def child_spec(arg) when is_list(arg) do
         Rheo.Consumer.child_spec(__MODULE__, Keyword.merge(@rheo_consumer_opts, arg))
@@ -126,83 +147,13 @@ defmodule Rheo.Consumer do
       def child_spec(_arg), do: child_spec([])
 
       @doc """
-      Starts the consumer bridge (and local `Rheo.Group`).
+      Starts this consumer's local `Rheo.Group`.
       """
       def start_link(arg \\ [])
 
       def start_link(arg) when is_list(arg) do
         Rheo.Consumer.start_link(__MODULE__, Keyword.merge(@rheo_consumer_opts, arg))
       end
-    end
-  end
-
-  defmodule Bridge do
-    @moduledoc false
-    use GenServer
-
-    @impl true
-    def init({module, opts}) do
-      rheo = Keyword.get(opts, :rheo, Rheo)
-      group_opts = Keyword.put(opts, :module, module)
-      starter = Keyword.get(opts, :__group_starter__, &Rheo.GroupSupervisor.start_group/2)
-
-      case starter.(rheo, group_opts) do
-        {:ok, group_pid} ->
-          ref = Process.monitor(group_pid)
-
-          {:ok,
-           %{
-             rheo: rheo,
-             group_pid: group_pid,
-             group_ref: ref,
-             opts: group_opts,
-             terminator: Keyword.get(opts, :__group_terminator__)
-           }}
-
-        {:error, {:already_started, group_pid}} ->
-          # v0.8: one local owner per {rheo, stream, group} (ADR 022)
-          {:stop, {:group_already_started, group_pid}}
-
-        {:error, reason} ->
-          {:stop, reason}
-      end
-    end
-
-    @impl true
-    def handle_info({:DOWN, ref, :process, _pid, reason}, %{group_ref: ref} = state) do
-      {:stop, reason, state}
-    end
-
-    def handle_info(_msg, state), do: {:noreply, state}
-
-    @impl true
-    def terminate(_reason, %{terminator: fun, rheo: rheo, group_pid: pid})
-        when is_function(fun, 2) do
-      fun.(rheo, pid)
-      :ok
-    catch
-      :exit, _ -> :ok
-    end
-
-    def terminate(_reason, %{rheo: rheo, group_pid: pid}) do
-      default_terminate_group(rheo, pid)
-    catch
-      :exit, _ -> :ok
-    end
-
-    def terminate(_reason, _state), do: :ok
-
-    defp default_terminate_group(rheo, pid) do
-      sup = Rheo.Names.group_supervisor(rheo)
-
-      if is_pid(pid) and Process.alive?(pid) do
-        case DynamicSupervisor.terminate_child(sup, pid) do
-          :ok -> :ok
-          {:error, _} -> Process.exit(pid, :kill)
-        end
-      end
-
-      :ok
     end
   end
 end

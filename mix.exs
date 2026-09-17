@@ -18,9 +18,7 @@ defmodule Rheo.MixProject do
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",
         plt_add_apps: [:ex_unit, :mix],
-        # Mongo driver result typespecs yield false-positive pattern_match warnings.
-        flags: [:error_handling],
-        ignore_warnings: ".dialyzer_ignore.exs"
+        flags: [:error_handling]
       ],
       docs: [
         main: "readme",
@@ -217,35 +215,22 @@ defmodule Rheo.MixProject do
     ]
   end
 
-  defp elixirc_paths(:test) do
-    ["lib", "test/support"] ++ integration_paths()
-  end
-
-  defp elixirc_paths(_) do
-    ["lib"] ++ integration_paths()
-  end
-
-  defp integration_paths do
-    [
-      "apps/rheo_mongo/lib",
-      "apps/rheo_ecto/lib",
-      "apps/rheo_broadway/lib"
-    ]
-  end
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   defp deps do
     [
       {:telemetry, "~> 1.2"},
       {:jason, "~> 1.4"},
-      # Development compiles integrations via elixirc_paths (ADR 020). Published
-      # Hex packages live under apps/* and declare their own deps.
-      {:mongodb_driver, "~> 1.5"},
-      {:ecto, "~> 3.11"},
-      {:ecto_sql, "~> 3.11"},
+      # Optional integrations (ADR 020): each guarded module compiles only when
+      # its dependency is present in the host application.
+      {:mongodb_driver, "~> 1.5", optional: true},
+      {:ecto, "~> 3.11", optional: true},
+      {:ecto_sql, "~> 3.11", optional: true},
       {:postgrex, "~> 0.19", optional: true},
       {:ecto_sqlite3, "~> 0.17", optional: true},
-      {:gen_stage, "~> 1.2"},
-      {:broadway, "~> 1.2"},
+      {:gen_stage, "~> 1.2", optional: true},
+      {:broadway, "~> 1.2", optional: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: [:dev, :test], runtime: false},
@@ -261,6 +246,7 @@ defmodule Rheo.MixProject do
       "rheo.demo": ["run priv/demo/demo.exs"],
       "test.unit": ["test", "--exclude", "mongo", "--exclude", "integration"],
       "test.integration": ["test", "--include", "integration"],
+      "core.check": &core_check/1,
       ci: &verify/1
     ]
   end
@@ -272,7 +258,8 @@ defmodule Rheo.MixProject do
       {"credo --strict", :dev},
       {"dialyzer", :dev},
       {"test --cover", :test},
-      {"docs --warnings-as-errors", :dev}
+      {"docs --warnings-as-errors", :dev},
+      {"core.check", :dev}
     ]
 
     Enum.each(steps, fn {task, env} ->
@@ -290,6 +277,14 @@ defmodule Rheo.MixProject do
     end)
 
     Mix.shell().info([:green, :bright, "\nAll verification checks passed!", :reset])
+  end
+
+  # Compiles a throwaway project that depends on this checkout without any
+  # optional integration, proving the guards in lib/ hold (ADR 020).
+  defp core_check(_) do
+    script = Path.expand("priv/scripts/check_core_only.sh", __DIR__)
+    {_, exit_code} = System.cmd("bash", [script], into: IO.stream())
+    if exit_code != 0, do: Mix.raise("core-only build check failed (exit code #{exit_code})")
   end
 
   defp before_closing_body_tag(:html) do
@@ -328,9 +323,9 @@ defmodule Rheo.MixProject do
   defp before_closing_body_tag(_), do: ""
 
   defp description do
-    "Durable consumer-group semantics over searchable databases " <>
-      "(MongoDB, PostgreSQL/SQLite via Ecto, ETS). Architectural reset for " <>
-      "native-stream backends; partitions, frontier, lag, replay, Broadway."
+    "Durable, searchable, replayable consumer-group semantics over storage " <>
+      "systems (MongoDB, PostgreSQL/SQLite via Ecto, ETS): leases, fencing, " <>
+      "partitions, frontier, lag, replay, and a GenStage/Broadway producer."
   end
 
   defp package do
