@@ -114,9 +114,8 @@ defmodule Rheo.MixProject do
             "docs/migrations/0.5-to-0.6.md",
             "docs/migrations/0.6-to-0.7.md"
           ],
-          "Design": [
+          Design: [
             "docs/architecture.md",
-
             "docs/diagrams.md",
             "docs/adr.md",
             "docs/adr/001-at-least-once-delivery.md",
