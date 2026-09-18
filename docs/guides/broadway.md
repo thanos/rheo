@@ -1,7 +1,7 @@
 # Broadway
 
-Rheo is a **durable event source**; Broadway is a **pipeline topology**. v0.7
-wires them with `Rheo.Producer` and `Rheo.Broadway`.
+Rheo is a **durable event source**; Broadway is a **pipeline topology**.
+`Rheo.Producer` and `Rheo.Broadway` wire them together.
 
 ## Pipeline
 
@@ -55,7 +55,7 @@ Broadway.Message.configure_ack(message, on_failure: :reject)
 |---|---|
 | `Rheo.Producer` | Fetch, lease renewal, `:max_demand` |
 | Broadway processors / batchers | Concurrency and business work |
-| `Rheo.Broadway.Acknowledger` | `ack` / `nack` / `reject` + `Producer.confirm/2` |
+| `Rheo.Broadway.Acknowledger` | `Rheo.Producer.ack/3`, `nack/4`, `reject/4` per message |
 
 Pick **one** consumption surface per `{rheo, stream, group}`:
 `Rheo.Consumer` **or** `Rheo.Producer` — not both unless competing by design.

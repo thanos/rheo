@@ -8,19 +8,14 @@ ExDoc's Mermaid integration; on GitHub they render natively in Markdown preview.
 ```mermaid
 flowchart TB
   subgraph app [Application]
-    RheoInst[Rheo Instance]
-    Risk[RiskConsumer bridge]
-    Surv[SurveillanceConsumer bridge]
+    RheoInst[Rheo instance]
+    Risk[RiskConsumer = Rheo.Group]
+    Surv[SurveillanceConsumer = Rheo.Group]
   end
   RheoInst --> BackendChild[Backend handle]
-  RheoInst --> GroupSup[Rheo.GroupSupervisor]
-  GroupSup --> GroupRisk[Rheo.Group risk]
-  GroupSup --> GroupSurv[Rheo.Group surveillance]
-  Risk --> GroupSup
-  Surv --> GroupSup
-  GroupRisk --> BackendChild
-  GroupSurv --> BackendChild
-  BackendChild --> DB[(MongoDB)]
+  Risk --> BackendChild
+  Surv --> BackendChild
+  BackendChild --> DB[(MongoDB / PostgreSQL / SQLite / ETS)]
 ```
 
 ## OTP supervision
@@ -28,17 +23,17 @@ flowchart TB
 ```mermaid
 flowchart TB
   AppSup[Application Supervisor]
-  AppSup --> RheoInst[Rheo Instance]
-  AppSup --> C1[RiskConsumer]
-  RheoInst --> Reg[Registry]
-  RheoInst --> Mongo[Mongo handle]
+  AppSup --> RheoInst[Rheo instance]
+  AppSup --> G1[Rheo.Group risk]
+  RheoInst --> Backend[Backend handle]
   RheoInst --> Inst[Rheo.Instance]
   RheoInst --> Tasks[Task.Supervisor]
   RheoInst --> GS[Rheo.GroupSupervisor]
-  C1 --> GS
-  GS --> G1[Rheo.Group]
   G1 --> Tasks
 ```
+
+The host supervisor owns each `Rheo.Group`; `Rheo.GroupSupervisor` only holds
+groups started dynamically through `Rheo.GroupSupervisor`.
 
 ## Lease lifecycle
 
@@ -112,10 +107,41 @@ flowchart LR
   prod --> fetch --> backend
   prod -->|Lease| proc
   proc --> ack --> settle --> backend
-  ack -->|confirm| prod
+  settle -->|release inflight| prod
   prod -->|renew_inflight| backend
 ```
 
-The producer owns fetch and renewal; the acknowledger owns settle and reports
-back with `Rheo.Producer.confirm/2` so renewal stops and demand is released
-(see ADR 018).
+The producer owns fetch and renewal; the acknowledger settles each lease with
+`Rheo.Producer.ack/3`, `nack/4`, or `reject/4`, which also release the
+producer's inflight entry so renewal stops and demand is freed (see ADR 018).
+
+## Settlement failure policy (v0.8)
+
+```mermaid
+flowchart TB
+  handler[handler returned :ack] --> ack[Rheo.ack]
+  ack -->|ok| done[settled]
+  ack -->|stale_lease or receipt_mismatch| lost[lease lost: drop, no nack]
+  ack -->|backend_unavailable or ambiguous| expire[leave lease to expire]
+  ack -->|failed or invalid| nack[nack: immediate redelivery]
+  lost --> redeliver[backend redelivers]
+  expire --> redeliver
+  nack --> redeliver
+```
+
+`Rheo.Settle` classifies the error; fencing makes every branch safe under
+at-least-once (see ADR 024).
+
+## Native-stream backend shape (design for v0.9)
+
+```mermaid
+flowchart LR
+  append[append] -->|XADD + logical sequence| stream[(Redis stream)]
+  fetch[fetch] -->|XREADGROUP / XAUTOCLAIM| stream
+  fetch -->|lease_id + receipt = entry id| lease[Rheo.Lease]
+  lease -->|ack: fenced XACK| stream
+  lag[lag] -->|XINFO GROUPS| stream
+```
+
+The portable `event.sequence` and the frontier stay in Rheo; the entry id
+travels in `lease.receipt` (see ADR 021).

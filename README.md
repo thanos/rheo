@@ -6,7 +6,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.7.1** — Durable consumer-group semantics over searchable databases.
+**v0.8.0** — Durable consumer-group semantics over searchable databases.
 Backends today: **MongoDB**, **PostgreSQL / SQLite** (via a host-owned
 `Ecto.Repo`), and **ETS** (ephemeral, zero-infra). Rheo is an Elixir/OTP library
 you embed in your supervision tree, not a standalone messaging server. Consume
@@ -15,6 +15,10 @@ with `Rheo.Consumer` or feed a **Broadway** pipeline with `Rheo.Producer`.
 **Delivery guarantee:** at-least-once. Duplicates are possible after failures —
 use stable event IDs for idempotency. Ordering is guaranteed **within a
 partition** only (not globally across partitions).
+
+Rheo is pre-1.0 and under active architectural development. Breaking changes
+between minor releases may occur while the backend and consumer-group
+contracts are refined; each one ships with a migration guide.
 
 ## When to use
 
@@ -57,10 +61,23 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.7.0"}
+    {:rheo, "~> 0.8.0"}
   ]
 end
 ```
+
+### Optional integrations
+
+Rheo core needs only `telemetry` and `jason`; ETS works out of the box. Add
+the dependencies for the integrations you use and the matching modules are
+compiled:
+
+| Dependency | Enables |
+|---|---|
+| `{:mongodb_driver, "~> 1.5"}` | `Rheo.Backend.Mongo` |
+| `{:ecto_sql, "~> 3.11"}` + `{:postgrex, "~> 0.19"}` or `{:ecto_sqlite3, "~> 0.17"}` | `Rheo.Backend.Ecto`, `mix rheo.ecto.gen_migration` |
+| `{:gen_stage, "~> 1.2"}` | `Rheo.Producer` |
+| `{:broadway, "~> 1.2"}` | `Rheo.Broadway` and its acknowledger |
 
 Then fetch deps:
 
@@ -81,8 +98,6 @@ Choose a backend:
 {Rheo, name: MyRheo, backend: {Rheo.Backend.Ecto, repo: MyApp.Repo}}
 ```
 
-The Ecto backend needs the driver your repo uses — `{:postgrex, "~> 0.19"}` or
-`{:ecto_sqlite3, "~> 0.17"}` — since Rheo leaves that choice to you.
 
 ## Quick start
 
@@ -136,8 +151,9 @@ mix ecto.migrate
 `metadata` and `payload` are `jsonb`, so the event log stays queryable in plain
 SQL. See [ADR 017](https://hexdocs.pm/rheo/017-ecto-backend.html).
 
-Define a consumer — handlers only implement `handle_event/2`; a local
-`Rheo.Group` owns fetch, concurrency, lease renewal, and settle:
+Define a consumer — handlers implement `handle_event/2` and return an outcome;
+the local `Rheo.Group` started by the child spec owns fetch, concurrency, lease
+renewal, and settlement:
 
 ```elixir
 defmodule MyApp.RiskConsumer do
@@ -148,16 +164,16 @@ defmodule MyApp.RiskConsumer do
     max_demand: 100
 
   @impl true
-  def handle_event(event, state) do
+  def handle_event(event, _context) do
     case Risk.process(event) do
       :ok ->
-        {:ack, state}
+        :ack
 
       {:temporary_error, reason} ->
-        {:retry, reason, state}
+        {:retry, reason}
 
       {:permanent_error, reason} ->
-        {:reject, reason, state}
+        {:reject, reason}
     end
   end
 end
@@ -178,15 +194,22 @@ Rheo.append("market-events", %{
 Rheo.query("market-events", type: "curve_update", currency: "EUR")
 ```
 
-Interactive walkthrough: open the
-[Livebook demo](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)
-in [Livebook](https://livebook.dev) (or browse it on
-[HexDocs](https://hexdocs.pm/rheo/rheo_demo.html)). The notebook defaults to
-**ETS** (no Docker). CLI demo: `mix rheo.demo` (ETS) or
-`RHEO_BACKEND=mongo mix rheo.demo`.
+Interactive walkthroughs (open from a clone in
+[Livebook](https://livebook.dev)):
+
+| Notebook | Focus |
+|---|---|
+| [Index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) | Links to all demos ([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html)) |
+| [Quickstart](https://github.com/thanos/rheo/blob/main/notebooks/quickstart.livemd) | ETS publish / fetch / Consumer |
+| [Concepts](https://github.com/thanos/rheo/blob/main/notebooks/concepts.livemd) | Leases, search, replay, partitions |
+| [Pipelines](https://github.com/thanos/rheo/blob/main/notebooks/pipelines.livemd) | GenStage, Flow, Broadway |
+| [Backends](https://github.com/thanos/rheo/blob/main/notebooks/backends.livemd) | ETS, Mongo, SQLite, PostgreSQL |
+
+CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
 
 Upgrading:
 
+- [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) (architectural reset)
 - [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) (additive — Broadway/GenStage interop)
 - [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) (additive — Ecto SQL backend)
 - [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html) (partitions, frontier, lag)
@@ -215,12 +238,12 @@ because those files are not in the Hex tarball.
 - Cookbook: [ETS](https://hexdocs.pm/rheo/ets.html) ·
   [Mongo](https://hexdocs.pm/rheo/mongo.html) ·
   [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html)
-- [Livebook demo](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html))
+- [Livebook demos](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs index](https://hexdocs.pm/rheo/rheo_demo.html)) — Quickstart, Concepts, Pipelines, Backends
 - [Changelog](https://hexdocs.pm/rheo/changelog.html)
 
 **Migrating from previous versions**
 
-- [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) · [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) · [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html)
+- [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) · [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) · [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) · [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html)
 - [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) · [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html)
 
 **Design**
@@ -232,6 +255,7 @@ because those files are not in the Hex tarball.
 - [Article 12: ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
 - [Article 13: One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
 - [Article 14: Rheo Is Not Broadway — It Feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
+- [Article 15: Breaking Rheo Before Anyone Depends on the Wrong Abstraction](https://hexdocs.pm/rheo/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.html)
 - [ADR 017: Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
 - [ADR 018: GenStage / Broadway interop](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
 
@@ -380,8 +404,8 @@ separate knobs.
 
 Pick one surface per `{rheo, stream, group}`: `Rheo.Consumer` for the OTP handler
 API, `Rheo.Producer` when you want Broadway's batching, rate limiting, or
-fan-out. Plain GenStage consumers can handle leases directly, settling with
-`Rheo.ack/2` and then `Rheo.Producer.confirm/2`. See
+fan-out. Plain GenStage consumers handle leases directly and settle with
+`Rheo.Producer.ack/3`, `nack/4`, or `reject/4`. See
 [Article 14](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
 and [ADR 018](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html).
 
@@ -410,9 +434,12 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.5.0** | Partitions, key routing, contiguous ACK frontier, lag |
 | **0.6.0** | Ecto SQL backend: PostgreSQL + SQLite on a host-owned repo |
 | **0.7.0** | GenStage/Broadway interop: `Rheo.Producer`, lease-aware acknowledger |
-| **0.7.1** (current) | HexDocs Guides + Mermaid; Livebook Broadway section |
-| **0.8.0** | Ops surface: DLQ inspection, lag metrics, admin helpers; change-stream wakeups |
-| **0.9.0** | API freeze candidate |
+| **0.7.1** | HexDocs Guides + Mermaid; Livebook Broadway section |
+| **0.8.0** (current) | Architectural reset: read-only handler context, single group owner, lease receipts, typed capabilities, settlement vocabulary, Redis/Flow readiness |
+| **0.9.0** | Redis Streams native backend (optional `redix` integration) |
+| **0.10.0** | Mnesia / BEAM-native distributed backend |
+| **0.11.0** | Operations: wakeups, DLQ inspection, LiveDashboard, benchmarks |
+| **0.12.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 
 Still out of scope through 1.0 unless demand forces it: standalone Rheo server,
@@ -435,7 +462,7 @@ mix rheo.demo
 docker compose up -d && RHEO_BACKEND=mongo mix rheo.demo
 ```
 
-Quality gates:
+Quality gates (`mix ci` runs them all):
 
 ```bash
 mix format --check-formatted
@@ -443,6 +470,8 @@ mix compile --warnings-as-errors
 mix credo --strict
 mix dialyzer
 mix coveralls
+mix docs --warnings-as-errors
+mix core.check   # builds a project on rheo with no optional integration
 ```
 
 Mongo-backed tests run by default when Mongo is available. Heavier end-to-end
@@ -469,10 +498,11 @@ docker compose up -d postgres
 RHEO_POSTGRES_URL=ecto://postgres:postgres@localhost:5432/rheo_test mix test
 ```
 
-Livebook from a clone (ETS by default — no Docker):
+Livebook from a clone:
 
 ```bash
-livebook server notebooks/rheo_demo.livemd
+livebook server notebooks/
+# or: livebook server notebooks/quickstart.livemd
 ```
 
 CI tests **Erlang/OTP 27–29** × **Elixir 1.17–1.20** (excluding unsupported

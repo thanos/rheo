@@ -52,21 +52,45 @@ defmodule Rheo.Backend.EctoTest do
       assert {:error, :backend_unavailable} = Backend.ensure_indexes(:no_such_ecto_server)
       assert {:error, :backend_unavailable} = Backend.create_stream(:no_such_ecto_server, "s")
       assert Backend.capabilities(:no_such_ecto_server) == Backend.capabilities()
+
+      lease = %Rheo.Lease{
+        lease_id: "l",
+        stream: "s",
+        group: "g",
+        event_id: "e",
+        event: %Rheo.Event{
+          id: "e",
+          stream: "s",
+          partition: 0,
+          sequence: 1,
+          timestamp: ~U[2026-01-01 00:00:00.000Z],
+          payload: %{}
+        },
+        consumer_id: "c",
+        attempt: 1,
+        leased_at: ~U[2026-01-01 00:00:00.000Z],
+        expires_at: ~U[2026-01-01 00:00:30.000Z]
+      }
+
+      assert {:error, :backend_unavailable} = Backend.ack(:no_such_ecto_server, lease)
+      assert {:error, :backend_unavailable} = Backend.retry(:no_such_ecto_server, lease, :x)
+      assert {:error, :backend_unavailable} = Backend.reject(:no_such_ecto_server, lease, :x)
+      assert {:error, :backend_unavailable} = Backend.renew(:no_such_ecto_server, lease)
     end
   end
 
   describe "capabilities" do
     test "sqlite is durable but not distributed" do
       caps = Backend.capabilities(:sqlite)
-      assert caps.durable
-      refute caps.distributed
-      refute caps.notifications
-      assert caps.contiguous_frontier
+      assert caps.guarantees.durable
+      refute caps.guarantees.distributed
+      refute caps.mechanisms.notifications
+      assert caps.guarantees.contiguous_frontier
     end
 
     test "postgres is distributed and reports notify opt-in", %{} do
-      assert Backend.capabilities(:postgres).distributed
-      refute Backend.capabilities(:postgres).notifications
+      assert Backend.capabilities(:postgres).guarantees.distributed
+      refute Backend.capabilities(:postgres).mechanisms.notifications
 
       handle = :"ecto_caps_#{System.unique_integer([:positive])}"
 
@@ -76,7 +100,7 @@ defmodule Rheo.Backend.EctoTest do
                  id: handle
                )
 
-      assert Backend.capabilities(handle).notifications
+      assert Backend.capabilities(handle).mechanisms.notifications
     end
 
     test "notify is ignored on sqlite", %{} do
@@ -247,7 +271,7 @@ defmodule Rheo.Backend.EctoTest do
       {:ok, _result} =
         SQL.query(SqliteRepo, "DELETE FROM rheo_stream_sequences WHERE stream = ?", [stream])
 
-      assert {:error, %SqliteError{}} = Backend.append(handle, stream, %{n: 2})
+      assert {:error, {:failed, %SqliteError{}}} = Backend.append(handle, stream, %{n: 2})
       assert {:ok, [only]} = Backend.read(handle, stream, after: 0, limit: 10)
       assert only.id == first.id
     end
@@ -546,7 +570,7 @@ defmodule Rheo.Backend.EctoTest do
     end
 
     test "append notifies listeners", %{pg: handle, pg_stream: stream} do
-      assert Backend.capabilities(handle).notifications
+      assert Backend.capabilities(handle).mechanisms.notifications
       assert :ok = Backend.create_stream(handle, stream)
 
       {:ok, listener} = Postgrex.Notifications.start_link(Repos.postgres_opts())

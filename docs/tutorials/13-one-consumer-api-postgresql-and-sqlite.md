@@ -14,8 +14,8 @@ children = [
 ]
 ```
 
-Handlers still return `{:ack, state}`, `{:retry, reason, state}`, or
-`{:reject, reason, state}`. Partitions, the contiguous frontier, and
+Handlers still return `:ack`, `{:retry, reason}`, or
+`{:reject, reason}`. Partitions, the contiguous frontier, and
 `Rheo.lag/3` behave as in v0.5 — only the durable store changes.
 
 ## Host owns the Repo

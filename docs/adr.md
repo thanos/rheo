@@ -1,6 +1,6 @@
 # ADRs
 
-Architectural decision records (HexDocs: **Design/ADRs**):
+Architectural decision records (HexDocs: **Design: ADRs**):
 
 1. [At-least-once delivery](https://hexdocs.pm/rheo/001-at-least-once-delivery.html)
 2. [Events immutable, consumer state separate](https://hexdocs.pm/rheo/002-events-immutable-consumer-state-separate.html)
@@ -12,7 +12,7 @@ Architectural decision records (HexDocs: **Design/ADRs**):
 8. [MongoDB schema and indexes](https://hexdocs.pm/rheo/008-mongodb-schema-and-indexes.html)
 9. [Local consumer group runtime](https://hexdocs.pm/rheo/009-local-consumer-group-runtime.html)
 10. [Backend handle and instance model](https://hexdocs.pm/rheo/010-backend-handle-and-instance-model.html)
-11. [Backend capabilities](https://hexdocs.pm/rheo/011-backend-capabilities.html)
+11. [Backend capabilities](https://hexdocs.pm/rheo/011-backend-capabilities.html) — see also [023](https://hexdocs.pm/rheo/023-backend-capabilities-v2.html)
 12. [Backend conformance suite](https://hexdocs.pm/rheo/012-backend-conformance-suite.html)
 13. [Portable query model](https://hexdocs.pm/rheo/013-portable-query-model.html)
 14. [ETS backend](https://hexdocs.pm/rheo/014-ets-backend.html)
@@ -20,3 +20,10 @@ Architectural decision records (HexDocs: **Design/ADRs**):
 16. [Partitions and ACK frontier](https://hexdocs.pm/rheo/016-partitions-and-ack-frontier.html)
 17. [Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
 18. [GenStage / Broadway interoperability](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
+19. [v0.8 architectural reset](https://hexdocs.pm/rheo/019-v0-8-architectural-reset.html)
+20. [Package and dependency boundaries](https://hexdocs.pm/rheo/020-package-and-dependency-boundaries.html)
+21. [Logical sequence and native delivery receipts](https://hexdocs.pm/rheo/021-logical-sequence-and-native-delivery-receipts.html)
+22. [Consumer runtime and handler state](https://hexdocs.pm/rheo/022-consumer-runtime-and-handler-state.html)
+23. [Backend capabilities v2](https://hexdocs.pm/rheo/023-backend-capabilities-v2.html)
+24. [Backend contract v2](https://hexdocs.pm/rheo/024-backend-contract-v2.html)
+25. [Backend wakeup contract](https://hexdocs.pm/rheo/025-backend-wakeup-contract.html)

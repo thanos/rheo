@@ -1,6 +1,6 @@
 # Design Tutorials
 
-Long-form design notes under **Design: Tutorials** (Rheo **v0.7.1**).
+Long-form design notes under **Design: Tutorials** (Rheo **v0.8.0**).
 
 For how-to docs, start with [Guides](https://hexdocs.pm/rheo/quick-start.html).
 
@@ -18,9 +18,11 @@ For how-to docs, start with [Guides](https://hexdocs.pm/rheo/quick-start.html).
 12. [ACKs are not a cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html) — partitions, frontier, lag
 13. [One consumer API, PostgreSQL and SQLite underneath](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
 14. [Rheo is not Broadway — it feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
+15. [Breaking Rheo before anyone depends on the wrong abstraction](https://hexdocs.pm/rheo/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.html)
 
-Hands-on: [Livebook demo](https://hexdocs.pm/rheo/rheo_demo.html)
-([source](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)).
-Migrations: [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) ·
+Hands-on: [Livebook demos](https://hexdocs.pm/rheo/rheo_demo.html)
+([source index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)).
+Migrations: [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) ·
+[0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) ·
 [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) ·
 [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html).

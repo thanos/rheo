@@ -271,7 +271,7 @@ defmodule Rheo.Backend.Mongo.ClientTest do
       where: [type: "t", currency: "EUR", correlation_id: "c"],
       from: ~U[2026-01-01 00:00:00Z],
       to: ~U[2026-01-02 00:00:00Z],
-      order_by: [sequence: 1],
+      order_by: [sequence: :asc],
       limit: 3
     }
 

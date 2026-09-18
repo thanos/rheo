@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.7.1"
+  @version "0.8.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -18,9 +18,7 @@ defmodule Rheo.MixProject do
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",
         plt_add_apps: [:ex_unit, :mix],
-        # Mongo driver result typespecs yield false-positive pattern_match warnings.
-        flags: [:error_handling],
-        ignore_warnings: ".dialyzer_ignore.exs"
+        flags: [:error_handling]
       ],
       docs: [
         main: "readme",
@@ -31,6 +29,10 @@ defmodule Rheo.MixProject do
           "LICENSE",
           "CHANGELOG.md",
           "notebooks/rheo_demo.livemd",
+          "notebooks/quickstart.livemd",
+          "notebooks/concepts.livemd",
+          "notebooks/pipelines.livemd",
+          "notebooks/backends.livemd",
           "docs/guides/quick-start.md",
           "docs/guides/configuration.md",
           "docs/guides/consumer-groups.md",
@@ -50,9 +52,13 @@ defmodule Rheo.MixProject do
           "docs/migrations/0.4-to-0.5.md",
           "docs/migrations/0.5-to-0.6.md",
           "docs/migrations/0.6-to-0.7.md",
+          "docs/migrations/0.7-to-0.8.md",
           "docs/architecture.md",
+          "docs/architecture-review-v0.7.md",
           "docs/roadmap.md",
           "docs/diagrams.md",
+          "docs/design/flow-readiness-spike.md",
+          "docs/design/redis-readiness-spike.md",
           "docs/adr.md",
           "docs/adr/001-at-least-once-delivery.md",
           "docs/adr/002-events-immutable-consumer-state-separate.md",
@@ -72,6 +78,13 @@ defmodule Rheo.MixProject do
           "docs/adr/016-partitions-and-ack-frontier.md",
           "docs/adr/017-ecto-backend.md",
           "docs/adr/018-broadway-genstage-interop.md",
+          "docs/adr/019-v0-8-architectural-reset.md",
+          "docs/adr/020-package-and-dependency-boundaries.md",
+          "docs/adr/021-logical-sequence-and-native-delivery-receipts.md",
+          "docs/adr/022-consumer-runtime-and-handler-state.md",
+          "docs/adr/023-backend-capabilities-v2.md",
+          "docs/adr/024-backend-contract-v2.md",
+          "docs/adr/025-backend-wakeup-contract.md",
           "docs/tutorials.md",
           "docs/tutorials/01-why-consumer-groups-on-a-database.md",
           "docs/tutorials/02-what-is-a-consumer-group.md",
@@ -86,37 +99,53 @@ defmodule Rheo.MixProject do
           "docs/tutorials/11-search-and-replay-the-event-history.md",
           "docs/tutorials/12-acks-are-not-a-cursor.md",
           "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
-          "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md"
+          "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md",
+          "docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md"
         ],
         groups_for_extras: [
-          Guides: [
+          "Guides: Introduction": [
             "docs/guides/quick-start.md",
             "docs/guides/configuration.md",
             "docs/guides/consumer-groups.md",
             "docs/guides/enqueuing.md",
             "docs/guides/dequeuing.md",
+            "notebooks/rheo_demo.livemd",
+            "notebooks/quickstart.livemd",
+            "notebooks/concepts.livemd",
+            "notebooks/pipelines.livemd",
+            "notebooks/backends.livemd",
+            "CHANGELOG.md"
+          ],
+          "Guides: Advanced": [
             "docs/guides/replay.md",
             "docs/guides/querying.md",
             "docs/guides/partitions-and-lag.md",
-            "docs/guides/ets.md",
-            "docs/guides/mongo.md",
-            "docs/guides/using-ecto.md",
             "docs/guides/broadway.md",
             "docs/guides/genstage.md",
-            "docs/guides/building-your-own-backend.md",
-            "CHANGELOG.md",
-            "notebooks/rheo_demo.livemd"
+            "docs/guides/building-your-own-backend.md"
+          ],
+          "Guides: Cookbook": [
+            "docs/guides/ets.md",
+            "docs/guides/mongo.md",
+            "docs/guides/using-ecto.md"
           ],
           "Migrating from previous versions": [
             "docs/migrations/0.1-to-0.2.md",
             "docs/migrations/0.3-to-0.4.md",
             "docs/migrations/0.4-to-0.5.md",
             "docs/migrations/0.5-to-0.6.md",
-            "docs/migrations/0.6-to-0.7.md"
+            "docs/migrations/0.6-to-0.7.md",
+            "docs/migrations/0.7-to-0.8.md"
           ],
-          Design: [
+          "Design: Architecture": [
             "docs/architecture.md",
+            "docs/architecture-review-v0.7.md",
             "docs/diagrams.md",
+            "docs/roadmap.md",
+            "docs/design/flow-readiness-spike.md",
+            "docs/design/redis-readiness-spike.md"
+          ],
+          "Design: ADRs": [
             "docs/adr.md",
             "docs/adr/001-at-least-once-delivery.md",
             "docs/adr/002-events-immutable-consumer-state-separate.md",
@@ -136,6 +165,15 @@ defmodule Rheo.MixProject do
             "docs/adr/016-partitions-and-ack-frontier.md",
             "docs/adr/017-ecto-backend.md",
             "docs/adr/018-broadway-genstage-interop.md",
+            "docs/adr/019-v0-8-architectural-reset.md",
+            "docs/adr/020-package-and-dependency-boundaries.md",
+            "docs/adr/021-logical-sequence-and-native-delivery-receipts.md",
+            "docs/adr/022-consumer-runtime-and-handler-state.md",
+            "docs/adr/023-backend-capabilities-v2.md",
+            "docs/adr/024-backend-contract-v2.md",
+            "docs/adr/025-backend-wakeup-contract.md"
+          ],
+          "Design: Tutorials": [
             "docs/tutorials.md",
             "docs/tutorials/01-why-consumer-groups-on-a-database.md",
             "docs/tutorials/02-what-is-a-consumer-group.md",
@@ -150,7 +188,8 @@ defmodule Rheo.MixProject do
             "docs/tutorials/11-search-and-replay-the-event-history.md",
             "docs/tutorials/12-acks-are-not-a-cursor.md",
             "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
-            "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md"
+            "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md",
+            "docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md"
           ]
         ],
         before_closing_body_tag: &before_closing_body_tag/1
@@ -189,25 +228,22 @@ defmodule Rheo.MixProject do
 
   defp deps do
     [
-      {:mongodb_driver, "~> 1.5"},
       {:telemetry, "~> 1.2"},
       {:jason, "~> 1.4"},
-      # Ecto SQL backend. `ecto_sql` is a hard dependency so `Rheo.Backend.Ecto`
-      # compiles without conditional guards; adapters stay optional because the
-      # host app owns the Repo and picks its own driver.
-      {:ecto, "~> 3.11"},
-      {:ecto_sql, "~> 3.11"},
+      # Optional integrations (ADR 020): each guarded module compiles only when
+      # its dependency is present in the host application.
+      {:mongodb_driver, "~> 1.5", optional: true},
+      {:ecto, "~> 3.11", optional: true},
+      {:ecto_sql, "~> 3.11", optional: true},
       {:postgrex, "~> 0.19", optional: true},
       {:ecto_sqlite3, "~> 0.17", optional: true},
-      # GenStage / Broadway interop. Hard dependencies so `Rheo.Producer` and
-      # `Rheo.Broadway.Acknowledger` compile against the real behaviours instead
-      # of `Code.ensure_loaded?/1` guards (ADR 018).
-      {:gen_stage, "~> 1.2"},
-      {:broadway, "~> 1.2"},
+      {:gen_stage, "~> 1.2", optional: true},
+      {:broadway, "~> 1.2", optional: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
+      {:flow, "~> 1.2", only: :test},
       {:mox, "~> 1.1", only: :test},
       {:excoveralls, "~> 0.18", only: :test}
     ]
@@ -218,6 +254,7 @@ defmodule Rheo.MixProject do
       "rheo.demo": ["run priv/demo/demo.exs"],
       "test.unit": ["test", "--exclude", "mongo", "--exclude", "integration"],
       "test.integration": ["test", "--include", "integration"],
+      "core.check": &core_check/1,
       ci: &verify/1
     ]
   end
@@ -229,7 +266,8 @@ defmodule Rheo.MixProject do
       {"credo --strict", :dev},
       {"dialyzer", :dev},
       {"test --cover", :test},
-      {"docs --warnings-as-errors", :dev}
+      {"docs --warnings-as-errors", :dev},
+      {"core.check", :dev}
     ]
 
     Enum.each(steps, fn {task, env} ->
@@ -247,6 +285,14 @@ defmodule Rheo.MixProject do
     end)
 
     Mix.shell().info([:green, :bright, "\nAll verification checks passed!", :reset])
+  end
+
+  # Compiles a throwaway project that depends on this checkout without any
+  # optional integration, proving the guards in lib/ hold (ADR 020).
+  defp core_check(_) do
+    script = Path.expand("priv/scripts/check_core_only.sh", __DIR__)
+    {_, exit_code} = System.cmd("bash", [script], into: IO.stream())
+    if exit_code != 0, do: Mix.raise("core-only build check failed (exit code #{exit_code})")
   end
 
   defp before_closing_body_tag(:html) do
@@ -285,9 +331,9 @@ defmodule Rheo.MixProject do
   defp before_closing_body_tag(_), do: ""
 
   defp description do
-    "Durable consumer-group semantics over searchable databases " <>
-      "(MongoDB, PostgreSQL/SQLite via Ecto, ETS). Partitions, contiguous ACK " <>
-      "frontier, lag, and replay."
+    "Durable, searchable, replayable consumer-group semantics over storage " <>
+      "systems (MongoDB, PostgreSQL/SQLite via Ecto, ETS): leases, fencing, " <>
+      "partitions, frontier, lag, replay, and a GenStage/Broadway producer."
   end
 
   defp package do

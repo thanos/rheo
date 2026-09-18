@@ -148,6 +148,53 @@ defmodule Rheo.ProducerTest do
     assert :timeout = Producer.drain(producer, 100)
   end
 
+  test "drain stays responsive while waiting", ctx do
+    append(ctx, [%{type: "pending_drain"}])
+    producer = start_producer!(ctx, max_demand: 1)
+    start_sink!(producer)
+
+    [lease] = collect_leases(1)
+    drain = Task.async(fn -> Producer.drain(producer, 2_000) end)
+
+    assert Producer.inflight_count(producer) == 1
+    :ok = Producer.ack(producer, lease, rheo: ctx.rheo)
+    assert :ok = Task.await(drain, 3_000)
+    assert Producer.inflight_count(producer) == 0
+  end
+
+  test "ack/nack/reject settle durably and release the inflight slot", ctx do
+    append(ctx, [%{type: "a"}, %{type: "b"}, %{type: "c"}])
+    producer = start_producer!(ctx, max_demand: 3)
+    start_sink!(producer)
+
+    [a, b, c] = collect_leases(3)
+    assert :ok = Producer.ack(producer, a, rheo: ctx.rheo)
+    assert :ok = Producer.reject(producer, c, :poison, rheo: ctx.rheo)
+    wait_until(fn -> Producer.inflight_count(producer) == 1 end)
+
+    # b comes back as attempt 2 once nacked; a and c are terminal.
+    assert :ok = Producer.nack(producer, b, :later, rheo: ctx.rheo)
+    assert_receive {:lease, %Lease{event_id: id, attempt: 2} = again}, 2_000
+    assert id == b.event_id
+    refute_receive {:lease, _}, 200
+    assert Producer.inflight_count(producer) == 1
+
+    assert :ok = Producer.ack(producer, again, rheo: ctx.rheo)
+    wait_until(fn -> Producer.inflight_count(producer) == 0 end)
+  end
+
+  test "a failed settle still releases the inflight slot", ctx do
+    append(ctx, [%{type: "settled_elsewhere"}])
+    producer = start_producer!(ctx, max_demand: 1)
+    start_sink!(producer)
+
+    [lease] = collect_leases(1)
+    :ok = Rheo.ack(lease, rheo: ctx.rheo)
+
+    assert {:error, :stale_lease} = Producer.ack(producer, lease, rheo: ctx.rheo)
+    wait_until(fn -> Producer.inflight_count(producer) == 0 end)
+  end
+
   test "drain completes when the lease is confirmed while waiting", ctx do
     append(ctx, [%{type: "confirm_during_drain"}])
     producer = start_producer!(ctx, max_demand: 1)

@@ -5,154 +5,101 @@ defmodule Rheo.ConsumerUnitTest do
     use Rheo.Consumer, stream: "unit-stream", group: "unit-group"
 
     @impl true
-    def handle_event(_event, state), do: {:ack, state}
+    def handle_event(_event, _ctx), do: :ack
   end
 
-  test "child_spec defaults and overrides" do
+  defmodule BadSetupConsumer do
+    use Rheo.Consumer, stream: "unit-stream", group: "bad-setup"
+
+    @impl true
+    def setup(_opts), do: {:ok, :not_a_map}
+
+    @impl true
+    def handle_event(_event, _ctx), do: :ack
+  end
+
+  defmodule RefusingConsumer do
+    use Rheo.Consumer, stream: "unit-stream", group: "refusing"
+
+    @impl true
+    def setup(_opts), do: {:stop, :setup_refused}
+
+    @impl true
+    def handle_event(_event, _ctx), do: :ack
+  end
+
+  setup do
+    rheo = :"consumer_unit_#{System.unique_integer([:positive])}"
+    start_supervised!({Rheo, name: rheo, backend: Rheo.Backend.ETS}, id: rheo)
+    :ok = Rheo.create_stream("unit-stream", rheo: rheo)
+    :ok = Rheo.create_group("unit-stream", "unit-group", rheo: rheo)
+    %{rheo: rheo}
+  end
+
+  test "child_spec targets Rheo.Group with the consumer as id" do
     spec = TinyConsumer.child_spec([])
     assert spec.id == {TinyConsumer, Rheo, "unit-stream", "unit-group"}
-    assert spec.shutdown == 6_000
+    assert spec.restart == :permanent
+    assert spec.shutdown == Rheo.Group.child_spec(rheo: Rheo, stream: "s", group: "g").shutdown
 
-    spec2 = TinyConsumer.child_spec(id: :custom, rheo: :Other)
-    assert spec2.id == :custom
+    {Rheo.Consumer, :start_link, [TinyConsumer, opts]} = spec.start
+    assert opts[:module] == TinyConsumer
+    refute Keyword.has_key?(opts, :id)
 
-    assert match?(%{id: _}, TinyConsumer.child_spec(:not_a_list))
+    assert TinyConsumer.child_spec(id: :custom, rheo: :other).id == :custom
+    assert TinyConsumer.child_spec(:not_a_list).id == spec.id
   end
 
-  test "start_link without name starts bridge via group starter" do
-    parent = self()
-
-    starter = fn rheo, opts ->
-      send(parent, {:started, rheo, opts[:module]})
-      pid = spawn(fn -> Process.sleep(:infinity) end)
-      {:ok, pid}
-    end
-
-    assert {:ok, bridge} =
-             Rheo.Consumer.start_link(TinyConsumer,
-               stream: "s",
-               group: "g",
-               __group_starter__: starter,
-               __group_terminator__: fn _rheo, pid -> Process.exit(pid, :kill) end
-             )
-
-    assert_receive {:started, Rheo, TinyConsumer}
-    assert Process.alive?(bridge)
-    GenServer.stop(bridge)
+  test "start_link starts the registered group", %{rheo: rheo} do
+    assert {:ok, pid} = TinyConsumer.start_link(rheo: rheo, poll_ms: 500)
+    assert GenServer.whereis(Rheo.Names.group(rheo, "unit-stream", "unit-group")) == pid
+    assert :ok = GenServer.stop(pid)
   end
 
-  test "bridge joins already-started group without terminating it" do
-    group = spawn(fn -> Process.sleep(:infinity) end)
-    terminated? = :atomics.new(1, signed: false)
-
-    starter = fn _rheo, _opts -> {:error, {:already_started, group}} end
-
-    terminator = fn _rheo, _pid ->
-      :atomics.put(terminated?, 1, 1)
-      :ok
-    end
-
-    assert {:ok, bridge} =
-             Rheo.Consumer.start_link(TinyConsumer,
-               stream: "s",
-               group: "g",
-               name: :"shared-#{System.unique_integer()}",
-               __group_starter__: starter,
-               __group_terminator__: terminator
-             )
-
-    GenServer.stop(bridge)
-    assert Process.alive?(group)
-    assert :atomics.get(terminated?, 1) == 0
-    Process.exit(group, :kill)
+  test "a second consumer for the same local group is refused", %{rheo: rheo} do
+    assert {:ok, pid} = TinyConsumer.start_link(rheo: rheo, poll_ms: 500)
+    assert {:error, {:already_started, ^pid}} = TinyConsumer.start_link(rheo: rheo)
+    assert :ok = GenServer.stop(pid)
   end
 
-  test "bridge stops when group starter fails" do
+  test "setup must return a map", %{rheo: rheo} do
     Process.flag(:trap_exit, true)
-    starter = fn _rheo, _opts -> {:error, :no_sup} end
+    :ok = Rheo.create_group("unit-stream", "bad-setup", rheo: rheo)
+    :ok = Rheo.create_group("unit-stream", "refusing", rheo: rheo)
 
-    assert {:error, :no_sup} =
-             Rheo.Consumer.start_link(TinyConsumer,
-               stream: "s",
-               group: "g",
-               __group_starter__: starter
-             )
+    assert {:error, {:invalid_context, :not_a_map}} = BadSetupConsumer.start_link(rheo: rheo)
+    assert {:error, :setup_refused} = RefusingConsumer.start_link(rheo: rheo)
   end
 
-  test "bridge stops when monitored group dies" do
+  test "the host supervisor restarts a crashed group as its single owner", %{rheo: rheo} do
     Process.flag(:trap_exit, true)
-    group = spawn(fn -> Process.sleep(:infinity) end)
 
-    starter = fn _rheo, _opts -> {:ok, group} end
+    {:ok, host} =
+      Supervisor.start_link([{TinyConsumer, rheo: rheo, poll_ms: 500}],
+        strategy: :one_for_one,
+        max_restarts: 3,
+        max_seconds: 5
+      )
 
-    assert {:ok, bridge} =
-             Rheo.Consumer.start_link(TinyConsumer,
-               stream: "s",
-               group: "g",
-               __group_starter__: starter,
-               __group_terminator__: fn _, _ -> :ok end
-             )
-
-    ref = Process.monitor(bridge)
+    name = Rheo.Names.group(rheo, "unit-stream", "unit-group")
+    group = GenServer.whereis(name)
+    ref = Process.monitor(group)
     Process.exit(group, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^bridge, :killed}, 1_000
-  end
+    assert_receive {:DOWN, ^ref, :process, ^group, :killed}, 1_000
 
-  test "bridge ignores unrelated info messages" do
-    group = spawn(fn -> Process.sleep(:infinity) end)
+    restarted =
+      Enum.find_value(1..50, fn _ ->
+        case GenServer.whereis(name) do
+          pid when is_pid(pid) and pid != group -> pid
+          _ -> Process.sleep(10) && nil
+        end
+      end)
 
-    assert {:ok, bridge} =
-             Rheo.Consumer.start_link(TinyConsumer,
-               stream: "s",
-               group: "g",
-               __group_starter__: fn _, _ -> {:ok, group} end,
-               __group_terminator__: fn _, _ -> :ok end
-             )
+    assert is_pid(restarted)
+    assert Process.alive?(host)
+    assert [{_, ^restarted, :worker, _}] = Supervisor.which_children(host)
+    assert DynamicSupervisor.which_children(Rheo.Names.group_supervisor(rheo)) == []
 
-    send(bridge, :noise)
-    assert Process.alive?(bridge)
-    GenServer.stop(bridge)
-    Process.exit(group, :kill)
-  end
-
-  test "terminator error path kills group when terminate_child fails" do
-    group = spawn(fn -> Process.sleep(:infinity) end)
-
-    terminator = fn _rheo, pid ->
-      # Simulate DynamicSupervisor.terminate_child/2 failure branch
-      Process.exit(pid, :kill)
-      :ok
-    end
-
-    assert {:ok, bridge} =
-             Rheo.Consumer.start_link(TinyConsumer,
-               stream: "s",
-               group: "g",
-               __group_starter__: fn _, _ -> {:ok, group} end,
-               __group_terminator__: terminator
-             )
-
-    GenServer.stop(bridge)
-    refute Process.alive?(group)
-  end
-
-  test "terminator catching exit still returns ok" do
-    group = spawn(fn -> Process.sleep(:infinity) end)
-
-    terminator = fn _rheo, _pid ->
-      exit(:bye)
-    end
-
-    assert {:ok, bridge} =
-             Rheo.Consumer.start_link(TinyConsumer,
-               stream: "s",
-               group: "g",
-               __group_starter__: fn _, _ -> {:ok, group} end,
-               __group_terminator__: terminator
-             )
-
-    # stop should not raise even if terminator exits
-    assert :ok = GenServer.stop(bridge)
-    Process.exit(group, :kill)
+    :ok = Supervisor.stop(host)
   end
 end

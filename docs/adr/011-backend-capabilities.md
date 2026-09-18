@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v0.3.0)
+Superseded by [ADR 023](023-backend-capabilities-v2.html) (v0.8.0). The flat boolean map described here is replaced by `Rheo.Backend.Capabilities`.
 
 ## Context
 

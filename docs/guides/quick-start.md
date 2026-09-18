@@ -8,7 +8,7 @@ stream, and consume them with a durable consumer group. Delivery is
 
 ```elixir
 def deps do
-  [{:rheo, "~> 0.7.0"}]
+  [{:rheo, "~> 0.8.0"}]
 end
 ```
 
@@ -46,9 +46,9 @@ defmodule MyApp.FulfillmentConsumer do
   use Rheo.Consumer, stream: "orders", group: "fulfillment"
 
   @impl true
-  def handle_event(event, state) do
+  def handle_event(event, _context) do
     :ok = MyApp.Fulfillment.process(event)
-    {:ack, state}
+    :ack
   end
 end
 
@@ -64,4 +64,4 @@ children = [
 - [Consumer Groups](consumer-groups.html) — competing vs independent groups
 - [ETS](ets.html) / [Mongo](mongo.html) / [Using Ecto](using-ecto.html)
 - [Broadway](broadway.html) / [GenStage](genstage.html)
-- [Livebook demo](rheo_demo.html)
+- [Livebook demos](rheo_demo.html) — Quickstart, Concepts, Pipelines, Backends

@@ -9,7 +9,7 @@ defmodule Rheo.GroupUnitTest do
     @behaviour Rheo.Consumer
 
     @impl true
-    def handle_event(_event, state), do: {:ack, state}
+    def handle_event(_event, _ctx), do: :ack
   end
 
   defmodule StopSetupConsumer do
@@ -19,7 +19,7 @@ defmodule Rheo.GroupUnitTest do
     def setup(_opts), do: {:stop, :setup_refused}
 
     @impl true
-    def handle_event(_event, state), do: {:ack, state}
+    def handle_event(_event, _ctx), do: :ack
   end
 
   defmodule InvalidReturnConsumer do
@@ -55,9 +55,9 @@ defmodule Rheo.GroupUnitTest do
     def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
 
     @impl true
-    def handle_event(event, %{agent: agent} = state) do
+    def handle_event(event, %{agent: agent}) do
       Agent.update(agent, fn xs -> [{:reject, event.id} | xs] end)
-      {:reject, :bad_payload, state}
+      {:reject, :bad_payload}
     end
   end
 
@@ -65,9 +65,9 @@ defmodule Rheo.GroupUnitTest do
     use Rheo.Consumer, stream: "unused", group: "unused"
 
     @impl true
-    def handle_event(_event, state) do
+    def handle_event(_event, _ctx) do
       Process.sleep(400)
-      {:ack, state}
+      :ack
     end
   end
 
@@ -75,9 +75,9 @@ defmodule Rheo.GroupUnitTest do
     use Rheo.Consumer, stream: "unused", group: "unused"
 
     @impl true
-    def handle_event(_event, state) do
+    def handle_event(_event, _ctx) do
       Process.sleep(400)
-      {:retry, :boom, state}
+      {:retry, :boom}
     end
   end
 
@@ -85,9 +85,9 @@ defmodule Rheo.GroupUnitTest do
     use Rheo.Consumer, stream: "unused", group: "unused"
 
     @impl true
-    def handle_event(_event, state) do
+    def handle_event(_event, _ctx) do
       Process.sleep(400)
-      {:reject, :bad, state}
+      {:reject, :bad}
     end
   end
 
@@ -98,10 +98,10 @@ defmodule Rheo.GroupUnitTest do
     def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
 
     @impl true
-    def handle_event(event, %{agent: agent} = state) do
+    def handle_event(event, %{agent: agent}) do
       Process.sleep(400)
       Agent.update(agent, fn xs -> [event.id | xs] end)
-      {:ack, state}
+      :ack
     end
   end
 
@@ -109,9 +109,9 @@ defmodule Rheo.GroupUnitTest do
     use Rheo.Consumer, stream: "unused", group: "unused"
 
     @impl true
-    def handle_event(_event, state) do
+    def handle_event(_event, _ctx) do
       Process.sleep(800)
-      {:ack, state}
+      :ack
     end
   end
 
@@ -122,11 +122,11 @@ defmodule Rheo.GroupUnitTest do
     def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
 
     @impl true
-    def handle_event(event, %{agent: agent} = state) do
+    def handle_event(event, %{agent: agent}) do
       worker = self()
       Agent.update(agent, fn _ -> %{pid: worker, event_id: event.id} end)
       Process.sleep(:infinity)
-      {:ack, state}
+      :ack
     end
   end
 
@@ -139,7 +139,7 @@ defmodule Rheo.GroupUnitTest do
     %{stream: stream}
   end
 
-  test "child_spec and direct start_link register via Registry", %{stream: stream} do
+  test "child_spec and direct start_link register a local name", %{stream: stream} do
     spec =
       Rheo.Group.child_spec(
         rheo: Rheo,
@@ -237,7 +237,7 @@ defmodule Rheo.GroupUnitTest do
     assert :ok = stop_supervised(id)
   end
 
-  test "failed ack emits telemetry and nacks stale lease", %{stream: stream} do
+  test "failed ack on a stolen lease emits telemetry and does not nack", %{stream: stream} do
     Frozen.set(DateTime.utc_now())
 
     {:ok, event} = Rheo.append(stream, %{type: "stale_ack"})

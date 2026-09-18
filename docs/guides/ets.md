@@ -20,7 +20,10 @@ Or:
 
 ```elixir
 Rheo.Backend.ETS.capabilities()
-# durable: false, distributed: false, partitions: true, …
+# %Rheo.Backend.Capabilities{
+#   guarantees: %{durable: false, distributed: false, partitions: true, …},
+#   mechanisms: %{atomic_compare_and_set: true, secondary_indexes: false, …}
+# }
 ```
 
 Data lives only as long as the backend owner process. Restarts wipe the store.

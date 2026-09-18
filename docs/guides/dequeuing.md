@@ -48,11 +48,11 @@ delivered again — make handlers idempotent on `event.id`.
 ## Prefer `Rheo.Consumer`
 
 ```elixir
-def handle_event(event, state) do
+def handle_event(event, _context) do
   case Risk.process(event) do
-    :ok -> {:ack, state}
-    {:temporary, reason} -> {:retry, reason, state}
-    {:permanent, reason} -> {:reject, reason, state}
+    :ok -> :ack
+    {:temporary, reason} -> {:retry, reason}
+    {:permanent, reason} -> {:reject, reason}
   end
 end
 ```

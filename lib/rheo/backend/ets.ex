@@ -24,7 +24,7 @@ defmodule Rheo.Backend.ETS do
 
   @impl true
   def capabilities do
-    %{
+    Rheo.Backend.Capabilities.new(%{
       durable: false,
       distributed: false,
       atomic_compare_and_set: true,
@@ -36,7 +36,7 @@ defmodule Rheo.Backend.ETS do
       replay: true,
       partitions: true,
       contiguous_frontier: true
-    }
+    })
   end
 
   @impl true
@@ -691,7 +691,8 @@ defmodule Rheo.Backend.ETS do
           consumer_id: consumer_id,
           attempt: attempt,
           leased_at: now,
-          expires_at: expires_at
+          expires_at: expires_at,
+          receipt: lease_id
         }
     end
   end
