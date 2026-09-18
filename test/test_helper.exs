@@ -29,6 +29,16 @@ postgres_exclude =
     [:ecto_postgres]
   end
 
+# Redis backend suites need a reachable Redis (6.2+); skipped when absent. Redis
+# keys outlive the BEAM, so the `rheo:` namespace is cleared before the run.
+redis_exclude =
+  if Rheo.Test.Redis.available?() do
+    :ok = Rheo.Test.Redis.flush()
+    []
+  else
+    [:redis]
+  end
+
 # Opt-in: RHEO_INTEGRATION=1 mix test
 # or: mix test --include integration
 integration_exclude =
@@ -38,4 +48,4 @@ integration_exclude =
     [:integration]
   end
 
-ExUnit.start(exclude: integration_exclude ++ postgres_exclude)
+ExUnit.start(exclude: integration_exclude ++ postgres_exclude ++ redis_exclude)

@@ -6,11 +6,11 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.8.0** — Durable consumer-group semantics over searchable databases.
-Backends today: **MongoDB**, **PostgreSQL / SQLite** (via a host-owned
-`Ecto.Repo`), and **ETS** (ephemeral, zero-infra). Rheo is an Elixir/OTP library
-you embed in your supervision tree, not a standalone messaging server. Consume
-with `Rheo.Consumer` or feed a **Broadway** pipeline with `Rheo.Producer`.
+**v0.9.0** — Durable consumer-group semantics over searchable stores.
+Backends: **Redis Streams**, **MongoDB**, **PostgreSQL / SQLite** (host-owned
+`Ecto.Repo`), and **ETS** (ephemeral). Rheo is an Elixir/OTP library you embed
+in your supervision tree, not a standalone messaging server. Consume with
+`Rheo.Consumer` or feed a **Broadway** pipeline with `Rheo.Producer`.
 
 **Delivery guarantee:** at-least-once. Duplicates are possible after failures —
 use stable event IDs for idempotency. Ordering is guaranteed **within a
@@ -61,7 +61,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.8.0"}
+    {:rheo, "~> 0.9.0"}
   ]
 end
 ```
@@ -75,6 +75,7 @@ compiled:
 | Dependency | Enables |
 |---|---|
 | `{:mongodb_driver, "~> 1.5"}` | `Rheo.Backend.Mongo` |
+| `{:redix, "~> 1.5"}` | `Rheo.Backend.Redis` (Redis 6.2+) |
 | `{:ecto_sql, "~> 3.11"}` + `{:postgrex, "~> 0.19"}` or `{:ecto_sqlite3, "~> 0.17"}` | `Rheo.Backend.Ecto`, `mix rheo.ecto.gen_migration` |
 | `{:gen_stage, "~> 1.2"}` | `Rheo.Producer` |
 | `{:broadway, "~> 1.2"}` | `Rheo.Broadway` and its acknowledger |
@@ -209,6 +210,7 @@ CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
 
 Upgrading:
 
+- [0.8 → 0.9](https://hexdocs.pm/rheo/0-8-to-0-9.html) (Redis Streams backend)
 - [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) (architectural reset)
 - [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) (additive — Broadway/GenStage interop)
 - [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) (additive — Ecto SQL backend)
@@ -256,6 +258,7 @@ because those files are not in the Hex tarball.
 - [Article 13: One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
 - [Article 14: Rheo Is Not Broadway — It Feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
 - [Article 15: Breaking Rheo Before Anyone Depends on the Wrong Abstraction](https://hexdocs.pm/rheo/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.html)
+- [Article 16: Rheo on Redis Streams — Portable Sequence, Native PEL](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
 - [ADR 017: Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
 - [ADR 018: GenStage / Broadway interop](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
 
@@ -435,10 +438,10 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.6.0** | Ecto SQL backend: PostgreSQL + SQLite on a host-owned repo |
 | **0.7.0** | GenStage/Broadway interop: `Rheo.Producer`, lease-aware acknowledger |
 | **0.7.1** | HexDocs Guides + Mermaid; Livebook Broadway section |
-| **0.8.0** (current) | Architectural reset: read-only handler context, single group owner, lease receipts, typed capabilities, settlement vocabulary, Redis/Flow readiness |
-| **0.9.0** | Redis Streams native backend (optional `redix` integration) |
+| **0.8.0** | Architectural reset: read-only handler context, single group owner, lease receipts, typed capabilities, settlement vocabulary, Redis/Flow readiness |
+| **0.9.0** (current) | Redis Streams native backend (optional `redix`); wakeup contract |
 | **0.10.0** | Mnesia / BEAM-native distributed backend |
-| **0.11.0** | Operations: wakeups, DLQ inspection, LiveDashboard, benchmarks |
+| **0.11.0** | Operations: DLQ inspection, LiveDashboard, benchmarks |
 | **0.12.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 

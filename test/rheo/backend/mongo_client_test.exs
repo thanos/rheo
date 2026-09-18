@@ -522,6 +522,109 @@ defmodule Rheo.Backend.Mongo.ClientTest do
              MongoBackend.fetch(:h, "s", "g", limit: 1, consumer_id: "c1")
   end
 
+  describe "reset_group" do
+    setup do
+      stub(ClientMock, :find_one, fn
+        :h, "groups", _ ->
+          %{
+            "stream" => "s",
+            "name" => "g",
+            "cursors" => %{"0" => 5},
+            "frontiers" => %{"0" => 4},
+            "max_attempts" => 5
+          }
+
+        :h, "streams", %{"name" => "s"} ->
+          %{"name" => "s", "partition_count" => 1}
+      end)
+
+      :ok
+    end
+
+    test "deletes deliveries and rewrites cursors/frontiers" do
+      expect(ClientMock, :delete_many, fn :h, "deliveries", filter ->
+        assert filter["group"] == "g"
+        {:ok, %{}}
+      end)
+
+      expect(ClientMock, :find_one_and_update, fn :h, "groups", _f, update, _o ->
+        assert update["$set"]["cursors"] == %{"0" => 1}
+        assert update["$set"]["frontiers"] == %{"0" => 0}
+        {:ok, %Mongo.FindAndModifyResult{value: %{}}}
+      end)
+
+      assert :ok = MongoBackend.reset_group(:h, "s", "g")
+    end
+
+    test "maps delete_many errors" do
+      expect(ClientMock, :delete_many, fn :h, "deliveries", _f ->
+        {:error, %DBConnection.ConnectionError{message: "gone"}}
+      end)
+
+      assert {:error, :backend_unavailable} = MongoBackend.reset_group(:h, "s", "g")
+    end
+
+    test "maps group update errors" do
+      expect(ClientMock, :delete_many, fn :h, "deliveries", _f -> {:ok, %{}} end)
+
+      expect(ClientMock, :find_one_and_update, fn :h, "groups", _f, _u, _o ->
+        {:error, :write_failed}
+      end)
+
+      assert {:error, :write_failed} = MongoBackend.reset_group(:h, "s", "g")
+    end
+  end
+
+  describe "replay from_sequence" do
+    setup do
+      stub(ClientMock, :find_one, fn
+        :h, "groups", _ ->
+          %{
+            "stream" => "s",
+            "name" => "g",
+            "cursors" => %{"0" => 10},
+            "frontiers" => %{"0" => 9},
+            "max_attempts" => 5
+          }
+
+        :h, "streams", %{"name" => "s"} ->
+          %{"name" => "s", "partition_count" => 1}
+      end)
+
+      :ok
+    end
+
+    test "reopens deliveries and rewinds frontiers" do
+      expect(ClientMock, :update_many, fn :h, "deliveries", filter, update, [] ->
+        assert filter["sequence"] == %{"$gte" => 3}
+        assert update["$set"]["status"] == "available"
+        {:ok, %{}}
+      end)
+
+      expect(ClientMock, :find_one_and_update, fn :h, "groups", _f, update, _o ->
+        assert update["$set"]["cursors"]["0"] == 3
+        assert update["$set"]["frontiers"]["0"] == 2
+        {:ok, %Mongo.FindAndModifyResult{value: %{}}}
+      end)
+
+      assert :ok = MongoBackend.replay(:h, "s", "g", from_sequence: 2)
+    end
+
+    test "maps update_many errors" do
+      expect(ClientMock, :update_many, fn :h, "deliveries", _f, _u, [] ->
+        {:error, :write_failed}
+      end)
+
+      assert {:error, :write_failed} =
+               MongoBackend.replay(:h, "s", "g", from_sequence: 0)
+    end
+  end
+
+  test "lag when group missing" do
+    expect(ClientMock, :find_one, fn :h, "groups", _ -> nil end)
+    assert {:error, :group_not_found} = MongoBackend.lag(:h, "s", "g")
+  end
+
   defp sample_event(id, sequence) do
     %Rheo.Event{
       id: id,

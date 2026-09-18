@@ -5,6 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-18
+
+Redis Streams native backend. v0.8 prepared Model C receipts and the semantic
+contract; v0.9 proves them on Redis without changing `Rheo.Consumer`,
+`Rheo.Event`, or `Rheo.Query` meaning.
+
+See [0.8 → 0.9 migration](https://hexdocs.pm/rheo/0-8-to-0-9.html) and
+[ADR 026](https://hexdocs.pm/rheo/026-redis-streams-backend.html).
+
+### Added
+
+- `Rheo.Backend.Redis` — optional `{:redix, "~> 1.5"}`; Redis Streams consumer
+  groups with portable `event.sequence` and `lease.receipt` = entry id
+- Fenced settle (fence hash + `XACK`); reclaim via `XPENDING`/`XCLAIM`
+- `Rheo.Backend.Wakeup` + Group reader Task (ADR 025); polling remains fallback
+- Redis guide, ADR 026, conformance suite tagged `:redis`
+- Redis property + Broadway/Producer smoke suites; Article 16
+- docker-compose `redis:7` service; `RHEO_REDIS_URL`
+
+### Changed
+
+- Version bump only for non-Redis hosts — no Consumer API breaks from 0.8
+
 ## [0.8.0] - 2026-09-17
 
 Architectural reset. v0.1–v0.7 were successful discovery releases; v0.8
@@ -287,6 +310,7 @@ v0.3.0. See [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html).
 
 Initial Mongo-backed MVP: streams, groups, leases, Consumer, docs, Livebook.
 
+[0.9.0]: https://github.com/thanos/rheo/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/thanos/rheo/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/thanos/rheo/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/thanos/rheo/compare/v0.6.0...v0.7.0

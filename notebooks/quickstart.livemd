@@ -1,10 +1,10 @@
-# Rheo Quickstart (v0.8.0)
+# Rheo Quickstart (v0.9.0)
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.8.0"},
+    {:rheo, "~> 0.9.0"},
     # {:rheo, path: Path.join(__DIR__, "..")},
     {:kino, "~> 0.14"}
   ],
@@ -20,7 +20,7 @@ Mix.install(
 )
 ```
 
-## Section
+## Intro
 
 This notebook is the shortest path from “empty BEAM” to a working consumer.
 You will:
@@ -79,7 +79,7 @@ caps = Rheo.Backend.ETS.capabilities()
   (compare-and-set, notifications, …)
 
 ETS is not durable and not distributed, but it still fences leases. Swap to
-Mongo or Ecto later without rewriting handlers — see [Backends](backends.livemd).
+Mongo, Redis, or Ecto later without rewriting handlers — see [Backends](backends.livemd).
 
 ---
 
@@ -117,7 +117,7 @@ Kino.DataTable.new(
 Each row is a `%Rheo.Event{}`:
 
 * `id` — stable identity (use this for idempotency)
-* `sequence` — portable per-partition order (Model C in v0.8)
+* `sequence` — portable per-partition order (Model C)
 * `payload` — your data (here nested fields from the map you appended)
 
 **Consumption never deletes events.** That is what makes search and replay
@@ -151,10 +151,10 @@ lease = hd(leases)
 
 **Two identities on every lease**
 
-| Field      | Role                                                                                                   |
-| ---------- | ------------------------------------------------------------------------------------------------------ |
-| `lease_id` | **Fencing token** — only the current holder may ACK/renew                                            |
-| `receipt`  | Backend-native settle identity (equals `lease_id` on ETS/Mongo/Ecto; a stream entry id on Redis later) |
+| Field      | Role                                                                                                 |
+| ---------- | ---------------------------------------------------------------------------------------------------- |
+| `lease_id` | **Fencing token** — only the current holder may ACK/renew                                          |
+| `receipt`  | Backend-native settle identity (equals `lease_id` on ETS/Mongo/Ecto; Redis stream entry id on Redis) |
 
 If the worker crashes before ACK, the lease expires and another worker can
 claim the same event (`attempt` bumps). That is **at-least-once**.
@@ -187,7 +187,7 @@ Enum.each(more, &Rheo.ack/1)
 Most apps do not call `fetch`/`ack` in a loop. `use Rheo.Consumer` starts a
 supervised runtime that polls, leases, and settles for you.
 
-**Handler contract (v0.8 Option A)**
+**Handler contract (Option A)**
 
 * `setup/1` builds a **read-only** context (put Agents/GenServers in opts)
 * `handle_event/2` returns `:ack`, `{:retry, reason}`, or `{:reject, reason}`
@@ -249,7 +249,8 @@ group (that returns an error). Concepts notebook shows the rejection.
 
 * [Concepts & Overview](concepts.livemd) — fencing races, search, replay, partitions
 * [GenStage, Flow & Broadway](pipelines.livemd) — demand-driven pipelines
-* [Backends](backends.livemd) — ETS / Mongo / SQLite / Postgres
+* [Backends](backends.livemd) — ETS / Mongo / Redis / SQLite / Postgres
 
 HexDocs: [Quick Start](https://hexdocs.pm/rheo/quick-start.html) ·
-[Consumer groups](https://hexdocs.pm/rheo/consumer-groups.html)
+[Consumer groups](https://hexdocs.pm/rheo/consumer-groups.html) ·
+[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)

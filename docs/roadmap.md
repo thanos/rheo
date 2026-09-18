@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.8.0** (2026-09-17). Architectural reset over the v0.7 API.
+Current release: **v0.9.0**. Redis Streams native backend over the v0.8 API.
 
 ## Done in 0.1.0
 
@@ -88,19 +88,22 @@ Current release: **v0.8.0** (2026-09-17). Architectural reset over the v0.7 API.
 - Optional integrations with compile-time guards and a core-only build check; Flow and Redis readiness spikes
 - ADRs 019–025; Article 15; [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html)
 
-## Next (0.9)
+## Done in 0.9.0
 
-- Redis Streams native backend (`Rheo.Backend.Redis`, optional `redix`)
-- Wakeup contract implementation (ADR 025): reader task, blocking reads, `NOTIFY`
+- `Rheo.Backend.Redis` on optional `redix` (ADR 026) — Model C sequences +
+  native receipts, fenced `XACK`, reclaim, replay
+- Wakeup contract implemented (ADR 025): reader Task + `wait/2`; polling remains
+  fallback
+- Conformance suite tagged `:redis`; docker-compose Redis 7 service
+- [0.8 → 0.9 migration](https://hexdocs.pm/rheo/0-8-to-0-9.html); Redis guide
+- Article 16 (portable sequence, native PEL)
 
-## Later (0.10–0.12)
+## Next (0.10+)
 
-- 0.10: Mnesia / BEAM-native distributed backend
-- 0.11: operations — DLQ inspection, lag metrics, LiveDashboard, benchmarks
-- 0.12: API freeze candidate
-- Article candidate: "Rheo + Flow: Durable Event Streams Meet Parallel Elixir
-  Computation", to be written once the settlement model has been exercised by
-  a Flow pipeline in working code
+- Mnesia / BEAM-native distributed backend
+- Ops surface: DLQ inspection, lag metrics, LiveDashboard, benchmarks
+- API freeze candidate (0.12)
+- Article candidate: Rheo + Flow settlement narrative
 
 ## Explicitly deferred
 

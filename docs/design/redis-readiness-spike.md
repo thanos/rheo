@@ -42,5 +42,7 @@ change to `Rheo.Consumer`, `Rheo.Group`, `Rheo.Producer`, `Rheo.Event`, or
 
 ## Exit criterion
 
-v0.9 can add Redis without changing `Rheo.Consumer`, `Rheo.Event` meaning,
-partition ordering, or at-least-once / fencing invariants.
+**Met in v0.9:** `Rheo.Backend.Redis` ships without changing `Rheo.Consumer`,
+`Rheo.Event` meaning, partition ordering, or at-least-once / fencing
+invariants. See [ADR 026](https://hexdocs.pm/rheo/026-redis-streams-backend.html)
+and the [Redis guide](https://hexdocs.pm/rheo/redis.html).

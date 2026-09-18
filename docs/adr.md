@@ -27,3 +27,4 @@ Architectural decision records (HexDocs: **Design: ADRs**):
 23. [Backend capabilities v2](https://hexdocs.pm/rheo/023-backend-capabilities-v2.html)
 24. [Backend contract v2](https://hexdocs.pm/rheo/024-backend-contract-v2.html)
 25. [Backend wakeup contract](https://hexdocs.pm/rheo/025-backend-wakeup-contract.html)
+26. [Redis Streams backend](https://hexdocs.pm/rheo/026-redis-streams-backend.html)

@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.8.0"
+  @version "0.9.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -44,6 +44,7 @@ defmodule Rheo.MixProject do
           "docs/guides/ets.md",
           "docs/guides/mongo.md",
           "docs/guides/using-ecto.md",
+          "docs/guides/redis.md",
           "docs/guides/broadway.md",
           "docs/guides/genstage.md",
           "docs/guides/building-your-own-backend.md",
@@ -53,6 +54,7 @@ defmodule Rheo.MixProject do
           "docs/migrations/0.5-to-0.6.md",
           "docs/migrations/0.6-to-0.7.md",
           "docs/migrations/0.7-to-0.8.md",
+          "docs/migrations/0.8-to-0.9.md",
           "docs/architecture.md",
           "docs/architecture-review-v0.7.md",
           "docs/roadmap.md",
@@ -85,6 +87,7 @@ defmodule Rheo.MixProject do
           "docs/adr/023-backend-capabilities-v2.md",
           "docs/adr/024-backend-contract-v2.md",
           "docs/adr/025-backend-wakeup-contract.md",
+          "docs/adr/026-redis-streams-backend.md",
           "docs/tutorials.md",
           "docs/tutorials/01-why-consumer-groups-on-a-database.md",
           "docs/tutorials/02-what-is-a-consumer-group.md",
@@ -100,7 +103,8 @@ defmodule Rheo.MixProject do
           "docs/tutorials/12-acks-are-not-a-cursor.md",
           "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
           "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md",
-          "docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md"
+          "docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md",
+          "docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md"
         ],
         groups_for_extras: [
           "Guides: Introduction": [
@@ -127,7 +131,8 @@ defmodule Rheo.MixProject do
           "Guides: Cookbook": [
             "docs/guides/ets.md",
             "docs/guides/mongo.md",
-            "docs/guides/using-ecto.md"
+            "docs/guides/using-ecto.md",
+            "docs/guides/redis.md"
           ],
           "Migrating from previous versions": [
             "docs/migrations/0.1-to-0.2.md",
@@ -135,7 +140,8 @@ defmodule Rheo.MixProject do
             "docs/migrations/0.4-to-0.5.md",
             "docs/migrations/0.5-to-0.6.md",
             "docs/migrations/0.6-to-0.7.md",
-            "docs/migrations/0.7-to-0.8.md"
+            "docs/migrations/0.7-to-0.8.md",
+            "docs/migrations/0.8-to-0.9.md"
           ],
           "Design: Architecture": [
             "docs/architecture.md",
@@ -171,7 +177,8 @@ defmodule Rheo.MixProject do
             "docs/adr/022-consumer-runtime-and-handler-state.md",
             "docs/adr/023-backend-capabilities-v2.md",
             "docs/adr/024-backend-contract-v2.md",
-            "docs/adr/025-backend-wakeup-contract.md"
+            "docs/adr/025-backend-wakeup-contract.md",
+            "docs/adr/026-redis-streams-backend.md"
           ],
           "Design: Tutorials": [
             "docs/tutorials.md",
@@ -189,7 +196,8 @@ defmodule Rheo.MixProject do
             "docs/tutorials/12-acks-are-not-a-cursor.md",
             "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
             "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md",
-            "docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md"
+            "docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md",
+            "docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md"
           ]
         ],
         before_closing_body_tag: &before_closing_body_tag/1
@@ -237,6 +245,7 @@ defmodule Rheo.MixProject do
       {:ecto_sql, "~> 3.11", optional: true},
       {:postgrex, "~> 0.19", optional: true},
       {:ecto_sqlite3, "~> 0.17", optional: true},
+      {:redix, "~> 1.5", optional: true},
       {:gen_stage, "~> 1.2", optional: true},
       {:broadway, "~> 1.2", optional: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
@@ -252,7 +261,15 @@ defmodule Rheo.MixProject do
   defp aliases do
     [
       "rheo.demo": ["run priv/demo/demo.exs"],
-      "test.unit": ["test", "--exclude", "mongo", "--exclude", "integration"],
+      "test.unit": [
+        "test",
+        "--exclude",
+        "mongo",
+        "--exclude",
+        "redis",
+        "--exclude",
+        "integration"
+      ],
       "test.integration": ["test", "--include", "integration"],
       "core.check": &core_check/1,
       ci: &verify/1
