@@ -1,0 +1,255 @@
+# Rheo Quickstart (v0.8.0)
+
+```elixir
+Mix.install(
+  [
+    # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
+    {:rheo, "~> 0.8.0"},
+    # {:rheo, path: Path.join(__DIR__, "..")},
+    {:kino, "~> 0.14"}
+  ],
+  config: [
+    rheo: [
+      start_on_application: false,
+      # Frozen clock lets later notebooks advance time; here it just pins timestamps.
+      clock: Rheo.Clock.Frozen,
+      default_lease_ms: 5_000,
+      default_max_attempts: 3
+    ]
+  ]
+)
+```
+
+## Section
+
+This notebook is the shortest path from “empty BEAM” to a working consumer.
+You will:
+
+1. Start Rheo on **ETS** (no Docker, no database)
+2. Create a stream and publish a few events
+3. Claim work with a **lease**, then **ACK**
+4. Run an idiomatic `Rheo.Consumer`
+
+When you finish, continue with [Concepts](concepts.livemd) for fencing, search,
+and replay — or jump to [Pipelines](pipelines.livemd) / [Backends](backends.livemd).
+
+<!-- livebook:{"break_markdown":true} -->
+
+### Before you evaluate
+
+1. Open `notebooks/quickstart.livemd` from the repo so the path dependency works
+2. Run cells in order — later cells assume earlier bindings (`stream`, etc.)
+3. No Docker required
+
+Sibling notebooks: [Concepts](concepts.livemd) · [Pipelines](pipelines.livemd) ·
+[Backends](backends.livemd) · [Index](rheo_demo.livemd)
+
+---
+
+## 1. Start Rheo on ETS
+
+Rheo is an OTP process (or supervision tree) you start with an explicit
+**backend**. ETS keeps everything in memory: perfect for demos and tests, or very fast implementations such as market data but not to be used if you needed durability as in a trade feed.
+
+We stop any previous `Rheo` process so re-running the notebook stays clean.
+
+```elixir
+case Process.whereis(Rheo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
+end
+
+{:ok, _} = Rheo.start_link(backend: Rheo.Backend.ETS)
+:ok = Rheo.ensure_indexes()
+:ok = Rheo.ping()
+
+caps = Rheo.Backend.ETS.capabilities()
+
+%{
+  guarantees: caps.guarantees,
+  mechanisms: caps.mechanisms |> Enum.filter(fn {_k, v} -> v end) |> Map.new()
+}
+```
+
+**How to read capabilities**
+
+* **Guarantees** — what Rheo promises *through* this backend (fencing,
+  at-least-once, partitions, …)
+* **Mechanisms** — how the backend implements or optimizes delivery
+  (compare-and-set, notifications, …)
+
+ETS is not durable and not distributed, but it still fences leases. Swap to
+Mongo or Ecto later without rewriting handlers — see [Backends](backends.livemd).
+
+---
+
+## 2. Create a stream and publish
+
+A **stream** is an append-only, searchable log of immutable events. Publishing
+does not notify consumers by itself; consumers **fetch** (or poll) for work.
+
+```elixir
+stream = "quickstart-events"
+:ok = Rheo.create_stream(stream)
+
+Rheo.Clock.Frozen.set(~U[2026-03-15 12:00:00.000Z])
+
+{:ok, written} =
+  Rheo.append_batch(stream, [
+    %{type: "order", currency: "EUR", amount: 100},
+    %{type: "order", currency: "USD", amount: 50},
+    %{type: "order", currency: "EUR", amount: 25}
+  ])
+
+Kino.DataTable.new(
+  Enum.map(written, fn e ->
+    %{
+      sequence: e.sequence,
+      id: e.id,
+      type: e.type,
+      currency: e.payload["currency"],
+      amount: e.payload["amount"]
+    }
+  end)
+)
+```
+
+Each row is a `%Rheo.Event{}`:
+
+* `id` — stable identity (use this for idempotency)
+* `sequence` — portable per-partition order (Model C in v0.8)
+* `payload` — your data (here nested fields from the map you appended)
+
+**Consumption never deletes events.** That is what makes search and replay
+possible later.
+
+---
+
+## 3. Fetch, lease, and ACK
+
+A **consumer group** tracks “how far has *this* workload progressed?” on the
+same stream. Two groups can read the same events independently.
+
+`Rheo.fetch/3` **claims** up to `limit` events for a short time. The claim is a
+**lease**:
+
+```elixir
+:ok = Rheo.create_group(stream, "risk")
+
+{:ok, leases} = Rheo.fetch(stream, "risk", limit: 2, consumer_id: "worker-1")
+
+lease = hd(leases)
+
+%{
+  lease_id: lease.lease_id,
+  receipt: lease.receipt,
+  event_id: lease.event_id,
+  attempt: lease.attempt,
+  expires_at: lease.expires_at
+}
+```
+
+**Two identities on every lease**
+
+| Field      | Role                                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------ |
+| `lease_id` | **Fencing token** — only the current holder may ACK/renew                                            |
+| `receipt`  | Backend-native settle identity (equals `lease_id` on ETS/Mongo/Ecto; a stream entry id on Redis later) |
+
+If the worker crashes before ACK, the lease expires and another worker can
+claim the same event (`attempt` bumps). That is **at-least-once**.
+
+```elixir
+Enum.each(leases, &Rheo.ack/1)
+
+{:ok, more} = Rheo.fetch(stream, "risk", limit: 5, consumer_id: "worker-1")
+{:ok, lag} = Rheo.lag(stream, "risk")
+
+%{
+  remaining: length(more),
+  lag: lag.lag,
+  frontiers: Map.new(lag.partitions, fn {p, info} -> {p, info.frontier} end)
+}
+```
+
+`Rheo.lag/2` summarizes how far the group's **contiguous frontier** sits behind
+the high watermark. Finish the remaining work:
+
+```elixir
+Enum.each(more, &Rheo.ack/1)
+:ok
+```
+
+---
+
+## 4. Idiomatic `Rheo.Consumer`
+
+Most apps do not call `fetch`/`ack` in a loop. `use Rheo.Consumer` starts a
+supervised runtime that polls, leases, and settles for you.
+
+**Handler contract (v0.8 Option A)**
+
+* `setup/1` builds a **read-only** context (put Agents/GenServers in opts)
+* `handle_event/2` returns `:ack`, `{:retry, reason}`, or `{:reject, reason}`
+* Mutable process state is *yours* — Rheo will not thread an updated map back
+
+```elixir
+defmodule Quickstart.RiskConsumer do
+  use Rheo.Consumer, stream: "quickstart-events", group: "risk"
+
+  @impl true
+  def setup(opts) do
+    {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
+  end
+
+  @impl true
+  def handle_event(event, %{agent: agent}) do
+    Agent.update(agent, fn ids -> [event.id | ids] end)
+    :ack
+  end
+end
+
+# Fresh events so the consumer has something to do
+{:ok, _} =
+  Rheo.append_batch(stream, [
+    %{type: "order", currency: "GBP", amount: 10},
+    %{type: "order", currency: "GBP", amount: 20}
+  ])
+
+{:ok, agent} = Agent.start_link(fn -> [] end)
+
+{:ok, _consumer} =
+  Quickstart.RiskConsumer.start_link(
+    stream: stream,
+    group: "risk",
+    agent: agent,
+    max_demand: 10,
+    poll_ms: 50
+  )
+
+Process.sleep(800)
+seen = Agent.get(agent, &Enum.reverse/1)
+
+%{processed: length(seen), sample_ids: Enum.take(seen, 5)}
+```
+
+**One owner per `{rheo, stream, group}` on this node.** Scale with
+`:concurrency` on that owner — do not start a second Consumer for the same
+group (that returns an error). Concepts notebook shows the rejection.
+
+---
+
+## You now know
+
+* Streams are immutable logs; groups are progress trackers
+* Leases fence work; ACK advances the group without deleting history
+* `Rheo.Consumer` is the everyday API; `fetch`/`ack` are the primitives underneath
+
+### Next
+
+* [Concepts & Overview](concepts.livemd) — fencing races, search, replay, partitions
+* [GenStage, Flow & Broadway](pipelines.livemd) — demand-driven pipelines
+* [Backends](backends.livemd) — ETS / Mongo / SQLite / Postgres
+
+HexDocs: [Quick Start](https://hexdocs.pm/rheo/quick-start.html) ·
+[Consumer groups](https://hexdocs.pm/rheo/consumer-groups.html)

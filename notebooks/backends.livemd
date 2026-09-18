@@ -1,0 +1,391 @@
+# Rheo Backends: ETS, Mongo, SQLite, PostgreSQL (v0.8.0)
+
+```elixir
+Mix.install(
+  [
+    # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
+    {:rheo, "~> 0.8.0"},
+    # {:rheo, path: Path.join(__DIR__, "..")},
+    {:mongodb_driver, "~> 1.5"},
+    {:ecto_sqlite3, "~> 0.17"},
+    {:postgrex, "~> 0.19"},
+    {:kino, "~> 0.14"},
+    {:kino_db, "~> 0.4.0"}
+  ],
+  config: [
+    rheo: [
+      start_on_application: false,
+      clock: Rheo.Clock.System,
+      default_lease_ms: 5_000,
+      default_max_attempts: 3
+    ]
+  ]
+)
+```
+
+## Section
+
+Same `Rheo.append` / `fetch` / `ack` / `query` / `Consumer` API. Backends differ
+in **durability**, **distribution**, and **mechanisms** — not in how you write
+handlers.
+
+This notebook:
+
+1. Compares **capabilities** side by side
+2. Runs a tiny happy path on **ETS**, **Mongo** (optional), **SQLite**, and
+   **Postgres** (optional)
+3. Proves two Rheo instances in one BEAM (**ETS + SQLite**) do not bleed data
+
+Sibling notebooks: [Quickstart](quickstart.livemd) · [Concepts](concepts.livemd) ·
+[Pipelines](pipelines.livemd) · [Index](rheo_demo.livemd)
+
+<!-- livebook:{"break_markdown":true} -->
+
+Optional integrations compile only when their deps are present. This
+`Mix.install` pulls Mongo + Ecto adapters so the modules below exist.
+
+---
+
+## Capability snapshot
+
+**Guarantees** are what Rheo promises through the backend. **Mechanisms** are
+how storage implements or optimizes those promises. Application code should
+branch on guarantees sparingly — never to weaken fencing.
+
+```elixir
+cap_row = fn name, caps ->
+  g = caps.guarantees
+  m = caps.mechanisms
+
+  %{
+    backend: name,
+    durable: g[:durable],
+    distributed: g[:distributed],
+    partitions: g[:partitions],
+    contiguous_frontier: g[:contiguous_frontier],
+    secondary_indexes: g[:secondary_indexes],
+    notifications: m[:notifications],
+    atomic_cas: m[:atomic_compare_and_set]
+  }
+end
+
+rows =
+  [{"ETS", Rheo.Backend.ETS.capabilities()}]
+  |> then(fn acc ->
+    if Code.ensure_loaded?(Rheo.Backend.Mongo) do
+      acc ++ [{"Mongo", Rheo.Backend.Mongo.capabilities()}]
+    else
+      acc
+    end
+  end)
+  |> then(fn acc ->
+    if Code.ensure_loaded?(Rheo.Backend.Ecto) do
+      acc ++
+        [
+          {"Ecto SQLite", Rheo.Backend.Ecto.capabilities(:sqlite)},
+          {"Ecto Postgres", Rheo.Backend.Ecto.capabilities(:postgres)}
+        ]
+    else
+      acc
+    end
+  end)
+  |> Enum.map(fn {name, caps} -> cap_row.(name, caps) end)
+
+Kino.DataTable.new(rows)
+```
+
+| Backend        | Typical home                                       |
+| -------------- | -------------------------------------------------- |
+| **ETS**        | Tests, Livebook, ephemeral in-process apps         |
+| **Mongo**      | Searchable durable log; easy multi-document claims |
+| **SQLite**     | Single-node durable file (appliances, local demos) |
+| **PostgreSQL** | Multi-node SQL with `FOR UPDATE SKIP LOCKED`       |
+
+---
+
+## 1. ETS — always available
+
+Named instance `:ets_demo` so we can run several Rheos later without fighting
+over the default `Rheo` name.
+
+```elixir
+stop_rheo = fn name  ->
+  case Process.whereis(name) do
+    nil -> :ok
+    pid -> GenServer.stop(pid)
+  end
+end
+
+stop_rheo.(Rheo)
+{:ok, _} = Rheo.start_link(name: :ets_demo, backend: Rheo.Backend.ETS)
+:ok = Rheo.ensure_indexes(rheo: :ets_demo)
+
+s = "ets-demo"
+:ok = Rheo.create_stream(s, rheo: :ets_demo)
+:ok = Rheo.create_group(s, "workers", rheo: :ets_demo)
+{:ok, ev} = Rheo.append(s, %{type: "ping", n: 1}, rheo: :ets_demo)
+{:ok, [lease]} = Rheo.fetch(s, "workers", limit: 1, rheo: :ets_demo)
+:ok = Rheo.ack(lease, rheo: :ets_demo)
+
+%{
+  event_id: ev.id,
+  receipt: lease.receipt,
+  lag: elem(Rheo.lag(s, "workers", rheo: :ets_demo), 1).lag
+}
+```
+
+Note `receipt`: on ETS it equals the fencing `lease_id`. Native-stream backends
+will put a different opaque token there without changing your handler.
+
+---
+
+## 2. MongoDB — optional
+
+Needs a running MongoDB. From the repo root:
+
+```bash
+docker compose up -d
+```
+
+Override the URL with `RHEO_MONGO_URL` if needed. If Mongo is down, this cell
+returns a structured failure instead of crashing the notebook.
+
+```elixir
+mongo_url = System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_livebook")
+
+mongo =
+  cond do
+    not Code.ensure_loaded?(Rheo.Backend.Mongo) ->
+      %{ok?: false, hint: "add {:mongodb_driver, \"~> 1.5\"} to Mix.install and re-evaluate"}
+
+    true ->
+      case Rheo.start_link(
+             name: :mongo_demo,
+             backend: {Rheo.Backend.Mongo, url: mongo_url, name: MongoLivebook}
+           ) do
+        {:ok, _} ->
+          :ok = Rheo.ensure_indexes(rheo: :mongo_demo)
+          s = "mongo-demo-#{System.unique_integer([:positive])}"
+          :ok = Rheo.create_stream(s, partition_count: 2, rheo: :mongo_demo)
+          :ok = Rheo.create_group(s, "workers", rheo: :mongo_demo)
+          {:ok, ev} = Rheo.append(s, %{type: "ping", venue: "mongo"}, rheo: :mongo_demo)
+          {:ok, [lease]} = Rheo.fetch(s, "workers", limit: 1, rheo: :mongo_demo)
+          :ok = Rheo.ack(lease, rheo: :mongo_demo)
+          {:ok, found} = Rheo.query(s, type: "ping", limit: 5, rheo: :mongo_demo)
+
+          %{
+            ok?: true,
+            url: mongo_url,
+            event_id: ev.id,
+            queried: length(found),
+            capabilities: Rheo.Backend.Mongo.capabilities().guarantees
+          }
+
+        {:error, reason} ->
+          %{ok?: false, reason: inspect(reason), hint: "docker compose up -d"}
+      end
+  end
+```
+
+Mongo shines when you want secondary indexes and rich queries on the same log
+you consume from.
+
+---
+
+## 3. SQLite via Ecto — durable, no Docker
+
+Rheo borrows a **host-owned** `Ecto.Repo`. Your app supervises the Repo; Rheo
+does not own the connection pool. `Rheo.ensure_indexes/1` creates the Rheo
+tables idempotently (or use `mix rheo.ecto.gen_migration` in real apps).
+
+```elixir
+defmodule Backends.SqliteRepo do
+  use Ecto.Repo, otp_app: :rheo, adapter: Ecto.Adapters.SQLite3
+end
+
+db = Path.join(System.tmp_dir!(), "rheo_livebook_#{System.unique_integer([:positive])}.db")
+
+case Process.whereis(Backends.SqliteRepo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
+end
+
+stop_rheo.(Rheo)
+
+{:ok, _} =
+  Backends.SqliteRepo.start_link(
+    database: db,
+    pool_size: 5,
+    name: Backends.SqliteRepo
+  )
+
+{:ok, _} =
+  Rheo.start_link(
+    name: :sqlite_demo,
+    backend: {Rheo.Backend.Ecto, repo: Backends.SqliteRepo}
+  )
+
+:ok = Rheo.ensure_indexes(rheo: :sqlite_demo)
+
+s = "sqlite-demo"
+:ok = Rheo.create_stream(s, partition_count: 2, rheo: :sqlite_demo)
+:ok = Rheo.create_group(s, "risk", rheo: :sqlite_demo)
+
+{:ok, ev} =
+  Rheo.append(s, %{type: "curve_update", key: "EUR-1", price: 1.0}, rheo: :sqlite_demo)
+
+{:ok, [lease]} = Rheo.fetch(s, "risk", limit: 1, rheo: :sqlite_demo)
+:ok = Rheo.ack(lease, rheo: :sqlite_demo)
+{:ok, lag} = Rheo.lag(s, "risk", rheo: :sqlite_demo)
+
+%{
+  guarantees: Rheo.Backend.Ecto.capabilities(:sqlite).guarantees,
+  event_partition: ev.partition,
+  frontier: lag.partitions[ev.partition].frontier,
+  db: db
+}
+```
+
+SQLite declares `distributed: false` — one writer node. Ideal for appliances
+and local durable demos; prefer Postgres when multiple BEAM nodes claim the
+same group.
+
+---
+
+## 4. PostgreSQL via Ecto — optional
+
+Set an Ecto URL, for example:
+
+```bash
+export RHEO_POSTGRES_URL=ecto://postgres:postgres@localhost:5432/rheo_livebook
+```
+
+Same `{Rheo.Backend.Ecto, repo: ...}` tuple as SQLite — only the Repo adapter
+changes.
+
+```elixir
+defmodule Backends.PostgresRepo do
+  use Ecto.Repo, otp_app: :rheo, adapter: Ecto.Adapters.Postgres
+end
+
+postgres =
+  case System.get_env("RHEO_POSTGRES_URL") || System.get_env("DATABASE_URL") do
+    nil ->
+      %{
+        ok?: false,
+        hint: "export RHEO_POSTGRES_URL=ecto://postgres:postgres@localhost:5432/rheo_livebook"
+      }
+
+    url ->
+      case Process.whereis(Backends.PostgresRepo) do
+        nil -> :ok
+        pid -> GenServer.stop(pid)
+      end
+
+      stop_rheo.(Rheo)
+
+      {:ok, _} =
+        Backends.PostgresRepo.start_link(
+          url: url,
+          pool_size: 5,
+          name: Backends.PostgresRepo
+        )
+
+      {:ok, _} =
+        Rheo.start_link(
+          name: :pg_demo,
+          backend: {Rheo.Backend.Ecto, repo: Backends.PostgresRepo}
+        )
+
+      :ok = Rheo.ensure_indexes(rheo: :pg_demo)
+
+      s = "pg-demo-#{System.unique_integer([:positive])}"
+      :ok = Rheo.create_stream(s, partition_count: 2, rheo: :pg_demo)
+      :ok = Rheo.create_group(s, "risk", rheo: :pg_demo)
+      {:ok, ev} = Rheo.append(s, %{type: "ping", venue: "postgres"}, rheo: :pg_demo)
+      {:ok, [lease]} = Rheo.fetch(s, "risk", limit: 1, rheo: :pg_demo)
+      :ok = Rheo.ack(lease, rheo: :pg_demo)
+
+      %{
+        ok?: true,
+        event_id: ev.id,
+        guarantees: Rheo.Backend.Ecto.capabilities(:postgres).guarantees,
+        mechanisms:
+          Rheo.Backend.Ecto.capabilities(:postgres).mechanisms
+          |> Enum.filter(fn {_k, v} -> v end)
+          |> Map.new()
+      }
+  end
+```
+
+Postgres is the multi-node SQL path. Wakeup via `NOTIFY` is an optional hint —
+**polling remains the universal fallback** ([ADR 025](https://hexdocs.pm/rheo/025-backend-wakeup-contract.html)).
+
+---
+
+## 5. Multi-instance: ETS + SQLite side by side
+
+Two Rheo names in one BEAM node is a supported pattern (e.g. hot market feed
+in ETS, durable audit log in SQLite). Same stream **name** must not bleed
+across handles.
+
+```elixir
+stop_rheo.(Rho)
+stop_rheo.(:ets_demo)
+stop_rheo.(:sqlite_demo)
+stop_rheo.(:mongo_demo)
+stop_rheo.(:pg_demo)
+
+case Process.whereis(Backends.SqliteRepo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
+end
+
+db2 = Path.join(System.tmp_dir!(), "rheo_audit_#{System.unique_integer([:positive])}.db")
+
+{:ok, _} =
+  Backends.SqliteRepo.start_link(database: db2, pool_size: 5, name: Backends.SqliteRepo)
+
+{:ok, _} = Rheo.start_link(name: :market, backend: Rheo.Backend.ETS)
+{:ok, _} =
+  Rheo.start_link(name: :audit, backend: {Rheo.Backend.Ecto, repo: Backends.SqliteRepo})
+
+:ok = Rheo.ensure_indexes(rheo: :audit)
+
+stream = "shared-name"
+:ok = Rheo.create_stream(stream, rheo: :market)
+:ok = Rheo.create_stream(stream, rheo: :audit)
+:ok = Rheo.create_group(stream, "traders", rheo: :market)
+:ok = Rheo.create_group(stream, "compliance", rheo: :audit)
+
+{:ok, m} = Rheo.append(stream, %{type: "fill", venue: "ets"}, rheo: :market)
+{:ok, a} = Rheo.append(stream, %{type: "fill", venue: "sqlite"}, rheo: :audit)
+
+{:ok, only_m} = Rheo.query(stream, limit: 10, rheo: :market)
+{:ok, only_a} = Rheo.query(stream, limit: 10, rheo: :audit)
+
+%{
+  market_ids: Enum.map(only_m, & &1.id),
+  audit_ids: Enum.map(only_a, & &1.id),
+  bleed?: m.id in Enum.map(only_a, & &1.id) or a.id in Enum.map(only_m, & &1.id)
+}
+```
+
+`bleed?` must be `false`. Groups (`traders` vs `compliance`) are also isolated
+per instance — creating a group on `:market` does not create it on `:audit`.
+
+---
+
+## Takeaways
+
+* Swap backends with `{Rheo, backend: …}` — keep Consumer / Query / Event meaning
+* Read **capabilities** for ops decisions; do not weaken fencing in app code
+* Optional packages / deps: Mongo driver, Ecto adapters, Broadway — core stays lean
+* Multiple named Rheo instances in one node are fine when handles stay distinct
+
+HexDocs: [ETS](https://hexdocs.pm/rheo/ets.html) ·
+[Mongo](https://hexdocs.pm/rheo/mongo.html) ·
+[Using Ecto](https://hexdocs.pm/rheo/using-ecto.html) ·
+[Article 13](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
+
+<!-- livebook:{"offset":11502,"stamp":{"token":"XCP.gEBjpoR3eSeTCy4Bxt7nZ6RlzlFIbGJjj2_e4TjFnl6_UKmCyFJ_o5r31f3dUQ2MakzfenZTyiWtwWiNG3fYonusWkTKOocgAs-eBnF2Z4jTCHc","version":2}} -->

@@ -38,6 +38,8 @@ See [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html) and
 - Flow readiness tests (`Rheo.Producer` → Flow map / partition / reduce /
   window / crash-before-settle)
 - Multi-instance ETS + SQLite isolation tests
+- Livebook demos split into Quickstart, Concepts, Pipelines, and Backends
+  (`notebooks/*.livemd`; `rheo_demo.livemd` is the index)
 - Optional integrations (ADR 020): `mongodb_driver`, `ecto` / `ecto_sql`,
   `gen_stage`, and `broadway` are `optional: true`; `Rheo.Backend.Mongo`,
   `Rheo.Backend.Ecto`, `Rheo.Producer`, and `Rheo.Broadway` compile only when

@@ -194,12 +194,18 @@ Rheo.append("market-events", %{
 Rheo.query("market-events", type: "curve_update", currency: "EUR")
 ```
 
-Interactive walkthrough: open the
-[Livebook demo](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)
-in [Livebook](https://livebook.dev) (or browse it on
-[HexDocs](https://hexdocs.pm/rheo/rheo_demo.html)). The notebook defaults to
-**ETS** (no Docker). CLI demo: `mix rheo.demo` (ETS) or
-`RHEO_BACKEND=mongo mix rheo.demo`.
+Interactive walkthroughs (open from a clone in
+[Livebook](https://livebook.dev)):
+
+| Notebook | Focus |
+|---|---|
+| [Index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) | Links to all demos ([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html)) |
+| [Quickstart](https://github.com/thanos/rheo/blob/main/notebooks/quickstart.livemd) | ETS publish / fetch / Consumer |
+| [Concepts](https://github.com/thanos/rheo/blob/main/notebooks/concepts.livemd) | Leases, search, replay, partitions |
+| [Pipelines](https://github.com/thanos/rheo/blob/main/notebooks/pipelines.livemd) | GenStage, Flow, Broadway |
+| [Backends](https://github.com/thanos/rheo/blob/main/notebooks/backends.livemd) | ETS, Mongo, SQLite, PostgreSQL |
+
+CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
 
 Upgrading:
 
@@ -232,7 +238,7 @@ because those files are not in the Hex tarball.
 - Cookbook: [ETS](https://hexdocs.pm/rheo/ets.html) ·
   [Mongo](https://hexdocs.pm/rheo/mongo.html) ·
   [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html)
-- [Livebook demo](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html))
+- [Livebook demos](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs index](https://hexdocs.pm/rheo/rheo_demo.html)) — Quickstart, Concepts, Pipelines, Backends
 - [Changelog](https://hexdocs.pm/rheo/changelog.html)
 
 **Migrating from previous versions**
@@ -492,10 +498,11 @@ docker compose up -d postgres
 RHEO_POSTGRES_URL=ecto://postgres:postgres@localhost:5432/rheo_test mix test
 ```
 
-Livebook from a clone (ETS by default — no Docker):
+Livebook from a clone:
 
 ```bash
-livebook server notebooks/rheo_demo.livemd
+livebook server notebooks/
+# or: livebook server notebooks/quickstart.livemd
 ```
 
 CI tests **Erlang/OTP 27–29** × **Elixir 1.17–1.20** (excluding unsupported

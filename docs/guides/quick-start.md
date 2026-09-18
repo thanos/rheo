@@ -64,4 +64,4 @@ children = [
 - [Consumer Groups](consumer-groups.html) — competing vs independent groups
 - [ETS](ets.html) / [Mongo](mongo.html) / [Using Ecto](using-ecto.html)
 - [Broadway](broadway.html) / [GenStage](genstage.html)
-- [Livebook demo](rheo_demo.html)
+- [Livebook demos](rheo_demo.html) — Quickstart, Concepts, Pipelines, Backends

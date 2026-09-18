@@ -29,6 +29,10 @@ defmodule Rheo.MixProject do
           "LICENSE",
           "CHANGELOG.md",
           "notebooks/rheo_demo.livemd",
+          "notebooks/quickstart.livemd",
+          "notebooks/concepts.livemd",
+          "notebooks/pipelines.livemd",
+          "notebooks/backends.livemd",
           "docs/guides/quick-start.md",
           "docs/guides/configuration.md",
           "docs/guides/consumer-groups.md",
@@ -106,6 +110,10 @@ defmodule Rheo.MixProject do
             "docs/guides/enqueuing.md",
             "docs/guides/dequeuing.md",
             "notebooks/rheo_demo.livemd",
+            "notebooks/quickstart.livemd",
+            "notebooks/concepts.livemd",
+            "notebooks/pipelines.livemd",
+            "notebooks/backends.livemd",
             "CHANGELOG.md"
           ],
           "Guides: Advanced": [

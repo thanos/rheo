@@ -111,8 +111,8 @@ none of them (ADR 020).
 ## Try it
 
 - CLI: `mix rheo.demo`
-- Interactive: [Livebook demo](https://hexdocs.pm/rheo/rheo_demo.html)
-  ([source](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd))
+- Interactive: [Livebook demos](https://hexdocs.pm/rheo/rheo_demo.html)
+  ([source index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd))
 - Migrations: [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) ·
   [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) ·
   [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) ·

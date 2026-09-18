@@ -1,0 +1,503 @@
+# Rheo Concepts & Overview (v0.8.0)
+
+```elixir
+Mix.install(
+  [
+    # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
+    {:rheo, "~> 0.8.0"},
+    # {:rheo, path: Path.join(__DIR__, "..")},
+    {:kino, "~> 0.14"}
+  ],
+  config: [
+    rheo: [
+      start_on_application: false,
+      clock: Rheo.Clock.Frozen,
+      default_lease_ms: 5_000,
+      default_max_attempts: 3
+    ]
+  ]
+)
+```
+
+## Section
+
+Quickstart showed the happy path. This notebook is the **why**: independent
+groups, lease fencing, searchable history, replay without copying, and the
+partition / frontier model behind `Rheo.lag`.
+
+Everything runs on **ETS** with a **frozen clock** so we can expire leases
+deterministically. No Docker.
+
+Sibling notebooks: [Quickstart](quickstart.livemd) · [Pipelines](pipelines.livemd) ·
+[Backends](backends.livemd) · [Index](rheo_demo.livemd)
+
+<!-- livebook:{"break_markdown":true} -->
+
+---
+
+## Setup: a small market stream
+
+We publish thirty curve updates tagged with **lineage** metadata
+(correlation / causation / producer / schema). Lineage is ordinary event
+metadata — but Rheo indexes the well-known keys so you can query them later.
+
+```elixir
+case Process.whereis(Rheo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
+end
+
+{:ok, _} = Rheo.start_link(backend: Rheo.Backend.ETS)
+:ok = Rheo.ensure_indexes()
+
+alias Rheo.Event.Lineage
+
+# Livebook-friendly: re-evaluating a cell must not crash on duplicates.
+ensure_stream! = fn stream, opts ->
+  case Rheo.create_stream(stream, opts) do
+    :ok -> :ok
+    {:error, :already_exists} -> :ok
+    other -> other
+  end
+end
+
+ensure_group! = fn stream, group, opts  ->
+  case Rheo.create_group(stream, group, opts) do
+    :ok -> :ok
+    {:error, :already_exists} -> :ok
+    other -> other
+  end
+end
+
+stream = "market-events"
+:ok = ensure_stream!.(stream, [])
+
+Rheo.Clock.Frozen.set(~U[2026-03-15 12:00:00.000Z])
+
+events =
+  for i <- 1..30 do
+    currency = Enum.at(["EUR", "USD", "GBP"], rem(i, 3))
+    curve = Enum.at(["EUR-EURIBOR-6M", "USD-SOFR", "GBP-SONIA"], rem(i, 3))
+
+    meta =
+      Lineage.put(%{},
+        correlation_id: "corr-#{rem(i, 7)}",
+        causation_id: "cmd-#{i}",
+        producer: "pricing-service-v3",
+        schema: "curve_update",
+        schema_version: "1"
+      )
+
+    %{
+      type: "curve_update",
+      currency: currency,
+      curve: curve,
+      price: Float.round(1.0 + i * 0.07, 4),
+      metadata: meta
+    }
+  end
+
+{:ok, written} = Rheo.append_batch(stream, events)
+
+%{
+  events: length(written),
+  first_seq: hd(written).sequence,
+  last_seq: List.last(written).sequence
+}
+```
+
+---
+
+## 1. Independent consumer groups
+
+Imagine two teams on the same market feed:
+
+* **risk** — mark positions
+* **surveillance** — watch for anomalies
+
+They must not share a cursor. Each group has its own delivery state on the
+**same immutable events**.
+
+```elixir
+:ok = ensure_group!.(stream, "risk", [])
+:ok = ensure_group!.(stream, "surveillance", [])
+
+{:ok, risk_leases} = Rheo.fetch(stream, "risk", limit: 5, consumer_id: "risk-1")
+{:ok, surv_leases} = Rheo.fetch(stream, "surveillance", limit: 5, consumer_id: "surv-1")
+
+%{
+  risk_count: length(risk_leases),
+  surveillance_count: length(surv_leases),
+  same_event_ids?: Enum.map(risk_leases, & &1.event_id) == Enum.map(surv_leases, & &1.event_id),
+  lease: Map.take(hd(risk_leases), [:lease_id, :receipt, :attempt, :expires_at])
+}
+```
+
+`same_event_ids?` should be `true`: both groups see the same head of the log.
+Their leases are different objects (`lease_id` / `receipt` differ).
+
+Next we **ACK surveillance** (done) and **leave risk hanging** — simulating a
+worker that crashed before ACK.
+
+```elixir
+Enum.each(surv_leases, &Rheo.ack/1)
+stale_risk = risk_leases
+:ok
+```
+
+---
+
+## 2. Lease expiry and fencing
+
+Leases expire. When they do, another worker may claim the same events. The
+**old** lease must not be able to ACK anymore — otherwise two workers could
+both believe they settled the same delivery.
+
+We advance the frozen clock past `default_lease_ms` (5s):
+
+```elixir
+Rheo.Clock.Frozen.advance(6_000)
+
+{:ok, redelivered} = Rheo.fetch(stream, "risk", limit: 5, consumer_id: "risk-2")
+
+stale_ack = Rheo.ack(hd(stale_risk))
+fresh_ack = Rheo.ack(hd(redelivered))
+
+Enum.each(tl(redelivered), &Rheo.ack/1)
+
+%{
+  redelivered: length(redelivered),
+  stale_ack: stale_ack,
+  fresh_ack: fresh_ack,
+  attempts: Enum.map(redelivered, & &1.attempt)
+}
+```
+
+Expect:
+
+* `stale_ack` → `{:error, :stale_lease}` (fencing worked)
+* `fresh_ack` → `:ok`
+* `attempts` → greater than 1 on redelivery
+
+This is the heart of Rheo's at-least-once + fencing model. Redis Streams will
+reuse the same story with `lease.receipt` carrying the native stream id
+([ADR 021](https://hexdocs.pm/rheo/021-logical-sequence-and-native-delivery-receipts.html)).
+
+---
+
+## 3. Search history (the differentiator)
+
+Brokers often treat the log as a firehose. Rheo keeps events **queryable** after
+ACK — filters on payload fields, lineage keys, and sequence bounds.
+
+```elixir
+{:ok, eur} =
+  Rheo.query(stream,
+    type: "curve_update",
+    # price: 1.21,
+    currency: "EUR",
+    curve: "EUR-EURIBOR-6M",
+    limit: 10
+  )
+
+{:ok, mid} =
+  Rheo.query(stream,
+    after_sequence: 10,
+    until_sequence: 15,
+    order_by: [sequence: :asc]
+  )
+
+{:ok, by_corr} = Rheo.query(stream, correlation_id: "corr-1", limit: 10)
+
+Kino.Layout.grid(
+  [
+    Kino.Markdown.new("### EUR curve (payload filters)"),
+    Kino.DataTable.new(
+      Enum.map(eur, fn e ->
+        %{sequence: e.sequence, price: e.payload["price"], id: e.id}
+      end)
+    ),
+    Kino.Markdown.new("### Sequences 11–15 (bounds)"),
+    Kino.DataTable.new(
+      Enum.map(mid, fn e ->
+        %{sequence: e.sequence, currency: e.payload["currency"], price: e.payload["price"]}
+      end)
+    ),
+    Kino.Markdown.new("### correlation_id = corr-1 (lineage)"),
+    Kino.DataTable.new(
+      Enum.map(by_corr, fn e ->
+        %{
+          sequence: e.sequence,
+          currency: e.payload["currency"],
+          causation_id: Lineage.get(e, :causation_id)
+        }
+      end)
+    )
+  ],
+  columns: 1
+)
+```
+
+---
+
+## 4. Pagination and streaming
+
+Avoid SQL-style `OFFSET` for deep pages. `query_page/2` returns an opaque
+cursor; `stream_query/2` walks pages for you with a bounded page size.
+
+```elixir
+{:ok, page1} = Rheo.query_page(stream, type: "curve_update", limit: 8)
+
+{:ok, page2} =
+  Rheo.query_page(stream,
+    type: "curve_update",
+    limit: 8,
+    cursor: page1.next_cursor
+  )
+
+streamed_seqs =
+  stream
+  |> Rheo.stream_query(type: "curve_update", limit: 10)
+  |> Enum.map(& &1.sequence)
+
+%{
+  page1_sequences: Enum.map(page1.events, & &1.sequence),
+  page1_next_cursor: page1.next_cursor,
+  page2_sequences: Enum.map(page2.events, & &1.sequence),
+  streamed_count: length(streamed_seqs),
+  streamed_first_last: {List.first(streamed_seqs), List.last(streamed_seqs)}
+}
+```
+
+---
+
+## 5. Replay without copying events
+
+Replay re-opens **delivery state for one group**. The event log is never
+cloned — there is no second copy of history to reconcile.
+
+### Preferred: a new group with a start cursor
+
+Safe for production backfills: leave `risk` alone, create `risk-replay`
+starting after sequence 20.
+
+```elixir
+:ok = ensure_group!.(stream, "risk-replay", start_after: 20)
+
+{:ok, replay_leases} = Rheo.fetch(stream, "risk-replay", limit: 10, consumer_id: "replay-1")
+
+Kino.DataTable.new(
+  Enum.map(replay_leases, fn lease ->
+    %{
+      sequence: lease.event.sequence,
+      event_id: lease.event_id,
+      currency: lease.event.payload["currency"]
+    }
+  end)
+)
+```
+
+> Re-running this cell is safe: `ensure_group!` treats `:already_exists` as
+> success. If you already ACKed these leases in a previous run, `fetch` may
+> return `[]` — re-evaluate from **Setup** for a fresh ETS store.
+
+Only sequences **after** 20 appear. Production `risk` is untouched.
+
+```elixir
+Enum.each(replay_leases, &Rheo.ack/1)
+
+%{
+  replay_group_first_sequence: hd(replay_leases).event.sequence,
+  risk_still_independent?: true
+}
+```
+
+### Reopen an existing group (`Rheo.replay/3`)
+
+Drain remaining `risk` work first, then replay from sequence 0. Replay
+re-opens deliveries; it does **not** reset `attempt`, so `max_attempts` still
+applies.
+
+```elixir
+:ok =
+  Enum.reduce_while(1..100, :ok, fn _, _ ->
+    case Rheo.fetch(stream, "risk", limit: 20, consumer_id: "risk-drain") do
+      {:ok, []} -> {:halt, :ok}
+      {:ok, leases} -> Enum.each(leases, &Rheo.ack/1) && {:cont, :ok}
+    end
+  end)
+
+{:ok, []} = Rheo.fetch(stream, "risk", limit: 1, consumer_id: "risk-check")
+
+:ok = Rheo.replay(stream, "risk", from_sequence: 0)
+
+{:ok, after_replay} = Rheo.fetch(stream, "risk", limit: 5, consumer_id: "risk-replayed")
+
+%{
+  after_replay_count: length(after_replay),
+  sequences: Enum.map(after_replay, & &1.event.sequence),
+  attempts: Enum.map(after_replay, & &1.attempt)
+}
+```
+
+Query-selected replay (EUR only). Settle everything the full replay re-opened
+first, so the next fetch shows only what the query selected:
+
+```elixir
+:ok =
+  Enum.reduce_while(1..100, :ok, fn _, _ ->
+    case Rheo.fetch(stream, "risk", limit: 20, consumer_id: "risk-drain-2") do
+      {:ok, []} -> {:halt, :ok}
+      {:ok, leases} -> Enum.each(leases, &Rheo.ack/1) && {:cont, :ok}
+    end
+  end)
+
+:ok = Rheo.replay(stream, "risk", query: [type: "curve_update", currency: "EUR"])
+
+{:ok, eur_again} = Rheo.fetch(stream, "risk", limit: 20, consumer_id: "risk-eur")
+
+%{
+  eur_redelivered: length(eur_again),
+  currencies: Enum.map(eur_again, & &1.event.payload["currency"]) |> Enum.uniq()
+}
+```
+
+### Destructive reset (loud on purpose)
+
+`reset_group` refuses to run without `confirm: true`. Even after reset, events
+remain in the log.
+
+```elixir
+assert_without_confirm = Rheo.reset_group(stream, "risk")
+:ok = Rheo.reset_group(stream, "risk", confirm: true, start_after: 25)
+
+{:ok, after_reset} = Rheo.fetch(stream, "risk", limit: 10, consumer_id: "risk-reset")
+{:ok, [still_in_log | _]} = Rheo.read(stream, after: 0, limit: 1)
+
+%{
+  reset_without_confirm: assert_without_confirm,
+  after_reset_sequences: Enum.map(after_reset, & &1.event.sequence),
+  events_still_in_log?: still_in_log.sequence == 1,
+  note: "other groups (e.g. surveillance) keep their own deliveries"
+}
+```
+
+---
+
+## 6. Partitions, frontier holes, and lag
+
+Restart with four partitions. Same routing key → same partition; sequences are
+**per partition** (no global total order across keys).
+
+```elixir
+case Process.whereis(Rheo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
+end
+
+{:ok, _} = Rheo.start_link(backend: Rheo.Backend.ETS)
+stream = "market-events"
+:ok = ensure_stream!.(stream, partition_count: 4)
+:ok = ensure_group!.(stream, "risk", [])
+
+for key <- ["EUR-A", "EUR-A", "USD-B", "GBP-C"] do
+  {:ok, _} = Rheo.append(stream, %{type: "curve_update", key: key, price: 1.0})
+end
+
+{:ok, same_key} = Rheo.query(stream, key: "EUR-A", order_by: [sequence: :asc])
+
+Kino.DataTable.new(
+  Enum.map(same_key, fn e ->
+    %{partition: e.partition, sequence: e.sequence, key: e.key}
+  end)
+)
+```
+
+**Hole rule:** ACKs are not a free-floating cursor. If you ACK sequence 1 and 3
+while 2 is still outstanding, the **contiguous frontier** stays at 1. Lag
+reflects that hole until 2 is settled.
+
+```elixir
+:ok = ensure_group!.(stream, "frontier-demo", [])
+{:ok, _} = Rheo.append(stream, %{type: "t"}, partition: 0)
+{:ok, _} = Rheo.append(stream, %{type: "t"}, partition: 0)
+{:ok, _} = Rheo.append(stream, %{type: "t"}, partition: 0)
+
+{:ok, [l1, l2, l3]} = Rheo.fetch(stream, "frontier-demo", partition: 0, limit: 3)
+:ok = Rheo.ack(l1)
+:ok = Rheo.ack(l3)
+
+{:ok, lag_hole} = Rheo.lag(stream, "frontier-demo")
+:ok = Rheo.ack(l2)
+{:ok, lag_full} = Rheo.lag(stream, "frontier-demo")
+
+%{
+  while_hole: lag_hole.partitions[0],
+  after_fill: lag_full.partitions[0],
+  aggregate_lag: lag_full.lag
+}
+```
+
+See [Article 12 — ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html).
+
+---
+
+## 7. One local group owner
+
+`Rheo.Consumer` starts exactly one local runtime for `{rheo, stream, group}`.
+A second start is rejected — silent multi-bridge join was removed in v0.8.
+
+```elixir
+defmodule Concepts.RiskConsumer do
+  use Rheo.Consumer, stream: "market-events", group: "risk"
+
+  @impl true
+  def setup(opts), do: {:ok, %{agent: Keyword.fetch!(opts, :agent)}}
+
+  @impl true
+  def handle_event(event, %{agent: agent}) do
+    Agent.update(agent, fn ids -> [event.id | ids] end)
+    :ack
+  end
+end
+
+{:ok, agent} = Agent.start_link(fn -> [] end)
+
+{:ok, _consumer} =
+  Concepts.RiskConsumer.start_link(
+    stream: stream,
+    group: "risk",
+    agent: agent,
+    max_demand: 10,
+    poll_ms: 100
+  )
+
+Process.sleep(1_000)
+%{processed: length(Agent.get(agent, & &1))}
+```
+
+```elixir
+Concepts.RiskConsumer.start_link(stream: stream, group: "risk", agent: agent)
+```
+
+Expect an error shaped like `{:error, {:already_started, pid}}` (or a
+supervised wrap of `{:group_already_started, pid}`). Scale with `:concurrency`
+on the single owner instead.
+
+---
+
+## Takeaways
+
+| Idea               | Meaning                                                  |
+| ------------------ | -------------------------------------------------------- |
+| Immutable log      | Consumption never deletes events                         |
+| Independent groups | Each tracks its own deliveries                           |
+| Leases + fencing   | Stale ACKs fail; expiry ⇒ redelivery                   |
+| Search / replay    | History stays queryable; replay does not copy            |
+| Partitions         | Per-partition sequences; contiguous frontier; `Rheo.lag` |
+
+Next: [Pipelines](pipelines.livemd) · [Backends](backends.livemd)
+
+HexDocs: [Replay](https://hexdocs.pm/rheo/replay.html) ·
+[Partitions and lag](https://hexdocs.pm/rheo/partitions-and-lag.html) ·
+[Article 12](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)

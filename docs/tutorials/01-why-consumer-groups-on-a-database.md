@@ -1,8 +1,8 @@
 # Article 1 — Why Put Consumer Groups in Front of a Database?
 
 > Prefer a hands-on pass first? Open the
-> [Livebook demo](https://hexdocs.pm/rheo/rheo_demo.html)
-> ([source](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)).
+> [Livebook demos](https://hexdocs.pm/rheo/rheo_demo.html)
+> ([source index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)).
 
 Message brokers excel at delivery: competing consumers, acknowledgements, retries.
 They are usually weak at answering: “what happened to EUR-EURIBOR-6M at 13:04?”

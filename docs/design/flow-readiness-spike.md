@@ -36,6 +36,10 @@ end)
 Crashing before settle ⇒ at-least-once redelivery (lease expiry). Never ACK in
 `reduce` before the aggregate is safely stored.
 
+`Enum.take/2` only keeps N results; GenStage demand can still pull (and settle)
+more events. Livebook demos use a fresh group and a finite append per example
+(`notebooks/pipelines.livemd`).
+
 ## Case answers
 
 | Case | Lease carrier | Renewal | Success event | Settles | Crash before success |
