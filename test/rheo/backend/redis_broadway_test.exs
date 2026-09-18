@@ -5,9 +5,9 @@ defmodule Rheo.Backend.RedisBroadwayTest do
 
   @moduletag :redis
 
-  alias Rheo.{Lease, Producer}
   alias Rheo.Backend.Redis
   alias Rheo.Backend.Redis.Keys
+  alias Rheo.{Lease, Producer}
 
   defmodule Pipeline do
     @moduledoc false
