@@ -26,6 +26,7 @@ One Hex package, optional integrations:
 | PostgreSQL / SQLite | `{:ecto_sql, "~> 3.11"}` plus `postgrex` or `ecto_sqlite3` | `Rheo.Backend.Ecto`, `Rheo.Backend.Ecto.*`, `mix rheo.ecto.gen_migration` |
 | GenStage | `{:gen_stage, "~> 1.2"}` | `Rheo.Producer` |
 | Broadway | `{:broadway, "~> 1.2"}` | `Rheo.Broadway`, `Rheo.Broadway.Acknowledger`, and the `Broadway.Producer` callback on `Rheo.Producer` |
+| Redis Streams | `{:redix, "~> 1.5"}` | `Rheo.Backend.Redis` and `Rheo.Backend.Redis.*` |
 
 Each integration file is wrapped in `if Code.ensure_loaded?(Dep) do … end`,
 so the module exists only when the host lists the dependency. Mix recompiles
@@ -47,8 +48,8 @@ Dependency direction:
 telemetry, jason  <--  rheo core  <--  guarded integrations  <--  optional deps
 ```
 
-A v0.9 Redis backend follows the same rule: `Rheo.Backend.Redis` guarded on
-`Redix`, `{:redix, ..., optional: true}`.
+A Redis backend follows the same rule: `Rheo.Backend.Redis` guarded on
+`Redix`, `{:redix, ..., optional: true}` (ADR 026).
 
 ## Consequences
 

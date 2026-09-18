@@ -54,9 +54,20 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       RHEO_MONGO_URL: mongodb://localhost:27017/rheo_test
       RHEO_POSTGRES_URL: ecto://postgres:postgres@localhost:5432/rheo_test
+      RHEO_REDIS_URL: redis://localhost:6379
       MIX_ENV: test
 
     steps:
@@ -113,9 +124,20 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       RHEO_MONGO_URL: mongodb://localhost:27017/rheo_test
       RHEO_POSTGRES_URL: ecto://postgres:postgres@localhost:5432/rheo_test
+      RHEO_REDIS_URL: redis://localhost:6379
       MIX_ENV: test
 
     steps:

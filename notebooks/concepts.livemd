@@ -1,10 +1,10 @@
-# Rheo Concepts & Overview (v0.8.0)
+# Rheo Concepts & Overview (v0.9.0)
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.8.0"},
+    {:rheo, "~> 0.9.0"},
     # {:rheo, path: Path.join(__DIR__, "..")},
     {:kino, "~> 0.14"}
   ],
@@ -19,7 +19,7 @@ Mix.install(
 )
 ```
 
-## Section
+## Intro
 
 Quickstart showed the happy path. This notebook is the **why**: independent
 groups, lease fencing, searchable history, replay without copying, and the
@@ -179,9 +179,12 @@ Expect:
 * `fresh_ack` → `:ok`
 * `attempts` → greater than 1 on redelivery
 
-This is the heart of Rheo's at-least-once + fencing model. Redis Streams will
-reuse the same story with `lease.receipt` carrying the native stream id
-([ADR 021](https://hexdocs.pm/rheo/021-logical-sequence-and-native-delivery-receipts.html)).
+This is the heart of Rheo's at-least-once + fencing model. Redis Streams uses
+the same story: `lease.receipt` carries the native stream entry id while
+`lease_id` remains the fencing token
+([ADR 021](https://hexdocs.pm/rheo/021-logical-sequence-and-native-delivery-receipts.html),
+[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)).
+Try it in [Backends](backends.livemd).
 
 ---
 
@@ -500,4 +503,5 @@ Next: [Pipelines](pipelines.livemd) · [Backends](backends.livemd)
 
 HexDocs: [Replay](https://hexdocs.pm/rheo/replay.html) ·
 [Partitions and lag](https://hexdocs.pm/rheo/partitions-and-lag.html) ·
-[Article 12](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
+[Article 12](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html) ·
+[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)

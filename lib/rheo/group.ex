@@ -17,9 +17,11 @@ defmodule Rheo.Group do
   use GenServer
   require Logger
 
-  alias Rheo.{Backoff, Inflight, Lease, Settle, Telemetry}
+  alias Rheo.Backend.Wakeup
+  alias Rheo.{Backoff, Inflight, Instance, Lease, Settle, Telemetry}
 
   @drain_timeout_ms 5_000
+  @wakeup_floor_ms 25
 
   defstruct [
     :rheo,
@@ -120,7 +122,10 @@ defmodule Rheo.Group do
   end
 
   @impl true
-  def handle_continue(:schedule, state), do: schedule_fetch(state)
+  def handle_continue(:schedule, state) do
+    maybe_start_wakeup(state)
+    schedule_fetch(state)
+  end
 
   @impl true
   def handle_info(:fetch, state), do: do_fetch(state)
@@ -180,6 +185,60 @@ defmodule Rheo.Group do
     else
       {:ok, %{}}
     end
+  end
+
+  # ADR 025: a backend that can block waits in its own task and only hints at
+  # work. The poll timer below stays the source of truth for liveness.
+  defp maybe_start_wakeup(state) do
+    case instance(state.rheo) do
+      %Instance{backend: backend, handle: handle} ->
+        if Code.ensure_loaded?(backend) and function_exported?(backend, :wait, 2) do
+          start_wakeup_task(state, backend, handle)
+        end
+
+      nil ->
+        :ok
+    end
+
+    :ok
+  end
+
+  defp instance(rheo) do
+    Instance.fetch!(rheo)
+  catch
+    :exit, _reason -> nil
+  end
+
+  defp start_wakeup_task(state, backend, handle) do
+    group = self()
+
+    opts = [
+      timeout: state.lease_ms |> div(2) |> min(state.poll_ms * 5) |> max(state.poll_ms),
+      stream: state.stream,
+      group: state.group,
+      partitions: state.partitions
+    ]
+
+    Task.Supervisor.start_child(Rheo.Names.task_supervisor(state.rheo), fn ->
+      wakeup_loop(backend, handle, group, opts)
+    end)
+  end
+
+  defp wakeup_loop(backend, handle, group, opts) do
+    if Process.alive?(group) do
+      _ = Wakeup.wait(backend, handle, opts)
+
+      # A floor between hints keeps a permanent backlog from spinning the task
+      # when the group has no free slots.
+      Process.sleep(@wakeup_floor_ms)
+
+      if Process.alive?(group) do
+        send(group, :fetch)
+        wakeup_loop(backend, handle, group, opts)
+      end
+    end
+
+    :ok
   end
 
   defp schedule_fetch(%{draining: true} = state), do: {:noreply, state}

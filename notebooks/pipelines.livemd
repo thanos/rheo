@@ -1,10 +1,10 @@
-# Rheo GenStage, Flow & Broadway (v0.8.0)
+# Rheo GenStage, Flow & Broadway (v0.9.0)
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.8.0"},
+    {:rheo, "~> 0.9.0"},
     # {:rheo, path: Path.join(__DIR__, "..")},
     {:kino, "~> 0.14"},
     {:broadway, "~> 1.3"},
@@ -21,7 +21,7 @@ Mix.install(
 )
 ```
 
-## Section
+## Intro
 
 Rheo answers: *“Was this event delivered, leased, and settled for this group?”*
 
@@ -159,9 +159,9 @@ section so we do not leave a polling process around.
 
 ## 2. Flow: when is it safe to settle?
 
-Flow is **not** a Rheo Hex package in v0.8. You compose it yourself with
+Flow is **not** a Rheo Hex package. You compose it yourself with
 `Flow.from_stages/1`. The lease type and settlement API stay the same as
-Broadway.
+Broadway (and work against Redis the same way — see [Backends](backends.livemd)).
 
 | Stage       | When to ACK                                       |
 | ----------- | ------------------------------------------------- |
@@ -427,4 +427,5 @@ Next: [Backends](backends.livemd)
 HexDocs: [GenStage](https://hexdocs.pm/rheo/genstage.html) ·
 [Broadway](https://hexdocs.pm/rheo/broadway.html) ·
 [Flow spike](https://hexdocs.pm/rheo/flow-readiness-spike.html) ·
-[Article 14](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
+[Article 14](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html) ·
+[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)

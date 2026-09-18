@@ -1,16 +1,16 @@
-# Rheo Backends: ETS, Mongo, SQLite, PostgreSQL (v0.8.0)
+# Rheo Backends: ETS, Mongo, SQLite, PostgreSQL, Redis (v0.9.0)
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.8.0"},
-    # {:rheo, path: Path.join(__DIR__, "..")},
+    # {:rheo, "~> 0.9.0"},
+    {:rheo, path: Path.join(__DIR__, "..")},
     {:mongodb_driver, "~> 1.5"},
+    {:redix, "~> 1.5"},
     {:ecto_sqlite3, "~> 0.17"},
     {:postgrex, "~> 0.19"},
-    {:kino, "~> 0.14"},
-    {:kino_db, "~> 0.4.0"}
+    {:kino, "~> 0.14"}
   ],
   config: [
     rheo: [
@@ -23,7 +23,7 @@ Mix.install(
 )
 ```
 
-## Section
+## Intro
 
 Same `Rheo.append` / `fetch` / `ack` / `query` / `Consumer` API. Backends differ
 in **durability**, **distribution**, and **mechanisms** — not in how you write
@@ -32,17 +32,13 @@ handlers.
 This notebook:
 
 1. Compares **capabilities** side by side
-2. Runs a tiny happy path on **ETS**, **Mongo** (optional), **SQLite**, and
-   **Postgres** (optional)
+2. Runs a tiny happy path on **ETS**, **Mongo**, **SQLite**, **Postgres**, and
+   **Redis** (optional where services are required)
 3. Proves two Rheo instances in one BEAM (**ETS + SQLite**) do not bleed data
+4. Runs a light **throughput comparison** across whichever backends are up
 
 Sibling notebooks: [Quickstart](quickstart.livemd) · [Concepts](concepts.livemd) ·
 [Pipelines](pipelines.livemd) · [Index](rheo_demo.livemd)
-
-<!-- livebook:{"break_markdown":true} -->
-
-Optional integrations compile only when their deps are present. This
-`Mix.install` pulls Mongo + Ecto adapters so the modules below exist.
 
 ---
 
@@ -79,6 +75,13 @@ rows =
     end
   end)
   |> then(fn acc ->
+    if Code.ensure_loaded?(Rheo.Backend.Redis) do
+      acc ++ [{"Redis", Rheo.Backend.Redis.capabilities()}]
+    else
+      acc
+    end
+  end)
+  |> then(fn acc ->
     if Code.ensure_loaded?(Rheo.Backend.Ecto) do
       acc ++
         [
@@ -98,6 +101,7 @@ Kino.DataTable.new(rows)
 | -------------- | -------------------------------------------------- |
 | **ETS**        | Tests, Livebook, ephemeral in-process apps         |
 | **Mongo**      | Searchable durable log; easy multi-document claims |
+| **Redis**      | Native Streams consumer groups; Model C receipts   |
 | **SQLite**     | Single-node durable file (appliances, local demos) |
 | **PostgreSQL** | Multi-node SQL with `FOR UPDATE SKIP LOCKED`       |
 
@@ -192,7 +196,53 @@ you consume from.
 
 ---
 
-## 3. SQLite via Ecto — durable, no Docker
+## 3. Redis Streams — optional
+
+Needs Redis **6.2+**. From the repo: `docker compose up -d redis`.
+
+```elixir
+redis_url = System.get_env("RHEO_REDIS_URL", "redis://localhost:6379")
+
+redis =
+  cond do
+    not Code.ensure_loaded?(Rheo.Backend.Redis) ->
+      %{ok?: false, hint: "add {:redix, \"~> 1.5\"} to Mix.install and re-evaluate"}
+
+    true ->
+      case Rheo.start_link(
+             name: :redis_demo,
+             backend: {Rheo.Backend.Redis, name: RedisLivebook, url: redis_url}
+           ) do
+        {:ok, _} ->
+          :ok = Rheo.ensure_indexes(rheo: :redis_demo)
+          s = "redis-demo-#{System.unique_integer([:positive])}"
+          :ok = Rheo.create_stream(s, partition_count: 2, rheo: :redis_demo)
+          :ok = Rheo.create_group(s, "workers", rheo: :redis_demo)
+          {:ok, ev} = Rheo.append(s, %{type: "ping", venue: "redis"}, rheo: :redis_demo)
+          {:ok, [lease]} = Rheo.fetch(s, "workers", limit: 1, rheo: :redis_demo)
+          :ok = Rheo.ack(lease, rheo: :redis_demo)
+
+          %{
+            ok?: true,
+            url: redis_url,
+            event_id: ev.id,
+            receipt: lease.receipt,
+            receipt_differs_from_lease_id?: lease.receipt != lease.lease_id,
+            capabilities: Rheo.Backend.Redis.capabilities().guarantees
+          }
+
+        {:error, reason} ->
+          %{ok?: false, reason: inspect(reason), hint: "docker compose up -d redis"}
+      end
+  end
+```
+
+On Redis, `receipt` is the stream entry id — different from `lease_id` (fencing
+token). Handlers still ignore receipt contents.
+
+---
+
+## 4. SQLite via Ecto — durable, no Docker
 
 Rheo borrows a **host-owned** `Ecto.Repo`. Your app supervises the Repo; Rheo
 does not own the connection pool. `Rheo.ensure_indexes/1` creates the Rheo
@@ -252,7 +302,7 @@ same group.
 
 ---
 
-## 4. PostgreSQL via Ecto — optional
+## 5. PostgreSQL via Ecto — optional
 
 Set an Ecto URL, for example:
 
@@ -323,18 +373,19 @@ Postgres is the multi-node SQL path. Wakeup via `NOTIFY` is an optional hint —
 
 ---
 
-## 5. Multi-instance: ETS + SQLite side by side
+## 6. Multi-instance: ETS + SQLite side by side
 
 Two Rheo names in one BEAM node is a supported pattern (e.g. hot market feed
 in ETS, durable audit log in SQLite). Same stream **name** must not bleed
 across handles.
 
 ```elixir
-stop_rheo.(Rho)
+stop_rheo.(Rheo)
 stop_rheo.(:ets_demo)
 stop_rheo.(:sqlite_demo)
 stop_rheo.(:mongo_demo)
 stop_rheo.(:pg_demo)
+stop_rheo.(:redis_demo)
 
 case Process.whereis(Backends.SqliteRepo) do
   nil -> :ok
@@ -376,16 +427,234 @@ per instance — creating a group on `:market` does not create it on `:audit`.
 
 ---
 
+## 7. Throughput comparison (informal)
+
+Same portable API, different storage cost. This is a **Livebook microbench**,
+not a formal load test: single partition, sequential calls from one BEAM,
+`N` events append then drain with `fetch`/`ack`. Results skip backends that
+are not running or cannot connect.
+
+Tune `bench_n` if you want a longer run. Re-evaluate after starting Docker
+services for Mongo / Redis / Postgres.
+
+```elixir
+bench_n = 200
+bench_payload = %{type: "bench", i: 0}
+
+stop_rheo = fn name ->
+  case Process.whereis(name) do
+    nil -> :ok
+    pid -> GenServer.stop(pid)
+  end
+end
+
+# Repos may already exist from sections 4–5; define them if this cell is run alone.
+unless Code.ensure_loaded?(Backends.SqliteRepo) do
+  defmodule Backends.SqliteRepo do
+    use Ecto.Repo, otp_app: :rheo, adapter: Ecto.Adapters.SQLite3
+  end
+end
+
+unless Code.ensure_loaded?(Backends.PostgresRepo) do
+  defmodule Backends.PostgresRepo do
+    use Ecto.Repo, otp_app: :rheo, adapter: Ecto.Adapters.Postgres
+  end
+end
+
+ensure_sqlite_repo = fn ->
+  case Process.whereis(Backends.SqliteRepo) do
+    nil ->
+      db = Path.join(System.tmp_dir!(), "rheo_bench_#{System.unique_integer([:positive])}.db")
+
+      {:ok, _} =
+        Backends.SqliteRepo.start_link(
+          database: db,
+          pool_size: 5,
+          name: Backends.SqliteRepo
+        )
+
+      :ok
+
+    _pid ->
+      :ok
+  end
+end
+
+timed = fn label, fun ->
+  t0 = System.monotonic_time(:microsecond)
+
+  try do
+    case fun.() do
+      :ok ->
+        us = System.monotonic_time(:microsecond) - t0
+        ms = Float.round(us / 1000, 1)
+        ops = Float.round(bench_n * 1_000_000 / us, 1)
+        %{backend: label, ok?: true, n: bench_n, ms: ms, ops_per_sec: ops}
+
+      {:error, reason} ->
+        %{backend: label, ok?: false, reason: inspect(reason), n: bench_n}
+    end
+  rescue
+    e ->
+      %{backend: label, ok?: false, reason: Exception.message(e), n: bench_n}
+  end
+end
+
+drain = fn rheo, stream, group ->
+  drain_loop = fn drain_loop ->
+    case Rheo.fetch(stream, group, limit: 50, rheo: rheo) do
+      {:ok, []} ->
+        :ok
+
+      {:ok, leases} ->
+        Enum.each(leases, fn lease -> :ok = Rheo.ack(lease, rheo: rheo) end)
+        drain_loop.(drain_loop)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  drain_loop.(drain_loop)
+end
+
+run_cycle = fn rheo, stream ->
+  group = "bench"
+  :ok = Rheo.create_stream(stream, partition_count: 1, rheo: rheo)
+  :ok = Rheo.create_group(stream, group, rheo: rheo)
+
+  Enum.each(1..bench_n, fn i ->
+    {:ok, _} = Rheo.append(stream, Map.put(bench_payload, :i, i), rheo: rheo)
+  end)
+
+  drain.(rheo, stream, group)
+end
+
+candidates = [
+  {"ETS",
+   fn ->
+     stop_rheo.(:ets_bench)
+     {:ok, _} = Rheo.start_link(name: :ets_bench, backend: Rheo.Backend.ETS)
+     :ok = Rheo.ensure_indexes(rheo: :ets_bench)
+     run_cycle.(:ets_bench, "bench-ets")
+   end},
+  {"SQLite",
+   fn ->
+     stop_rheo.(:sqlite_bench)
+     ensure_sqlite_repo.()
+
+     {:ok, _} =
+       Rheo.start_link(
+         name: :sqlite_bench,
+         backend: {Rheo.Backend.Ecto, repo: Backends.SqliteRepo}
+       )
+
+     :ok = Rheo.ensure_indexes(rheo: :sqlite_bench)
+     run_cycle.(:sqlite_bench, "bench-sqlite-#{System.unique_integer([:positive])}")
+   end},
+  {"Mongo",
+   fn ->
+     if not Code.ensure_loaded?(Rheo.Backend.Mongo) do
+       {:error, :mongo_not_loaded}
+     else
+       stop_rheo.(:mongo_bench)
+       url = System.get_env("RHEO_MONGO_URL", "mongodb://localhost:27017/rheo_livebook")
+
+       case Rheo.start_link(
+              name: :mongo_bench,
+              backend: {Rheo.Backend.Mongo, url: url, name: MongoBench}
+            ) do
+         {:ok, _} ->
+           :ok = Rheo.ensure_indexes(rheo: :mongo_bench)
+           run_cycle.(:mongo_bench, "bench-mongo-#{System.unique_integer([:positive])}")
+
+         {:error, reason} ->
+           {:error, reason}
+       end
+     end
+   end},
+  {"Redis",
+   fn ->
+     if not Code.ensure_loaded?(Rheo.Backend.Redis) do
+       {:error, :redis_not_loaded}
+     else
+       stop_rheo.(:redis_bench)
+       url = System.get_env("RHEO_REDIS_URL", "redis://localhost:6379")
+
+       case Rheo.start_link(
+              name: :redis_bench,
+              backend: {Rheo.Backend.Redis, name: RedisBench, url: url}
+            ) do
+         {:ok, _} ->
+           :ok = Rheo.ensure_indexes(rheo: :redis_bench)
+           run_cycle.(:redis_bench, "bench-redis-#{System.unique_integer([:positive])}")
+
+         {:error, reason} ->
+           {:error, reason}
+       end
+     end
+   end},
+  {"Postgres",
+   fn ->
+     case System.get_env("RHEO_POSTGRES_URL") || System.get_env("DATABASE_URL") do
+       nil ->
+         {:error, :postgres_url_unset}
+
+       url ->
+         stop_rheo.(:pg_bench)
+
+         case Process.whereis(Backends.PostgresRepo) do
+           nil ->
+             {:ok, _} =
+               Backends.PostgresRepo.start_link(
+                 url: url,
+                 pool_size: 5,
+                 name: Backends.PostgresRepo
+               )
+
+           _pid ->
+             :ok
+         end
+
+         {:ok, _} =
+           Rheo.start_link(
+             name: :pg_bench,
+             backend: {Rheo.Backend.Ecto, repo: Backends.PostgresRepo}
+           )
+
+         :ok = Rheo.ensure_indexes(rheo: :pg_bench)
+         run_cycle.(:pg_bench, "bench-pg-#{System.unique_integer([:positive])}")
+     end
+   end}
+]
+
+bench_rows =
+  Enum.map(candidates, fn {label, fun} ->
+    timed.(label, fun)
+  end)
+
+Enum.each([:ets_bench, :sqlite_bench, :mongo_bench, :redis_bench, :pg_bench], stop_rheo)
+
+Kino.DataTable.new(bench_rows)
+```
+
+Expect **ETS** to lead (in-memory), then roughly Redis / SQLite / Postgres /
+Mongo depending on your machine and Docker latency. Numbers are for relative
+ordering in this notebook — not published SLOs.
+
+---
+
 ## Takeaways
 
 * Swap backends with `{Rheo, backend: …}` — keep Consumer / Query / Event meaning
 * Read **capabilities** for ops decisions; do not weaken fencing in app code
-* Optional packages / deps: Mongo driver, Ecto adapters, Broadway — core stays lean
+* Optional packages / deps: Mongo driver, Redix, Ecto adapters, Broadway — core stays lean
 * Multiple named Rheo instances in one node are fine when handles stay distinct
+* Throughput here is informal; durable / remote backends trade speed for guarantees
 
 HexDocs: [ETS](https://hexdocs.pm/rheo/ets.html) ·
 [Mongo](https://hexdocs.pm/rheo/mongo.html) ·
+[Redis](https://hexdocs.pm/rheo/redis.html) ·
 [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html) ·
-[Article 13](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
-
-<!-- livebook:{"offset":11502,"stamp":{"token":"XCP.gEBjpoR3eSeTCy4Bxt7nZ6RlzlFIbGJjj2_e4TjFnl6_UKmCyFJ_o5r31f3dUQ2MakzfenZTyiWtwWiNG3fYonusWkTKOocgAs-eBnF2Z4jTCHc","version":2}} -->
+[Article 13](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html) ·
+[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)

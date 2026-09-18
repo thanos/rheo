@@ -1,4 +1,4 @@
-# Rheo Livebooks (v0.8.0)
+# Rheo Livebooks (v0.9.0)
 
 ## Section
 
@@ -19,16 +19,16 @@ livebook server notebooks/
 livebook server notebooks/quickstart.livemd
 ```
 
-| Notebook                                          | Story                                                       |
-| ------------------------------------------------- | ----------------------------------------------------------- |
-| [Quickstart](quickstart.livemd)                   | From zero to “I published, fetched, and ACKed an event” |
-| [Concepts & Overview](concepts.livemd)            | Why leases, groups, search, replay, and frontiers exist     |
-| [GenStage, Flow & Broadway](pipelines.livemd)     | Rheo owns delivery; pipelines own topology                  |
-| [ETS, Mongo, SQLite, PostgreSQL](backends.livemd) | Same API, different durability and ops trade-offs           |
+| Notebook                                                 | Story                                                       |
+| -------------------------------------------------------- | ----------------------------------------------------------- |
+| [Quickstart](quickstart.livemd)                          | From zero to “I published, fetched, and ACKed an event” |
+| [Concepts & Overview](concepts.livemd)                   | Why leases, groups, search, replay, and frontiers exist     |
+| [GenStage, Flow & Broadway](pipelines.livemd)            | Rheo owns delivery; pipelines own topology                  |
+| [ETS, Mongo, Redis, SQLite, PostgreSQL](backends.livemd) | Same API, different durability and ops trade-offs           |
 
 **Docker?** Not for Quickstart, Concepts, or Pipelines (they use ETS). The
-Backends notebook optionally talks to Mongo (`docker compose up -d`) and/or
-Postgres (`RHEO_POSTGRES_URL`).
+Backends notebook optionally talks to Mongo / Redis (`docker compose up -d`)
+and/or Postgres (`RHEO_POSTGRES_URL`).
 
 ## What Rheo is (and is not)
 
@@ -38,6 +38,9 @@ backed by a database (or ETS for tests).
 
 Delivery is **at-least-once**. Handlers should be idempotent on `event.id`.
 
+**v0.9** adds optional **Redis Streams** (`{:redix, "~> 1.5"}`) with Model C
+receipts — same Consumer API as ETS/Mongo/Ecto.
+
 Further reading: [Quick Start](https://hexdocs.pm/rheo/quick-start.html) ·
-[0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html) ·
-[Article 15](https://hexdocs.pm/rheo/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.html)
+[0.8 → 0.9 migration](https://hexdocs.pm/rheo/0-8-to-0-9.html) ·
+[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
