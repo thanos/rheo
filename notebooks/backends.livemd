@@ -1,11 +1,11 @@
-# Rheo Backends: ETS, Mnesia, Mongo, SQLite, PostgreSQL, Redis (v0.11.0)
+# Rheo Backends: ETS, Mnesia, Mongo, SQLite, PostgreSQL, Redis
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    # {:rheo, "~> 0.11.0"},
-    {:rheo, path: Path.join(__DIR__, "..")},
+    {:rheo, "~> 0.11.0"},
+    # {:rheo, path: Path.join(__DIR__, "..")},
     {:mongodb_driver, "~> 1.5"},
     {:redix, "~> 1.5"},
     {:ecto_sqlite3, "~> 0.17"},
@@ -735,5 +735,5 @@ HexDocs: [ETS](https://hexdocs.pm/rheo/ets.html) ·
 [Mongo](https://hexdocs.pm/rheo/mongo.html) ·
 [Redis](https://hexdocs.pm/rheo/redis.html) ·
 [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html) ·
-[Article 13](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html) ·
-[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
+[Article 13](https://github.com/thanos/rheo/blob/main/docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md) ·
+[Article 16](https://github.com/thanos/rheo/blob/main/docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md)

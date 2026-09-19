@@ -59,7 +59,7 @@ Redis Streams native backend. v0.8 prepared Model C receipts and the semantic
 contract; v0.9 proves them on Redis without changing `Rheo.Consumer`,
 `Rheo.Event`, or `Rheo.Query` meaning.
 
-See [0.8 → 0.9 migration](https://hexdocs.pm/rheo/0-8-to-0-9.html) and
+See [0.8 → 0.9 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.8-to-0.9.md) and
 [ADR 026](https://hexdocs.pm/rheo/026-redis-streams-backend.html).
 
 ### Added
@@ -84,7 +84,7 @@ replay, GenStage, and Broadway, and validates that the same settlement model
 can support Flow and native-stream backends such as Redis Streams — without
 shipping Redis or Flow yet.
 
-See [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html) and
+See [0.7 → 0.8 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.7-to-0.8.md) and
 [ADR 019](https://hexdocs.pm/rheo/019-v0-8-architectural-reset.html).
 
 ### Added
@@ -170,7 +170,7 @@ Documentation-only release. No runtime API changes. Prefer
 
 GenStage / Broadway interoperability. Additive — `Rheo.Consumer` and
 `Rheo.Group` are unchanged. See
-[0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html).
+[0.6 → 0.7 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.6-to-0.7.md).
 
 ### Added
 
@@ -192,10 +192,10 @@ GenStage / Broadway interoperability. Additive — `Rheo.Consumer` and
   message via `Broadway.Message.configure_ack/2`)
 - Telemetry `[:rheo, :producer, :start | :stop]` and
   `[:rheo, :broadway, :ack | :retry | :reject]`
-- ADR [018](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html); tutorial
-  [article 14](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
+- ADR [018](https://github.com/thanos/rheo/blob/main/docs/adr/018-broadway-genstage-interop.md); tutorial
+  [article 14](https://github.com/thanos/rheo/blob/main/docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md)
 - Livebook Broadway + ETS section;
-  [0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html)
+  [0.6 → 0.7 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.6-to-0.7.md)
 
 ### Changed
 
@@ -209,7 +209,7 @@ GenStage / Broadway interoperability. Additive — `Rheo.Consumer` and
 ## [0.6.0] - 2026-09-16
 
 Ecto SQL backend for PostgreSQL and SQLite.
-See [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html).
+See [0.5 → 0.6 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.5-to-0.6.md).
 
 ### Added
 
@@ -232,9 +232,9 @@ See [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html).
 - Optional `prefix:` to hold the Rheo tables in a PostgreSQL schema
 - Backend conformance runs on SQLite by default and on PostgreSQL when
   `RHEO_POSTGRES_URL` (or `DATABASE_URL`) is set
-- ADR [017](https://hexdocs.pm/rheo/017-ecto-backend.html); tutorial
-  [article 13](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
-- Livebook optional SQLite/Ecto section; [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
+- ADR [017](https://github.com/thanos/rheo/blob/main/docs/adr/017-ecto-backend.md); tutorial
+  [article 13](https://github.com/thanos/rheo/blob/main/docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md)
+- Livebook optional SQLite/Ecto section; [0.5 → 0.6 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.5-to-0.6.md)
 
 ### Changed
 
@@ -248,7 +248,7 @@ See [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html).
 ## [0.5.0] - 2026-09-16
 
 Partitions, per-partition sequences, contiguous ACK frontier, and lag.
-See [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html).
+See [0.4 → 0.5 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.4-to-0.5.md).
 
 ### Added
 
@@ -259,8 +259,8 @@ See [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html).
 - Static Group/Consumer `:partitions` assignment (`:all` or list)
 - Partition-scoped `replay` / `reset_group` (`:partition` / `:partitions`)
 - Capabilities `partitions: true`, `contiguous_frontier: true`
-- ADR [016](https://hexdocs.pm/rheo/016-partitions-and-ack-frontier.html);
-  tutorial [article 12](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
+- ADR [016](https://github.com/thanos/rheo/blob/main/docs/adr/016-partitions-and-ack-frontier.md);
+  tutorial [article 12](https://github.com/thanos/rheo/blob/main/docs/tutorials/12-acks-are-not-a-cursor.md)
 - Livebook section for multi-partition publish, frontier hole, and lag
 
 ### Changed
@@ -285,7 +285,7 @@ See [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html).
 ## [0.4.0] - 2026-09-16
 
 Search, pagination/streaming, replay/reset, and event lineage — additive over
-v0.3.0. See [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html).
+v0.3.0. See [0.3 → 0.4 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.3-to-0.4.md).
 
 ### Added
 
@@ -299,10 +299,10 @@ v0.3.0. See [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html).
 - `Rheo.Event.Lineage` helpers for `correlation_id`, `causation_id`, `producer`,
   `schema`, `schema_version`
 - Telemetry: `[:rheo, :group, :replay]`, `[:rheo, :group, :reset]`
-- ADR [015](https://hexdocs.pm/rheo/015-replay-semantics.html); tutorial
-  [article 11](https://hexdocs.pm/rheo/11-search-and-replay-the-event-history.html)
+- ADR [015](https://github.com/thanos/rheo/blob/main/docs/adr/015-replay-semantics.md); tutorial
+  [article 11](https://github.com/thanos/rheo/blob/main/docs/tutorials/11-search-and-replay-the-event-history.md)
 - Conformance + unit coverage for search/replay on ETS and Mongo
-- [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html)
+- [0.3 → 0.4 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.3-to-0.4.md)
 
 ### Changed
 

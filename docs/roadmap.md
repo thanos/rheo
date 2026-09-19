@@ -36,7 +36,7 @@ Current release: **v0.11.0**. Mnesia backend over the v0.10 ops surface.
 - Query sequence bounds, `query_page` / `stream_query`
 - Replay / `reset_group` (no event copies); `create_group` start cursors
 - `Rheo.Event.Lineage` conventions
-- ADR 015 + Article 11 + [0.3 → 0.4 migration](https://hexdocs.pm/rheo/0-3-to-0-4.html)
+- ADR 015 + Article 11 + [0.3 → 0.4 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.3-to-0.4.md)
 
 ## Done in 0.4.1
 
@@ -49,7 +49,7 @@ Current release: **v0.11.0**. Mnesia backend over the v0.10 ops surface.
 - Contiguous ACK frontier + `Rheo.lag/3`
 - Static Group/Consumer `:partitions` assignment (no auto-rebalance)
 - Partition-scoped `replay` / `reset_group`
-- ADR 016 + Article 12 + [0.4 → 0.5 migration](https://hexdocs.pm/rheo/0-4-to-0-5.html)
+- ADR 016 + Article 12 + [0.4 → 0.5 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.4-to-0.5.md)
 - Docs/Livebook/CHANGELOG links use absolute HexDocs or GitHub URLs for hex.pm
 
 ## Done in 0.6.0
@@ -58,7 +58,7 @@ Current release: **v0.11.0**. Mnesia backend over the v0.10 ops surface.
 - SQL migrations + `mix rheo.ecto.gen_migration`
 - Postgres `FOR UPDATE SKIP LOCKED`; optional `NOTIFY`
 - SQLite durable single-node path; `distributed: false`
-- ADR 017 + Article 13 + [0.5 → 0.6 migration](https://hexdocs.pm/rheo/0-5-to-0-6.html)
+- ADR 017 + Article 13 + [0.5 → 0.6 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.5-to-0.6.md)
 
 ## Done in 0.7.0
 
@@ -67,12 +67,12 @@ Current release: **v0.11.0**. Mnesia backend over the v0.10 ops surface.
 - `Rheo.Broadway.transform/2` + `Rheo.Broadway.Acknowledger` (ack / nack / reject)
 - `Rheo.Producer.confirm/2` so settled leases stop renewing and free demand
 - `Rheo.Consumer` / `Rheo.Group` unchanged — the producer is an alternative surface
-- ADR 018 + Article 14 + [0.6 → 0.7 migration](https://hexdocs.pm/rheo/0-6-to-0-7.html)
+- ADR 018 + Article 14 + [0.6 → 0.7 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.6-to-0.7.md)
 
 ## Done in 0.7.1
 
-- HexDocs **Guides** (Introduction / Advanced / Cookbook) plus Design groups
-  (Architecture, ADRs, Tutorials) and Migrating from previous versions
+- HexDocs sidebar groups for guides, design, and migrations (later slimmed in
+  v0.11 to current docs only; archive stays on GitHub)
 - Mermaid diagrams render on HexDocs
 - Livebook Broadway demo aligned with the published v0.7 API
 
@@ -86,7 +86,7 @@ Current release: **v0.11.0**. Mnesia backend over the v0.10 ops surface.
 - Conformance suite grouped by guarantee, run by ETS, Mongo, Ecto, and a
   native-stream double; failure-injection and property tests on ETS
 - Optional integrations with compile-time guards and a core-only build check; Flow and Redis readiness spikes
-- ADRs 019–025; Article 15; [0.7 → 0.8 migration](https://hexdocs.pm/rheo/0-7-to-0-8.html)
+- ADRs 019–025; Article 15; [0.7 → 0.8 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.7-to-0.8.md)
 
 ## Done in 0.9.0
 
@@ -95,7 +95,7 @@ Current release: **v0.11.0**. Mnesia backend over the v0.10 ops surface.
 - Wakeup contract implemented (ADR 025): reader Task + `wait/2`; polling remains
   fallback
 - Conformance suite tagged `:redis`; docker-compose Redis 7 service
-- [0.8 → 0.9 migration](https://hexdocs.pm/rheo/0-8-to-0-9.html); Redis guide
+- [0.8 → 0.9 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.8-to-0.9.md); Redis guide
 - Article 16 (portable sequence, native PEL)
 
 ## Done in 0.10.0

@@ -66,7 +66,7 @@ stay in the host (no Rheo Nagios binary).
 ## LiveDashboard (optional)
 
 ```elixir
-{:rheo, "~> 0.10.0"},
+{:rheo, "~> 0.11.0"},
 {:phoenix_live_dashboard, "~> 0.8"}
 ```
 

@@ -1,28 +1,27 @@
 # Design Tutorials
 
-Long-form design notes under **Design: Tutorials** (Rheo **v0.9.0**).
+Long-form design essays. Bodies live on GitHub; this index is on HexDocs.
 
-For how-to docs, start with [Guides](https://hexdocs.pm/rheo/quick-start.html).
+For how-to docs, start with [Quick Start](https://hexdocs.pm/rheo/quick-start.html).
 
-1. [Why put consumer groups in front of a database?](https://hexdocs.pm/rheo/01-why-consumer-groups-on-a-database.html)
-2. [What is a consumer group?](https://hexdocs.pm/rheo/02-what-is-a-consumer-group.html)
-3. [Why ACK is harder than it looks](https://hexdocs.pm/rheo/03-why-ack-is-harder.html)
-4. [Building Rheo as an Elixir/OTP library](https://hexdocs.pm/rheo/04-rheo-as-otp-library.html)
-5. [Demand, backpressure, and database consumers](https://hexdocs.pm/rheo/05-demand-and-backpressure.html)
-6. [MongoDB as a searchable event log](https://hexdocs.pm/rheo/06-mongodb-searchable-event-log.html)
-7. [Killing consumers on purpose](https://hexdocs.pm/rheo/07-killing-consumers.html)
-8. [Searching the stream](https://hexdocs.pm/rheo/08-searching-the-stream.html)
-9. [Why Rheo 0.2 broke its 0.1 API](https://hexdocs.pm/rheo/09-why-rheo-0-2-broke-its-0-1-api.html)
-10. [If Rheo really is database-agnostic, prove it with ETS](https://hexdocs.pm/rheo/10-if-rheo-is-database-agnostic-prove-it-with-ets.html)
-11. [Search and replay the event history](https://hexdocs.pm/rheo/11-search-and-replay-the-event-history.html)
-12. [ACKs are not a cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html) — partitions, frontier, lag
-13. [One consumer API, PostgreSQL and SQLite underneath](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
-14. [Rheo is not Broadway — it feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
-15. [Breaking Rheo before anyone depends on the wrong abstraction](https://hexdocs.pm/rheo/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.html)
-16. [Rheo on Redis Streams: portable sequence, native PEL](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
+1. [Why put consumer groups in front of a database?](https://github.com/thanos/rheo/blob/main/docs/tutorials/01-why-consumer-groups-on-a-database.md)
+2. [What is a consumer group?](https://github.com/thanos/rheo/blob/main/docs/tutorials/02-what-is-a-consumer-group.md)
+3. [Why ACK is harder than it looks](https://github.com/thanos/rheo/blob/main/docs/tutorials/03-why-ack-is-harder.md)
+4. [Building Rheo as an Elixir/OTP library](https://github.com/thanos/rheo/blob/main/docs/tutorials/04-rheo-as-otp-library.md)
+5. [Demand, backpressure, and database consumers](https://github.com/thanos/rheo/blob/main/docs/tutorials/05-demand-and-backpressure.md)
+6. [MongoDB as a searchable event log](https://github.com/thanos/rheo/blob/main/docs/tutorials/06-mongodb-searchable-event-log.md)
+7. [Killing consumers on purpose](https://github.com/thanos/rheo/blob/main/docs/tutorials/07-killing-consumers.md)
+8. [Searching the stream](https://github.com/thanos/rheo/blob/main/docs/tutorials/08-searching-the-stream.md)
+9. [Why Rheo 0.2 broke its 0.1 API](https://github.com/thanos/rheo/blob/main/docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md)
+10. [If Rheo really is database-agnostic, prove it with ETS](https://github.com/thanos/rheo/blob/main/docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md)
+11. [Search and replay the event history](https://github.com/thanos/rheo/blob/main/docs/tutorials/11-search-and-replay-the-event-history.md)
+12. [ACKs are not a cursor](https://github.com/thanos/rheo/blob/main/docs/tutorials/12-acks-are-not-a-cursor.md) — partitions, frontier, lag
+13. [One consumer API, PostgreSQL and SQLite underneath](https://github.com/thanos/rheo/blob/main/docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md)
+14. [Rheo is not Broadway — it feeds Broadway](https://github.com/thanos/rheo/blob/main/docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md)
+15. [Breaking Rheo before anyone depends on the wrong abstraction](https://github.com/thanos/rheo/blob/main/docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md)
+16. [Rheo on Redis Streams: portable sequence, native PEL](https://github.com/thanos/rheo/blob/main/docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md)
 
 Hands-on: [Livebook demos](https://hexdocs.pm/rheo/rheo_demo.html)
 ([source index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)).
-Migrations: [0.8 → 0.9](https://hexdocs.pm/rheo/0-8-to-0-9.html) ·
-[0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) ·
-[0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html).
+
+Upgrading: [Upgrading index](https://hexdocs.pm/rheo/upgrading.html).

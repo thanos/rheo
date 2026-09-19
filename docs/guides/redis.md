@@ -55,6 +55,6 @@ docker compose up -d redis
 export RHEO_REDIS_URL=redis://localhost:6379
 ```
 
-See [0.8 → 0.9 migration](https://hexdocs.pm/rheo/0-8-to-0-9.html),
+See [0.8 → 0.9 migration](https://github.com/thanos/rheo/blob/main/docs/migrations/0.8-to-0.9.md),
 [ADR 026](https://hexdocs.pm/rheo/026-redis-streams-backend.html), and
-[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html).
+[Article 16](https://github.com/thanos/rheo/blob/main/docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md).

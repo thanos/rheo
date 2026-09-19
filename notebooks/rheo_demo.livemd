@@ -1,4 +1,4 @@
-# Rheo Livebooks (v0.10.0)
+# Rheo Livebooks
 
 ## Section
 
@@ -17,7 +17,7 @@ Open this folder from a **clone of the repo** so each notebook's
 livebook server notebooks/
 # or jump straight in:
 livebook server notebooks/quickstart.livemd
-# ops functionality (v0.10):
+# ops surface (v0.10+):
 livebook server notebooks/ops.livemd
 # real LiveDashboard page via Phoenix Playground:
 livebook server notebooks/live_dashboard.livemd
@@ -27,7 +27,7 @@ livebook server notebooks/live_dashboard.livemd
 | -------------------------------------------------------- | ----------------------------------------------------------- |
 | [Quickstart](quickstart.livemd)                          | From zero to “I published, fetched, and ACKed an event” |
 | [Concepts & Overview](concepts.livemd)                   | Why leases, groups, search, replay, and frontiers exist     |
-| [Ops: inventory, lag, DLQ](ops.livemd)                   | v0.10 inspect APIs — list, health, dead letters             |
+| [Ops: inventory, lag, DLQ](ops.livemd)                   | Inspect APIs — list, health, dead letters                   |
 | [LiveDashboard (Playground)](live_dashboard.livemd)      | Real `Rheo.LiveDashboard.Page` via Phoenix Playground       |
 | [GenStage, Flow & Broadway](pipelines.livemd)            | Rheo owns delivery; pipelines own topology                  |
 | [ETS, Mnesia, Mongo, Redis, SQLite, PostgreSQL](backends.livemd) | Same API, different durability and ops trade-offs           |
@@ -44,7 +44,7 @@ backed by a database (or ETS for tests).
 
 Delivery is **at-least-once**. Handlers should be idempotent on `event.id`.
 
-**v0.10** adds inspect ops (`list_streams`, `group_info`, `dead_letters`, Mix
+**v0.10+** adds inspect ops (`list_streams`, `group_info`, `dead_letters`, Mix
 tasks, optional LiveDashboard) without a control plane — see
 [ops.livemd](ops.livemd) and [ADR 027](https://hexdocs.pm/rheo/027-ops-surface.html).
 

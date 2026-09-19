@@ -1,15 +1,19 @@
 # Architecture
 
-Rheo v0.8.0 is an embedded Elixir/OTP library. Durable truth lives in the
-backend (MongoDB, PostgreSQL/SQLite via Ecto, or ETS for ephemeral use). OTP
-owns process lifecycle and concurrency, not consumer-group correctness.
+Rheo is an embedded Elixir/OTP library. Durable truth lives in the backend;
+OTP owns process lifecycle and concurrency, not consumer-group correctness.
+
+Shipping backends: **ETS** (ephemeral), **Mnesia** (single-node `disc_copies`),
+**MongoDB**, **PostgreSQL / SQLite** via host-owned Ecto, and **Redis Streams**.
+Multi-node competing groups need a shared store (Redis or Postgres); ETS,
+SQLite, and Mnesia v0.11 are single-node (`distributed: false`).
 
 ```text
 Application Supervision Tree
         |
         +-- MyApp.Repo                    (when using Ecto — host-owned)
         +-- Rheo (named instance Supervisor)
-        |     +-- Backend handle (Mongo | Ecto.Server | ETS)
+        |     +-- Backend handle (ETS | Mnesia | Mongo | Ecto | Redis)
         |     +-- Rheo.Instance           (backend module + handle)
         |     +-- Task.Supervisor         (handler tasks)
         |     +-- Rheo.GroupSupervisor    (dynamically started groups only)
@@ -86,38 +90,32 @@ tasks with `:concurrency`. Groups may take a static `:partitions` assignment
 fetches at most `min(demand, max_demand - inflight)` leases, renews what is
 inflight, and releases entries through `Rheo.Producer.ack/3`, `nack/4`,
 `reject/4` (or `confirm/2`). Pipeline concurrency belongs to Broadway
-(ADR 018).
+([ADR 018](https://github.com/thanos/rheo/blob/main/docs/adr/018-broadway-genstage-interop.md)).
 
 ## Backend boundary
 
 `Rheo.Backend` defines semantic operations over an opaque `handle` plus a
 validated `Rheo.Backend.Capabilities` declaration (guarantees vs mechanisms,
-ADR 023). Implementations: `Rheo.Backend.Mongo`, `Rheo.Backend.Ecto`
-(PostgreSQL / SQLite), and `Rheo.Backend.ETS`; a native-stream test double
-proves the contract does not assume delivery rows (ADR 024). Queries use
+[ADR 023](https://hexdocs.pm/rheo/023-backend-capabilities-v2.html)).
+Implementations: `Rheo.Backend.ETS`, `Rheo.Backend.Mnesia`, `Rheo.Backend.Mongo`,
+`Rheo.Backend.Ecto` (PostgreSQL / SQLite), and `Rheo.Backend.Redis`. Queries use
 portable `%Rheo.Query{}` with pagination (`query_page` / `stream_query`).
-Replay/reset re-drive per-group deliveries without copying events (ADR 015).
-Partitions use per-partition sequences and a contiguous ACK frontier (ADR 016).
-Ecto uses a host-owned Repo (ADR 017).
+Replay/reset re-drive per-group deliveries without copying events.
+Partitions use per-partition sequences and a contiguous ACK frontier.
 
 ## Optional integrations
 
-`rheo` is one package. `Rheo.Backend.Mongo`, `Rheo.Backend.Ecto`,
-`Rheo.Producer`, and `Rheo.Broadway` are compiled only when the host lists
-`mongodb_driver`, `ecto_sql`, `gen_stage`, or `broadway`; core depends on
-`telemetry` and `jason` only. `mix core.check` builds a project on Rheo with
-none of them (ADR 020).
+`rheo` is one package. Mongo, Ecto, Redis, Producer, and Broadway modules compile
+only when the host lists the matching optional deps; core depends on
+`telemetry` and `jason` only (`:mnesia` is OTP, loaded via included applications).
+`mix core.check` builds a project on Rheo with none of the Hex optionals
+([ADR 020](https://hexdocs.pm/rheo/020-package-and-dependency-boundaries.html)).
 
 ## Try it
 
 - CLI: `mix rheo.demo`
 - Interactive: [Livebook demos](https://hexdocs.pm/rheo/rheo_demo.html)
   ([source index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd))
-- Migrations: [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) ·
-  [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) ·
-  [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) ·
-  [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html) ·
-  [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) ·
-  [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html)
+- Upgrading: [Upgrading](https://hexdocs.pm/rheo/upgrading.html)
 - Changelog: [CHANGELOG](https://hexdocs.pm/rheo/changelog.html)
 - Roadmap: [roadmap](https://hexdocs.pm/rheo/roadmap.html)

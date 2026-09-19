@@ -1,10 +1,10 @@
-# Rheo Concepts & Overview (v0.9.0)
+# Rheo Concepts & Overview
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.10.0"},
+    {:rheo, "~> 0.11.0"},
     # {:rheo, path: Path.join(__DIR__, "..")},
     {:kino, "~> 0.14"}
   ],
@@ -183,7 +183,7 @@ This is the heart of Rheo's at-least-once + fencing model. Redis Streams uses
 the same story: `lease.receipt` carries the native stream entry id while
 `lease_id` remains the fencing token
 ([ADR 021](https://hexdocs.pm/rheo/021-logical-sequence-and-native-delivery-receipts.html),
-[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)).
+[Article 16](https://github.com/thanos/rheo/blob/main/docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md)).
 Try it in [Backends](backends.livemd).
 
 ---
@@ -441,7 +441,7 @@ reflects that hole until 2 is settled.
 }
 ```
 
-See [Article 12 — ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html).
+See [Article 12 — ACKs Are Not a Cursor](https://github.com/thanos/rheo/blob/main/docs/tutorials/12-acks-are-not-a-cursor.md).
 
 ---
 
@@ -503,5 +503,5 @@ Next: [Pipelines](pipelines.livemd) · [Backends](backends.livemd)
 
 HexDocs: [Replay](https://hexdocs.pm/rheo/replay.html) ·
 [Partitions and lag](https://hexdocs.pm/rheo/partitions-and-lag.html) ·
-[Article 12](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html) ·
-[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
+[Article 12](https://github.com/thanos/rheo/blob/main/docs/tutorials/12-acks-are-not-a-cursor.md) ·
+[Article 16](https://github.com/thanos/rheo/blob/main/docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md)

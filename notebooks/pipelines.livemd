@@ -1,10 +1,10 @@
-# Rheo GenStage, Flow & Broadway (v0.9.0)
+# Rheo Pipelines: GenStage, Flow & Broadway
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.10.0"},
+    {:rheo, "~> 0.11.0"},
     # {:rheo, path: Path.join(__DIR__, "..")},
     {:kino, "~> 0.14"},
     {:broadway, "~> 1.3"},
@@ -426,6 +426,6 @@ Next: [Backends](backends.livemd)
 
 HexDocs: [GenStage](https://hexdocs.pm/rheo/genstage.html) ·
 [Broadway](https://hexdocs.pm/rheo/broadway.html) ·
-[Flow spike](https://hexdocs.pm/rheo/flow-readiness-spike.html) ·
-[Article 14](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html) ·
-[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
+[Flow spike](https://github.com/thanos/rheo/blob/main/docs/design/flow-readiness-spike.md) ·
+[Article 14](https://github.com/thanos/rheo/blob/main/docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md) ·
+[Article 16](https://github.com/thanos/rheo/blob/main/docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md)
