@@ -75,13 +75,13 @@ defmodule Rheo.MixProject do
           "docs/tutorials.md"
         ],
         groups_for_extras: [
-          "Start": [
+          Start: [
             "README.md",
             "LICENSE",
             "docs/guides/quick-start.md",
             "CHANGELOG.md"
           ],
-          "Livebooks": [
+          Livebooks: [
             "notebooks/rheo_demo.livemd",
             "notebooks/quickstart.livemd",
             "notebooks/concepts.livemd",
@@ -90,7 +90,7 @@ defmodule Rheo.MixProject do
             "notebooks/pipelines.livemd",
             "notebooks/backends.livemd"
           ],
-          "Guides": [
+          Guides: [
             "docs/guides/configuration.md",
             "docs/guides/consumer-groups.md",
             "docs/guides/enqueuing.md",
@@ -100,7 +100,7 @@ defmodule Rheo.MixProject do
             "docs/guides/partitions-and-lag.md",
             "docs/guides/ops.md"
           ],
-          "Backends": [
+          Backends: [
             "docs/guides/ets.md",
             "docs/guides/mnesia.md",
             "docs/guides/mongo.md",
@@ -108,16 +108,16 @@ defmodule Rheo.MixProject do
             "docs/guides/redis.md",
             "docs/guides/building-your-own-backend.md"
           ],
-          "Pipelines": [
+          Pipelines: [
             "docs/guides/broadway.md",
             "docs/guides/genstage.md"
           ],
-          "Upgrading": [
+          Upgrading: [
             "docs/upgrading.md",
             "docs/migrations/0.9-to-0.10.md",
             "docs/migrations/0.10-to-0.11.md"
           ],
-          "Design": [
+          Design: [
             "docs/architecture.md",
             "docs/diagrams.md",
             "docs/roadmap.md",
