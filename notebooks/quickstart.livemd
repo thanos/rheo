@@ -249,7 +249,7 @@ group (that returns an error). Concepts notebook shows the rejection.
 
 * [Concepts & Overview](concepts.livemd) — fencing races, search, replay, partitions
 * [GenStage, Flow & Broadway](pipelines.livemd) — demand-driven pipelines
-* [Backends](backends.livemd) — ETS / Mongo / Redis / SQLite / Postgres
+* [Backends](backends.livemd) — ETS / Mnesia / Mongo / Redis / SQLite / Postgres
 
 HexDocs: [Quick Start](https://hexdocs.pm/rheo/quick-start.html) ·
 [Consumer groups](https://hexdocs.pm/rheo/consumer-groups.html) ·

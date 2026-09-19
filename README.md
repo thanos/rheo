@@ -6,11 +6,12 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.10.0** — Durable consumer-group semantics over searchable stores.
-Backends: **Redis Streams**, **MongoDB**, **PostgreSQL / SQLite** (host-owned
-`Ecto.Repo`), and **ETS** (ephemeral). Rheo is an Elixir/OTP library you embed
-in your supervision tree, not a standalone messaging server. Consume with
-`Rheo.Consumer` or feed a **Broadway** pipeline with `Rheo.Producer`.
+**v0.11.0** — Durable consumer-group semantics over searchable stores.
+Backends: **Mnesia** (single-node `disc_copies`), **Redis Streams**, **MongoDB**,
+**PostgreSQL / SQLite** (host-owned `Ecto.Repo`), and **ETS** (ephemeral). Rheo
+is an Elixir/OTP library you embed in your supervision tree, not a standalone
+messaging server. Consume with `Rheo.Consumer` or feed a **Broadway** pipeline
+with `Rheo.Producer`.
 
 **Delivery guarantee:** at-least-once. Duplicates are possible after failures —
 use stable event IDs for idempotency. Ordering is guaranteed **within a
@@ -206,7 +207,7 @@ Interactive walkthroughs (open from a clone in
 | [Ops](https://github.com/thanos/rheo/blob/main/notebooks/ops.livemd) | Inventory, lag, group health, dead letters (v0.10) |
 | [LiveDashboard](https://github.com/thanos/rheo/blob/main/notebooks/live_dashboard.livemd) | Control panel + real Rheo LiveDashboard via Phoenix Playground |
 | [Pipelines](https://github.com/thanos/rheo/blob/main/notebooks/pipelines.livemd) | GenStage, Flow, Broadway |
-| [Backends](https://github.com/thanos/rheo/blob/main/notebooks/backends.livemd) | ETS, Mongo, SQLite, PostgreSQL |
+| [Backends](https://github.com/thanos/rheo/blob/main/notebooks/backends.livemd) | ETS, Mnesia, Mongo, SQLite, PostgreSQL |
 
 ### Ops control & LiveDashboard
 
@@ -228,6 +229,7 @@ CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
 
 Upgrading:
 
+- [0.10 → 0.11](https://hexdocs.pm/rheo/0-10-to-0-11.html) (Mnesia backend)
 - [0.9 → 0.10](https://hexdocs.pm/rheo/0-9-to-0-10.html) (ops surface)
 - [0.8 → 0.9](https://hexdocs.pm/rheo/0-8-to-0-9.html) (Redis Streams backend)
 - [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) (architectural reset)
@@ -258,8 +260,10 @@ because those files are not in the Hex tarball.
   [GenStage](https://hexdocs.pm/rheo/genstage.html) ·
   [Building your own backend](https://hexdocs.pm/rheo/building-your-own-backend.html)
 - Cookbook: [ETS](https://hexdocs.pm/rheo/ets.html) ·
+  [Mnesia](https://hexdocs.pm/rheo/mnesia.html) ·
   [Mongo](https://hexdocs.pm/rheo/mongo.html) ·
-  [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html)
+  [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html) ·
+  [Redis](https://hexdocs.pm/rheo/redis.html)
 - [Livebook demos](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs index](https://hexdocs.pm/rheo/rheo_demo.html)) — Quickstart, Concepts, Ops, LiveDashboard, Pipelines, Backends
 - [Changelog](https://hexdocs.pm/rheo/changelog.html)
 
@@ -460,8 +464,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.7.1** | HexDocs Guides + Mermaid; Livebook Broadway section |
 | **0.8.0** | Architectural reset: read-only handler context, single group owner, lease receipts, typed capabilities, settlement vocabulary, Redis/Flow readiness |
 | **0.9.0** | Redis Streams native backend (optional `redix`); wakeup contract |
-| **0.10.0** (current) | Ops surface: dead-letter (DLQ) inspect, inventory, group health, optional LiveDashboard, Mix tasks |
-| **0.11.0** | Mnesia / BEAM-native distributed backend |
+| **0.10.0** | Ops surface: dead-letter (DLQ) inspect, inventory, group health, optional LiveDashboard, Mix tasks |
+| **0.11.0** (current) | Mnesia backend: durable ETS-shaped single-node `disc_copies` |
 | **0.12.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 

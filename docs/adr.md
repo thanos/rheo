@@ -29,3 +29,4 @@ Architectural decision records (HexDocs: **Design: ADRs**):
 25. [Backend wakeup contract](https://hexdocs.pm/rheo/025-backend-wakeup-contract.html)
 26. [Redis Streams backend](https://hexdocs.pm/rheo/026-redis-streams-backend.html)
 27. [Ops surface for an embedded Rheo](https://hexdocs.pm/rheo/027-ops-surface.html)
+28. [Mnesia backend](https://hexdocs.pm/rheo/028-mnesia-backend.html)

@@ -30,11 +30,11 @@ livebook server notebooks/live_dashboard.livemd
 | [Ops: inventory, lag, DLQ](ops.livemd)                   | v0.10 inspect APIs — list, health, dead letters             |
 | [LiveDashboard (Playground)](live_dashboard.livemd)      | Real `Rheo.LiveDashboard.Page` via Phoenix Playground       |
 | [GenStage, Flow & Broadway](pipelines.livemd)            | Rheo owns delivery; pipelines own topology                  |
-| [ETS, Mongo, Redis, SQLite, PostgreSQL](backends.livemd) | Same API, different durability and ops trade-offs           |
+| [ETS, Mnesia, Mongo, Redis, SQLite, PostgreSQL](backends.livemd) | Same API, different durability and ops trade-offs           |
 
 **Docker?** Not for Quickstart, Concepts, Ops, LiveDashboard, or Pipelines
-(they use ETS). The Backends notebook optionally talks to Mongo / Redis
-(`docker compose up -d`) and/or Postgres (`RHEO_POSTGRES_URL`).
+(they use ETS). The Backends notebook also runs Mnesia without Docker; Mongo /
+Redis need `docker compose up -d`, Postgres needs `RHEO_POSTGRES_URL`.
 
 ## What Rheo is (and is not)
 

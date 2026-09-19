@@ -72,13 +72,33 @@ retry and reject, replay, partitions and frontier. Correctness cases always
 run; only cases for guarantees you do not declare are skipped. Shipping a
 backend without the contract suite is unsupported.
 
+## Multi-node (several BEAM nodes)
+
+**Node** = one BEAM VM. Rheo itself does not form a cluster: each node runs its
+own Groups; a **shared durable backend** arbitrates leases when several nodes
+fetch the same group (`capabilities.guarantees.distributed`).
+
+| Backend | Several BEAM nodes, same group? | Notes |
+|---|---|---|
+| **Redis** | Yes (`distributed: true`) | Shared Redis; native PEL / reclaim |
+| **Ecto PostgreSQL** | Yes (`distributed: true`) | Shared DB; `FOR UPDATE SKIP LOCKED` |
+| **Ecto SQLite** | No (`distributed: false`) | Single-writer |
+| **Mongo** | Cap `distributed: false` today | Shared Mongo can back multiple nodes in practice; capability stays conservative |
+| **ETS** | No | Tables die with the node |
+| **Mnesia** | No in v0.11 (`distributed: false`) | Single-node `disc_copies`; multi-node table copies later — still not a Rheo control plane |
+
+That is **not** the same as multiple partitions, multiple consumers on one node,
+or several named `{Rheo, name: …}` instances on one node (all already supported).
+
 ## Reference implementations
 
 | Module | Role |
 |---|---|
 | `Rheo.Backend.ETS` | In-memory reference (ephemeral) |
+| `Rheo.Backend.Mnesia` | Durable ETS-shaped store (OTP `:mnesia`, single-node) |
 | `Rheo.Backend.Mongo` | Durable document store |
 | `Rheo.Backend.Ecto` | Durable SQL via a host-owned Repo |
+| `Rheo.Backend.Redis` | Redis Streams (optional `redix`) |
 | `Rheo.Backend.NativeStreamDouble` (test support) | Native-stream shape: receipts, native reclaim |
 
 Start from ETS to learn the state machine. For a native-stream store, start
@@ -86,4 +106,5 @@ from the double: it keeps the portable `event.sequence` and fences on both
 `lease_id` and `receipt`.
 
 ADRs: [005](005-backend-boundary.html), [021](021-logical-sequence-and-native-delivery-receipts.html),
-[023](023-backend-capabilities-v2.html), [024](024-backend-contract-v2.html).
+[023](023-backend-capabilities-v2.html), [024](024-backend-contract-v2.html),
+[028](028-mnesia-backend.html).

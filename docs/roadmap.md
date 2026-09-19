@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.10.0**. Ops surface over the v0.9 backends.
+Current release: **v0.11.0**. Mnesia backend over the v0.10 ops surface.
 
 ## Done in 0.1.0
 
@@ -105,10 +105,18 @@ Current release: **v0.10.0**. Ops surface over the v0.9 backends.
   formalized benchmarks
 - [0.9 → 0.10 migration](https://hexdocs.pm/rheo/0-9-to-0-10.html)
 
-## Next (0.11+)
+## Done in 0.11.0
 
-- Mnesia / BEAM-native distributed backend (deferred from 0.10)
+- `Rheo.Backend.Mnesia` — durable ETS-shaped OTP `:mnesia` store, single-node
+  `disc_copies` (`durable: true`, `distributed: false`) (ADR 028)
+- Multi-node backend comparison documented (Redis / Postgres yes; ETS / SQLite /
+  Mnesia v0.11 no)
+- [0.10 → 0.11 migration](https://hexdocs.pm/rheo/0-10-to-0-11.html)
+
+## Next (0.12+)
+
 - API freeze candidate (0.12)
+- Multi-node Mnesia table copies (backend arbitration only — not a Rheo cluster)
 - Article candidate: Rheo + Flow settlement narrative
 
 ## Explicitly deferred

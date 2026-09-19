@@ -25,6 +25,9 @@ defmodule Rheo.Backend.Capabilities do
   | `:contiguous_frontier` | `Rheo.lag/3` reports a contiguous ACK frontier |
   | `:replay` | `Rheo.replay/3` and `Rheo.reset_group/3` are supported |
 
+  See the [building your own backend](building-your-own-backend.html) guide for a
+  per-backend comparison (Redis / Postgres yes; ETS / SQLite / Mnesia v0.11 no).
+
   ## Mechanisms
 
   | Key | Meaning |

@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.10.0"
+  @version "0.11.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -17,7 +17,9 @@ defmodule Rheo.MixProject do
       dialyzer: [
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",
-        plt_add_apps: [:ex_unit, :mix],
+        # `:mnesia` is included_applications (loaded, not auto-started) — add to PLT
+        # so Dialyzer sees OTP APIs without putting it in extra_applications.
+        plt_add_apps: [:ex_unit, :mix, :mnesia],
         flags: [:error_handling]
       ],
       docs: [
@@ -45,6 +47,7 @@ defmodule Rheo.MixProject do
           "docs/guides/querying.md",
           "docs/guides/partitions-and-lag.md",
           "docs/guides/ets.md",
+          "docs/guides/mnesia.md",
           "docs/guides/mongo.md",
           "docs/guides/using-ecto.md",
           "docs/guides/redis.md",
@@ -60,6 +63,7 @@ defmodule Rheo.MixProject do
           "docs/migrations/0.7-to-0.8.md",
           "docs/migrations/0.8-to-0.9.md",
           "docs/migrations/0.9-to-0.10.md",
+          "docs/migrations/0.10-to-0.11.md",
           "docs/architecture.md",
           "docs/architecture-review-v0.7.md",
           "docs/roadmap.md",
@@ -94,6 +98,7 @@ defmodule Rheo.MixProject do
           "docs/adr/025-backend-wakeup-contract.md",
           "docs/adr/026-redis-streams-backend.md",
           "docs/adr/027-ops-surface.md",
+          "docs/adr/028-mnesia-backend.md",
           "docs/tutorials.md",
           "docs/tutorials/01-why-consumer-groups-on-a-database.md",
           "docs/tutorials/02-what-is-a-consumer-group.md",
@@ -139,6 +144,7 @@ defmodule Rheo.MixProject do
           ],
           "Guides: Cookbook": [
             "docs/guides/ets.md",
+            "docs/guides/mnesia.md",
             "docs/guides/mongo.md",
             "docs/guides/using-ecto.md",
             "docs/guides/redis.md"
@@ -151,7 +157,8 @@ defmodule Rheo.MixProject do
             "docs/migrations/0.6-to-0.7.md",
             "docs/migrations/0.7-to-0.8.md",
             "docs/migrations/0.8-to-0.9.md",
-            "docs/migrations/0.9-to-0.10.md"
+            "docs/migrations/0.9-to-0.10.md",
+            "docs/migrations/0.10-to-0.11.md"
           ],
           "Design: Architecture": [
             "docs/architecture.md",
@@ -189,7 +196,8 @@ defmodule Rheo.MixProject do
             "docs/adr/024-backend-contract-v2.md",
             "docs/adr/025-backend-wakeup-contract.md",
             "docs/adr/026-redis-streams-backend.md",
-            "docs/adr/027-ops-surface.md"
+            "docs/adr/027-ops-surface.md",
+            "docs/adr/028-mnesia-backend.md"
           ],
           "Design: Tutorials": [
             "docs/tutorials.md",
@@ -237,7 +245,11 @@ defmodule Rheo.MixProject do
 
   def application do
     [
+      # Load OTP `:mnesia` without auto-starting it. Auto-start creates a ram
+      # schema; recycling via `:mnesia.stop/0` breaks Livebook (Logger `:epipe`).
+      # `Rheo.Backend.Mnesia` starts `:mnesia` after `:dir` / disc schema are set.
       extra_applications: [:logger],
+      included_applications: [:mnesia],
       mod: {Rheo.Application, []}
     ]
   end
@@ -362,8 +374,9 @@ defmodule Rheo.MixProject do
 
   defp description do
     "Durable, searchable, replayable consumer-group semantics over storage " <>
-      "systems (MongoDB, PostgreSQL/SQLite via Ecto, ETS): leases, fencing, " <>
-      "partitions, frontier, lag, replay, and a GenStage/Broadway producer."
+      "systems (MongoDB, Redis Streams, PostgreSQL/SQLite via Ecto, Mnesia, ETS): " <>
+      "leases, fencing, partitions, frontier, lag, replay, ops inspect, and a " <>
+      "GenStage/Broadway producer."
   end
 
   defp package do

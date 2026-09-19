@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-09-19
+
+Mnesia backend: durable ETS-shaped OTP `:mnesia` store (single-node
+`disc_copies`). No Consumer / Event / Query breaks.
+
+See [0.10 → 0.11 migration](https://hexdocs.pm/rheo/0-10-to-0-11.html) and
+[ADR 028](https://hexdocs.pm/rheo/028-mnesia-backend.html).
+
+### Added
+
+- `Rheo.Backend.Mnesia` (`durable: true`, `distributed: false`) with full
+  Backend + ops inspect callbacks
+- Mnesia guide; multi-node backend comparison in building-your-own-backend /
+  configuration / capabilities docs
+- ADR 028; migration `0.10-to-0.11`
+
+### Changed
+
+- Roadmap: Mnesia is 0.11; API freeze remains 0.12; multi-node Mnesia deferred
+- Version bump only for hosts that do not opt into the Mnesia backend
+
 ## [0.10.0] - 2026-09-18
 
 Ops surface for an embedded Rheo. Inventory, dead-letter (DLQ) listing, group

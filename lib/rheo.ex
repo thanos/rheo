@@ -18,9 +18,11 @@ defmodule Rheo do
   A Rheo instance runs on one `Rheo.Backend`:
 
     * `Rheo.Backend.ETS` — in-memory, ephemeral; always available
+    * `Rheo.Backend.Mnesia` — durable OTP `:mnesia` (`disc_copies`, single-node)
     * `Rheo.Backend.Mongo` — MongoDB; requires `mongodb_driver`
     * `Rheo.Backend.Ecto` — PostgreSQL or SQLite on a host-owned `Ecto.Repo`;
       requires `ecto_sql` and the repo's adapter
+    * `Rheo.Backend.Redis` — Redis Streams; requires `redix`
 
   Integration modules compile only when their dependency is present
   (ADR 020).
