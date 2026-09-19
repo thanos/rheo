@@ -4,8 +4,8 @@
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    # {:rheo, "~> 0.10.0"},
-    {:rheo, path: Path.join(__DIR__, "..")},
+    {:rheo, "~> 0.10.0"},
+    # {:rheo, path: Path.join(__DIR__, "..")},
     {:phoenix_playground, "~> 0.1.9"},
     {:phoenix_live_dashboard, "~> 0.8"}
   ],
@@ -21,12 +21,9 @@ Boots a **single-file Phoenix app** with
 [Phoenix Playground](https://hex.pm/packages/phoenix_playground):
 
 * Control panel — toggle a **publisher**, toggle **risk** / **billing** consumers,
-  watch the **stream tail**
+  watch the **stream tail** (`dlq` / dead letters = deliveries parked after
+  reject or max attempts)
 * LiveDashboard — real `Rheo.LiveDashboard.Page` at `/dashboard/rheo`
-
-![Rheo ops control panel](https://raw.githubusercontent.com/thanos/rheo/main/docs/screenshots/Rheo-Screenshot-Example-Control.jpg)
-
-![Rheo LiveDashboard — group health](https://raw.githubusercontent.com/thanos/rheo/main/docs/screenshots/Rheo-Screenshot-LiveDashboard.jpg)
 
 Sibling: [Ops APIs](ops.livemd) · [Index](rheo_demo.livemd) ·
 `examples/live_dashboard_ops.exs`
@@ -198,7 +195,7 @@ defmodule Demo.ControlLive do
               </span>
             </div>
             <p class="stats">
-              lag={@risk_info.lag} · inflight={@risk_info.inflight} · dlq={@risk_info.dead}
+              lag={@risk_info.lag} · inflight={@risk_info.inflight} · dlq(dead letters)={@risk_info.dead}
             </p>
           </div>
           <div class="card-ish">
@@ -216,7 +213,7 @@ defmodule Demo.ControlLive do
               </span>
             </div>
             <p class="stats">
-              lag={@billing_info.lag} · inflight={@billing_info.inflight} · dlq={@billing_info.dead}
+              lag={@billing_info.lag} · inflight={@billing_info.inflight} · dlq(dead letters)={@billing_info.dead}
             </p>
           </div>
         </div>

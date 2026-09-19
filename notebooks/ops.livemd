@@ -1,11 +1,11 @@
-# Rheo Ops: inventory, lag, DLQ (v0.10.0)
+# Rheo Ops: inventory, lag, dead letters / DLQ (v0.10.0)
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    # {:rheo, "~> 0.10.0"},
-    {:rheo, path: Path.join(__DIR__, "..")},
+    {:rheo, "~> 0.10.0"},
+    # {:rheo, path: Path.join(__DIR__, "..")},
     {:kino, "~> 0.14"}
   ],
   config: [
@@ -24,12 +24,17 @@ Mix.install(
 v0.10 adds a **library-first ops surface** (ADR 027): inspect APIs that answer
 the day-two questions without a Rheo control plane or a second settle path.
 
+**DLQ** = **dead-letter queue**: poison or exhausted deliveries parked for a
+group (after `reject` / max attempts). The stream event remains; only that
+group’s delivery is dead-lettered. Ops can list them (`Rheo.dead_letters/3`);
+recovery is still `replay` / `reset_group`, not a dashboard settle.
+
 You will:
 
 1. Start Rheo on **ETS** (no Docker)
 2. Create streams / groups and publish work
 3. Inspect **inventory**, **lag**, and **group health**
-4. **Reject** a poison event and list **dead letters**
+4. **Reject** a poison event and list **dead letters** (DLQ)
 5. Recover with **replay** (still the only mutation path for reopen)
 
 Inspect is **read-only**. Settle stays on `ack` / `nack` / `reject` / `replay` /
@@ -177,10 +182,11 @@ Kino.DataTable.new([
 
 ---
 
-## 5. Dead letters — `dead_letters/3`
+## 5. Dead letters (DLQ) — `dead_letters/3`
 
-Portable `%Rheo.DeadLetter{}` rows (ETS/Mongo/Ecto flip delivery status; Redis
-uses a DLQ stream — same inspect shape).
+**Dead letters** are the group’s DLQ: deliveries that will not be fetched again
+until you replay/reset. Portable `%Rheo.DeadLetter{}` rows (ETS/Mongo/Ecto flip
+delivery status; Redis uses a DLQ stream — same inspect shape).
 
 ```elixir
 {:ok, dead} = Rheo.dead_letters(orders, "risk", limit: 20)

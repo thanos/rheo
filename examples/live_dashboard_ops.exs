@@ -175,7 +175,7 @@ defmodule Demo.ControlLive do
               </span>
             </div>
             <p class="stats">
-              lag={@risk_info.lag} · inflight={@risk_info.inflight} · dlq={@risk_info.dead}
+              lag={@risk_info.lag} · inflight={@risk_info.inflight} · dlq(dead letters)={@risk_info.dead}
             </p>
           </div>
           <div class="card-ish">
@@ -193,7 +193,7 @@ defmodule Demo.ControlLive do
               </span>
             </div>
             <p class="stats">
-              lag={@billing_info.lag} · inflight={@billing_info.inflight} · dlq={@billing_info.dead}
+              lag={@billing_info.lag} · inflight={@billing_info.inflight} · dlq(dead letters)={@billing_info.dead}
             </p>
           </div>
         </div>

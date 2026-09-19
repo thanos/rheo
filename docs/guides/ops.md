@@ -4,6 +4,18 @@ v0.10 adds a **library-first** ops surface (ADR 027): portable inspect APIs,
 documented telemetry, optional metrics/LiveDashboard, and Mix tasks. There is
 no Rheo control plane and no second settle path.
 
+## Dead letters (DLQ)
+
+**DLQ** means **dead-letter queue**: deliveries that stopped being retried for a
+group — typically after `Rheo.reject/3` or after `nack` exhausted
+`:default_max_attempts`. The event stays in the stream; only that group’s
+delivery record is marked dead-lettered (backends differ in storage shape;
+Redis may use a separate DLQ stream).
+
+Ops surfaces expose this as `dead_letters`, `dead_letter_count`, or a short
+`dlq=` label. Listing is **read-only**. To reopen work, use `Rheo.replay/3` or
+`Rheo.reset_group/3` (`confirm: true`) — never settle from a dashboard.
+
 ## Inspect APIs
 
 ```elixir

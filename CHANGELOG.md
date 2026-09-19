@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.10.0] - 2026-09-18
 
-Ops surface for an embedded Rheo. Inventory, DLQ listing, group health,
-optional metrics/LiveDashboard, and Mix inspect tasks — without changing
+Ops surface for an embedded Rheo. Inventory, dead-letter (DLQ) listing, group
+health, optional metrics/LiveDashboard, and Mix inspect tasks — without changing
 Consumer / Event / Query semantics or inventing a control plane.
 
 See [0.9 → 0.10 migration](https://hexdocs.pm/rheo/0-9-to-0-10.html) and
