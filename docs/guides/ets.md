@@ -30,11 +30,11 @@ Data lives only as long as the backend owner process. Restarts wipe the store.
 
 ## When to use
 
-| Use ETS | Prefer Mongo / Ecto |
+| Use ETS | Prefer Mongo / Ecto / Mnesia / Redis |
 |---|---|
 | Unit / property tests | Production durability |
-| Livebook / CI without services | Multi-node claims |
-| Local scratchpads | Shared history across deploys |
+| Livebook / CI without services | Multi-node claims (Redis / Postgres) |
+| Local scratchpads | Shared history across deploys; Mnesia for single-node disc |
 
 ## Same API
 

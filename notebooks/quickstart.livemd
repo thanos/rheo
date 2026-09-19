@@ -1,10 +1,10 @@
-# Rheo Quickstart (v0.9.0)
+# Rheo Quickstart
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.10.0"},
+    {:rheo, "~> 0.11.0"},
     # {:rheo, path: Path.join(__DIR__, "..")},
     {:kino, "~> 0.14"}
   ],
@@ -249,8 +249,8 @@ group (that returns an error). Concepts notebook shows the rejection.
 
 * [Concepts & Overview](concepts.livemd) — fencing races, search, replay, partitions
 * [GenStage, Flow & Broadway](pipelines.livemd) — demand-driven pipelines
-* [Backends](backends.livemd) — ETS / Mongo / Redis / SQLite / Postgres
+* [Backends](backends.livemd) — ETS / Mnesia / Mongo / Redis / SQLite / Postgres
 
 HexDocs: [Quick Start](https://hexdocs.pm/rheo/quick-start.html) ·
 [Consumer groups](https://hexdocs.pm/rheo/consumer-groups.html) ·
-[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
+[Article 16](https://github.com/thanos/rheo/blob/main/docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md)

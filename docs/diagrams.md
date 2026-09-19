@@ -15,7 +15,7 @@ flowchart TB
   RheoInst --> BackendChild[Backend handle]
   Risk --> BackendChild
   Surv --> BackendChild
-  BackendChild --> DB[(MongoDB / PostgreSQL / SQLite / ETS)]
+  BackendChild --> DB[(ETS / Mnesia / Mongo / Postgres / SQLite / Redis)]
 ```
 
 ## OTP supervision

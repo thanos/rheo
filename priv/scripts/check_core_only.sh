@@ -40,6 +40,11 @@ for mod <- absent, Code.ensure_loaded?(mod), do: raise("#{inspect(mod)} compiled
 {:ok, ["g"]} = Rheo.list_groups("s", rheo: CoreRheo)
 {:ok, %Rheo.GroupInfo{}} = Rheo.group_info("s", "g", rheo: CoreRheo)
 
+dir = System.tmp_dir!() <> "/rheo_core_mnesia"
+{:ok, _} = Rheo.start_link(name: CoreMnesia, backend: {Rheo.Backend.Mnesia, dir: dir})
+:ok = Rheo.create_stream("m", rheo: CoreMnesia)
+{:ok, _} = Rheo.append("m", %{type: "e"}, rheo: CoreMnesia)
+
 try do
   Rheo.start_link(name: NoBackend, url: "mongodb://localhost/x")
   raise "expected ArgumentError without Rheo.Backend.Mongo"

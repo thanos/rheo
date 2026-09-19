@@ -27,7 +27,7 @@ Ops surfaces expose this as `dead_letters`, `dead_letter_count`, or a short
 ```
 
 Custom backends that omit the optional callbacks get `{:error, :unsupported}`.
-Shipping backends (ETS, Mongo, Ecto, Redis) implement them.
+Shipping backends (ETS, Mnesia, Mongo, Ecto, Redis) implement them.
 
 Inspect is **read-only**. To recover work, use `Rheo.replay/3` /
 `Rheo.reset_group/3` (`confirm: true`) — never settle from a dashboard.
@@ -66,7 +66,7 @@ stay in the host (no Rheo Nagios binary).
 ## LiveDashboard (optional)
 
 ```elixir
-{:rheo, "~> 0.10.0"},
+{:rheo, "~> 0.11.0"},
 {:phoenix_live_dashboard, "~> 0.8"}
 ```
 

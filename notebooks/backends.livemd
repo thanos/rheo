@@ -1,10 +1,10 @@
-# Rheo Backends: ETS, Mongo, SQLite, PostgreSQL, Redis (v0.9.0)
+# Rheo Backends: ETS, Mnesia, Mongo, SQLite, PostgreSQL, Redis
 
 ```elixir
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.10.0"},
+    {:rheo, "~> 0.11.0"},
     # {:rheo, path: Path.join(__DIR__, "..")},
     {:mongodb_driver, "~> 1.5"},
     {:redix, "~> 1.5"},
@@ -29,10 +29,15 @@ Same `Rheo.append` / `fetch` / `ack` / `query` / `Consumer` API. Backends differ
 in **durability**, **distribution**, and **mechanisms** — not in how you write
 handlers.
 
+**Multi-node** (several BEAM nodes, same group) needs a shared store: Redis or
+PostgreSQL yes; ETS / SQLite / Mnesia v0.11 no. See the
+[building your own backend](https://hexdocs.pm/rheo/building-your-own-backend.html#multi-node-several-beam-nodes)
+guide.
+
 This notebook:
 
 1. Compares **capabilities** side by side
-2. Runs a tiny happy path on **ETS**, **Mongo**, **SQLite**, **Postgres**, and
+2. Runs a tiny happy path on **ETS**, **Mnesia**, **Mongo**, **SQLite**, **Postgres**, and
    **Redis** (optional where services are required)
 3. Proves two Rheo instances in one BEAM (**ETS + SQLite**) do not bleed data
 4. Runs a light **throughput comparison** across whichever backends are up
@@ -66,7 +71,7 @@ cap_row = fn name, caps ->
 end
 
 rows =
-  [{"ETS", Rheo.Backend.ETS.capabilities()}]
+  [{"ETS", Rheo.Backend.ETS.capabilities()}, {"Mnesia", Rheo.Backend.Mnesia.capabilities()}]
   |> then(fn acc ->
     if Code.ensure_loaded?(Rheo.Backend.Mongo) do
       acc ++ [{"Mongo", Rheo.Backend.Mongo.capabilities()}]
@@ -100,6 +105,7 @@ Kino.DataTable.new(rows)
 | Backend        | Typical home                                       |
 | -------------- | -------------------------------------------------- |
 | **ETS**        | Tests, Livebook, ephemeral in-process apps         |
+| **Mnesia**     | Single-node durable BEAM store (no Docker / DB)    |
 | **Mongo**      | Searchable durable log; easy multi-document claims |
 | **Redis**      | Native Streams consumer groups; Model C receipts   |
 | **SQLite**     | Single-node durable file (appliances, local demos) |
@@ -143,7 +149,60 @@ will put a different opaque token there without changing your handler.
 
 ---
 
-## 2. MongoDB — optional
+## 2. Mnesia — durable, no Docker
+
+OTP `:mnesia` with single-node `disc_copies` (v0.11). Same ETS-shaped state
+machine, but data survives GenServer restart when `:dir` is preserved. No
+optional Hex dep — `:mnesia` ships with OTP.
+
+```elixir
+mnesia_dir =
+  Path.join(System.tmp_dir!(), "rheo_livebook_mnesia_#{System.unique_integer([:positive])}")
+
+stop_rheo.(:mnesia_demo)
+
+{:ok, _} =
+  Rheo.start_link(
+    name: :mnesia_demo,
+    backend: {Rheo.Backend.Mnesia, name: MnesiaLivebook, dir: mnesia_dir}
+  )
+
+:ok = Rheo.ensure_indexes(rheo: :mnesia_demo)
+
+s = "mnesia-demo"
+:ok = Rheo.create_stream(s, partition_count: 2, rheo: :mnesia_demo)
+:ok = Rheo.create_group(s, "workers", rheo: :mnesia_demo)
+{:ok, ev} = Rheo.append(s, %{type: "ping", venue: "mnesia"}, rheo: :mnesia_demo)
+{:ok, [lease]} = Rheo.fetch(s, "workers", limit: 1, rheo: :mnesia_demo)
+:ok = Rheo.ack(lease, rheo: :mnesia_demo)
+
+# Restart the Rheo handle; keep the same Mnesia directory.
+stop_rheo.(:mnesia_demo)
+
+{:ok, _} =
+  Rheo.start_link(
+    name: :mnesia_demo,
+    backend: {Rheo.Backend.Mnesia, name: MnesiaLivebook, dir: mnesia_dir}
+  )
+
+:ok = Rheo.ensure_indexes(rheo: :mnesia_demo)
+{:ok, after_restart} = Rheo.query(s, type: "ping", limit: 5, rheo: :mnesia_demo)
+
+%{
+  durable?: Rheo.Backend.Mnesia.capabilities().guarantees.durable,
+  distributed?: Rheo.Backend.Mnesia.capabilities().guarantees.distributed,
+  event_id: ev.id,
+  survived_restart?: ev.id in Enum.map(after_restart, & &1.id),
+  dir: mnesia_dir
+}
+```
+
+`survived_restart?` should be `true`. Prefer Redis / Postgres when several BEAM
+nodes must claim the same group — Mnesia v0.11 is single-node only.
+
+---
+
+## 3. MongoDB — optional
 
 Needs a running MongoDB. From the repo root:
 
@@ -196,7 +255,7 @@ you consume from.
 
 ---
 
-## 3. Redis Streams — optional
+## 4. Redis Streams — optional
 
 Needs Redis **6.2+**. From the repo: `docker compose up -d redis`.
 
@@ -242,7 +301,7 @@ token). Handlers still ignore receipt contents.
 
 ---
 
-## 4. SQLite via Ecto — durable, no Docker
+## 5. SQLite via Ecto — durable, no Docker
 
 Rheo borrows a **host-owned** `Ecto.Repo`. Your app supervises the Repo; Rheo
 does not own the connection pool. `Rheo.ensure_indexes/1` creates the Rheo
@@ -302,7 +361,7 @@ same group.
 
 ---
 
-## 5. PostgreSQL via Ecto — optional
+## 6. PostgreSQL via Ecto — optional
 
 Set an Ecto URL, for example:
 
@@ -373,7 +432,7 @@ Postgres is the multi-node SQL path. Wakeup via `NOTIFY` is an optional hint —
 
 ---
 
-## 6. Multi-instance: ETS + SQLite side by side
+## 7. Multi-instance: ETS + SQLite side by side
 
 Two Rheo names in one BEAM node is a supported pattern (e.g. hot market feed
 in ETS, durable audit log in SQLite). Same stream **name** must not bleed
@@ -382,6 +441,7 @@ across handles.
 ```elixir
 stop_rheo.(Rheo)
 stop_rheo.(:ets_demo)
+stop_rheo.(:mnesia_demo)
 stop_rheo.(:sqlite_demo)
 stop_rheo.(:mongo_demo)
 stop_rheo.(:pg_demo)
@@ -427,7 +487,7 @@ per instance — creating a group on `:market` does not create it on `:audit`.
 
 ---
 
-## 7. Throughput comparison (informal)
+## 8. Throughput comparison (informal)
 
 Same portable API, different storage cost. This is a **Livebook microbench**,
 not a formal load test: single partition, sequential calls from one BEAM,
@@ -435,7 +495,7 @@ not a formal load test: single partition, sequential calls from one BEAM,
 are not running or cannot connect.
 
 Tune `bench_n` if you want a longer run. Re-evaluate after starting Docker
-services for Mongo / Redis / Postgres.
+services for Mongo / Redis / Postgres. Mnesia needs no Docker.
 
 ```elixir
 bench_n = 200
@@ -448,7 +508,7 @@ stop_rheo = fn name ->
   end
 end
 
-# Repos may already exist from sections 4–5; define them if this cell is run alone.
+# Repos may already exist from sections 5–6; define them if this cell is run alone.
 unless Code.ensure_loaded?(Backends.SqliteRepo) do
   defmodule Backends.SqliteRepo do
     use Ecto.Repo, otp_app: :rheo, adapter: Ecto.Adapters.SQLite3
@@ -537,6 +597,20 @@ candidates = [
      {:ok, _} = Rheo.start_link(name: :ets_bench, backend: Rheo.Backend.ETS)
      :ok = Rheo.ensure_indexes(rheo: :ets_bench)
      run_cycle.(:ets_bench, "bench-ets")
+   end},
+  {"Mnesia",
+   fn ->
+     stop_rheo.(:mnesia_bench)
+     dir = Path.join(System.tmp_dir!(), "rheo_bench_mnesia_#{System.unique_integer([:positive])}")
+
+     {:ok, _} =
+       Rheo.start_link(
+         name: :mnesia_bench,
+         backend: {Rheo.Backend.Mnesia, name: MnesiaBench, dir: dir}
+       )
+
+     :ok = Rheo.ensure_indexes(rheo: :mnesia_bench)
+     run_cycle.(:mnesia_bench, "bench-mnesia-#{System.unique_integer([:positive])}")
    end},
   {"SQLite",
    fn ->
@@ -633,14 +707,17 @@ bench_rows =
     timed.(label, fun)
   end)
 
-Enum.each([:ets_bench, :sqlite_bench, :mongo_bench, :redis_bench, :pg_bench], stop_rheo)
+Enum.each(
+  [:ets_bench, :mnesia_bench, :sqlite_bench, :mongo_bench, :redis_bench, :pg_bench],
+  stop_rheo
+)
 
 Kino.DataTable.new(bench_rows)
 ```
 
-Expect **ETS** to lead (in-memory), then roughly Redis / SQLite / Postgres /
-Mongo depending on your machine and Docker latency. Numbers are for relative
-ordering in this notebook — not published SLOs.
+Expect **ETS** to lead (in-memory), then roughly Mnesia / Redis / SQLite /
+Postgres / Mongo depending on your machine and Docker latency. Numbers are for
+relative ordering in this notebook — not published SLOs.
 
 ---
 
@@ -649,12 +726,14 @@ ordering in this notebook — not published SLOs.
 * Swap backends with `{Rheo, backend: …}` — keep Consumer / Query / Event meaning
 * Read **capabilities** for ops decisions; do not weaken fencing in app code
 * Optional packages / deps: Mongo driver, Redix, Ecto adapters, Broadway — core stays lean
+* Mnesia is core (OTP); durable single-node without Docker
 * Multiple named Rheo instances in one node are fine when handles stay distinct
 * Throughput here is informal; durable / remote backends trade speed for guarantees
 
 HexDocs: [ETS](https://hexdocs.pm/rheo/ets.html) ·
+[Mnesia](https://hexdocs.pm/rheo/mnesia.html) ·
 [Mongo](https://hexdocs.pm/rheo/mongo.html) ·
 [Redis](https://hexdocs.pm/rheo/redis.html) ·
 [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html) ·
-[Article 13](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html) ·
-[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
+[Article 13](https://github.com/thanos/rheo/blob/main/docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md) ·
+[Article 16](https://github.com/thanos/rheo/blob/main/docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md)

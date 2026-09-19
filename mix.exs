@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.10.0"
+  @version "0.11.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -17,7 +17,9 @@ defmodule Rheo.MixProject do
       dialyzer: [
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts",
-        plt_add_apps: [:ex_unit, :mix],
+        # `:mnesia` is included_applications (loaded, not auto-started) — add to PLT
+        # so Dialyzer sees OTP APIs without putting it in extra_applications.
+        plt_add_apps: [:ex_unit, :mix, :mnesia],
         flags: [:error_handling]
       ],
       docs: [
@@ -28,6 +30,7 @@ defmodule Rheo.MixProject do
         extras: [
           "README.md",
           "LICENSE",
+          "docs/guides/quick-start.md",
           "CHANGELOG.md",
           "notebooks/rheo_demo.livemd",
           "notebooks/quickstart.livemd",
@@ -36,7 +39,6 @@ defmodule Rheo.MixProject do
           "notebooks/live_dashboard.livemd",
           "notebooks/pipelines.livemd",
           "notebooks/backends.livemd",
-          "docs/guides/quick-start.md",
           "docs/guides/configuration.md",
           "docs/guides/consumer-groups.md",
           "docs/guides/enqueuing.md",
@@ -44,47 +46,22 @@ defmodule Rheo.MixProject do
           "docs/guides/replay.md",
           "docs/guides/querying.md",
           "docs/guides/partitions-and-lag.md",
+          {"docs/guides/ops.md", [filename: "ops"]},
           "docs/guides/ets.md",
+          "docs/guides/mnesia.md",
           "docs/guides/mongo.md",
           "docs/guides/using-ecto.md",
           "docs/guides/redis.md",
-          {"docs/guides/ops.md", [filename: "ops"]},
+          "docs/guides/building-your-own-backend.md",
           "docs/guides/broadway.md",
           "docs/guides/genstage.md",
-          "docs/guides/building-your-own-backend.md",
-          "docs/migrations/0.1-to-0.2.md",
-          "docs/migrations/0.3-to-0.4.md",
-          "docs/migrations/0.4-to-0.5.md",
-          "docs/migrations/0.5-to-0.6.md",
-          "docs/migrations/0.6-to-0.7.md",
-          "docs/migrations/0.7-to-0.8.md",
-          "docs/migrations/0.8-to-0.9.md",
+          "docs/upgrading.md",
           "docs/migrations/0.9-to-0.10.md",
+          "docs/migrations/0.10-to-0.11.md",
           "docs/architecture.md",
-          "docs/architecture-review-v0.7.md",
-          "docs/roadmap.md",
           "docs/diagrams.md",
-          "docs/design/flow-readiness-spike.md",
-          "docs/design/redis-readiness-spike.md",
+          "docs/roadmap.md",
           "docs/adr.md",
-          "docs/adr/001-at-least-once-delivery.md",
-          "docs/adr/002-events-immutable-consumer-state-separate.md",
-          "docs/adr/003-mongodb-first-backend.md",
-          "docs/adr/004-lease-and-fencing-model.md",
-          "docs/adr/005-backend-boundary.md",
-          "docs/adr/006-rheo-as-embedded-otp-library.md",
-          "docs/adr/007-demand-and-backpressure.md",
-          "docs/adr/008-mongodb-schema-and-indexes.md",
-          "docs/adr/009-local-consumer-group-runtime.md",
-          "docs/adr/010-backend-handle-and-instance-model.md",
-          "docs/adr/011-backend-capabilities.md",
-          "docs/adr/012-backend-conformance-suite.md",
-          "docs/adr/013-portable-query-model.md",
-          "docs/adr/014-ets-backend.md",
-          "docs/adr/015-replay-semantics.md",
-          "docs/adr/016-partitions-and-ack-frontier.md",
-          "docs/adr/017-ecto-backend.md",
-          "docs/adr/018-broadway-genstage-interop.md",
           "docs/adr/019-v0-8-architectural-reset.md",
           "docs/adr/020-package-and-dependency-boundaries.md",
           "docs/adr/021-logical-sequence-and-native-delivery-receipts.md",
@@ -94,93 +71,57 @@ defmodule Rheo.MixProject do
           "docs/adr/025-backend-wakeup-contract.md",
           "docs/adr/026-redis-streams-backend.md",
           "docs/adr/027-ops-surface.md",
-          "docs/tutorials.md",
-          "docs/tutorials/01-why-consumer-groups-on-a-database.md",
-          "docs/tutorials/02-what-is-a-consumer-group.md",
-          "docs/tutorials/03-why-ack-is-harder.md",
-          "docs/tutorials/04-rheo-as-otp-library.md",
-          "docs/tutorials/05-demand-and-backpressure.md",
-          "docs/tutorials/06-mongodb-searchable-event-log.md",
-          "docs/tutorials/07-killing-consumers.md",
-          "docs/tutorials/08-searching-the-stream.md",
-          "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
-          "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
-          "docs/tutorials/11-search-and-replay-the-event-history.md",
-          "docs/tutorials/12-acks-are-not-a-cursor.md",
-          "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
-          "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md",
-          "docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md",
-          "docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md"
+          "docs/adr/028-mnesia-backend.md",
+          "docs/tutorials.md"
         ],
         groups_for_extras: [
-          "Guides: Introduction": [
+          Start: [
+            "README.md",
+            "LICENSE",
             "docs/guides/quick-start.md",
-            "docs/guides/configuration.md",
-            "docs/guides/consumer-groups.md",
-            "docs/guides/enqueuing.md",
-            "docs/guides/dequeuing.md",
+            "CHANGELOG.md"
+          ],
+          Livebooks: [
             "notebooks/rheo_demo.livemd",
             "notebooks/quickstart.livemd",
             "notebooks/concepts.livemd",
             "notebooks/ops.livemd",
             "notebooks/live_dashboard.livemd",
             "notebooks/pipelines.livemd",
-            "notebooks/backends.livemd",
-            "CHANGELOG.md"
+            "notebooks/backends.livemd"
           ],
-          "Guides: Advanced": [
+          Guides: [
+            "docs/guides/configuration.md",
+            "docs/guides/consumer-groups.md",
+            "docs/guides/enqueuing.md",
+            "docs/guides/dequeuing.md",
             "docs/guides/replay.md",
             "docs/guides/querying.md",
             "docs/guides/partitions-and-lag.md",
-            "docs/guides/ops.md",
-            "docs/guides/broadway.md",
-            "docs/guides/genstage.md",
-            "docs/guides/building-your-own-backend.md"
+            "docs/guides/ops.md"
           ],
-          "Guides: Cookbook": [
+          Backends: [
             "docs/guides/ets.md",
+            "docs/guides/mnesia.md",
             "docs/guides/mongo.md",
             "docs/guides/using-ecto.md",
-            "docs/guides/redis.md"
+            "docs/guides/redis.md",
+            "docs/guides/building-your-own-backend.md"
           ],
-          "Migrating from previous versions": [
-            "docs/migrations/0.1-to-0.2.md",
-            "docs/migrations/0.3-to-0.4.md",
-            "docs/migrations/0.4-to-0.5.md",
-            "docs/migrations/0.5-to-0.6.md",
-            "docs/migrations/0.6-to-0.7.md",
-            "docs/migrations/0.7-to-0.8.md",
-            "docs/migrations/0.8-to-0.9.md",
-            "docs/migrations/0.9-to-0.10.md"
+          Pipelines: [
+            "docs/guides/broadway.md",
+            "docs/guides/genstage.md"
           ],
-          "Design: Architecture": [
+          Upgrading: [
+            "docs/upgrading.md",
+            "docs/migrations/0.9-to-0.10.md",
+            "docs/migrations/0.10-to-0.11.md"
+          ],
+          Design: [
             "docs/architecture.md",
-            "docs/architecture-review-v0.7.md",
             "docs/diagrams.md",
             "docs/roadmap.md",
-            "docs/design/flow-readiness-spike.md",
-            "docs/design/redis-readiness-spike.md"
-          ],
-          "Design: ADRs": [
             "docs/adr.md",
-            "docs/adr/001-at-least-once-delivery.md",
-            "docs/adr/002-events-immutable-consumer-state-separate.md",
-            "docs/adr/003-mongodb-first-backend.md",
-            "docs/adr/004-lease-and-fencing-model.md",
-            "docs/adr/005-backend-boundary.md",
-            "docs/adr/006-rheo-as-embedded-otp-library.md",
-            "docs/adr/007-demand-and-backpressure.md",
-            "docs/adr/008-mongodb-schema-and-indexes.md",
-            "docs/adr/009-local-consumer-group-runtime.md",
-            "docs/adr/010-backend-handle-and-instance-model.md",
-            "docs/adr/011-backend-capabilities.md",
-            "docs/adr/012-backend-conformance-suite.md",
-            "docs/adr/013-portable-query-model.md",
-            "docs/adr/014-ets-backend.md",
-            "docs/adr/015-replay-semantics.md",
-            "docs/adr/016-partitions-and-ack-frontier.md",
-            "docs/adr/017-ecto-backend.md",
-            "docs/adr/018-broadway-genstage-interop.md",
             "docs/adr/019-v0-8-architectural-reset.md",
             "docs/adr/020-package-and-dependency-boundaries.md",
             "docs/adr/021-logical-sequence-and-native-delivery-receipts.md",
@@ -189,26 +130,9 @@ defmodule Rheo.MixProject do
             "docs/adr/024-backend-contract-v2.md",
             "docs/adr/025-backend-wakeup-contract.md",
             "docs/adr/026-redis-streams-backend.md",
-            "docs/adr/027-ops-surface.md"
-          ],
-          "Design: Tutorials": [
-            "docs/tutorials.md",
-            "docs/tutorials/01-why-consumer-groups-on-a-database.md",
-            "docs/tutorials/02-what-is-a-consumer-group.md",
-            "docs/tutorials/03-why-ack-is-harder.md",
-            "docs/tutorials/04-rheo-as-otp-library.md",
-            "docs/tutorials/05-demand-and-backpressure.md",
-            "docs/tutorials/06-mongodb-searchable-event-log.md",
-            "docs/tutorials/07-killing-consumers.md",
-            "docs/tutorials/08-searching-the-stream.md",
-            "docs/tutorials/09-why-rheo-0-2-broke-its-0-1-api.md",
-            "docs/tutorials/10-if-rheo-is-database-agnostic-prove-it-with-ets.md",
-            "docs/tutorials/11-search-and-replay-the-event-history.md",
-            "docs/tutorials/12-acks-are-not-a-cursor.md",
-            "docs/tutorials/13-one-consumer-api-postgresql-and-sqlite.md",
-            "docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md",
-            "docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md",
-            "docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md"
+            "docs/adr/027-ops-surface.md",
+            "docs/adr/028-mnesia-backend.md",
+            "docs/tutorials.md"
           ]
         ],
         before_closing_body_tag: &before_closing_body_tag/1
@@ -237,7 +161,11 @@ defmodule Rheo.MixProject do
 
   def application do
     [
+      # Load OTP `:mnesia` without auto-starting it. Auto-start creates a ram
+      # schema; recycling via `:mnesia.stop/0` breaks Livebook (Logger `:epipe`).
+      # `Rheo.Backend.Mnesia` starts `:mnesia` after `:dir` / disc schema are set.
       extra_applications: [:logger],
+      included_applications: [:mnesia],
       mod: {Rheo.Application, []}
     ]
   end
@@ -362,8 +290,9 @@ defmodule Rheo.MixProject do
 
   defp description do
     "Durable, searchable, replayable consumer-group semantics over storage " <>
-      "systems (MongoDB, PostgreSQL/SQLite via Ecto, ETS): leases, fencing, " <>
-      "partitions, frontier, lag, replay, and a GenStage/Broadway producer."
+      "systems (MongoDB, Redis Streams, PostgreSQL/SQLite via Ecto, Mnesia, ETS): " <>
+      "leases, fencing, partitions, frontier, lag, replay, ops inspect, and a " <>
+      "GenStage/Broadway producer."
   end
 
   defp package do

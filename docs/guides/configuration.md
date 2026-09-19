@@ -33,6 +33,7 @@ config :rheo,
 
   # Backend timeouts
   ets_call_timeout: 5_000,
+  mnesia_call_timeout: 5_000,
   ecto_call_timeout: 5_000
 ```
 
@@ -88,3 +89,20 @@ Rheo.fetch("events", "risk", rheo: RheoAudit)
 ```
 
 Each instance has its own backend handle, registry, and group supervisor.
+
+## Multi-node BEAM deployments
+
+Several BEAM nodes can run Rheo Groups against the **same** durable store.
+Rheo does not manage cluster membership — the backend fences leases.
+
+| Backend | `distributed` | Multi-node OK? |
+|---|---|---|
+| Redis | `true` | Yes |
+| Ecto PostgreSQL | `true` | Yes |
+| Ecto SQLite | `false` | No |
+| Mongo | `false` (cap) | Shared Mongo works in practice; flag stays conservative |
+| ETS | `false` | No |
+| Mnesia (v0.11) | `false` | Single-node `disc_copies` only |
+
+Details: [Building your own backend](building-your-own-backend.html#multi-node-several-beam-nodes).
+

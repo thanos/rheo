@@ -6,11 +6,12 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.10.0** — Durable consumer-group semantics over searchable stores.
-Backends: **Redis Streams**, **MongoDB**, **PostgreSQL / SQLite** (host-owned
-`Ecto.Repo`), and **ETS** (ephemeral). Rheo is an Elixir/OTP library you embed
-in your supervision tree, not a standalone messaging server. Consume with
-`Rheo.Consumer` or feed a **Broadway** pipeline with `Rheo.Producer`.
+**v0.11.0** — Durable consumer-group semantics over searchable stores.
+Backends: **Mnesia** (single-node `disc_copies`), **Redis Streams**, **MongoDB**,
+**PostgreSQL / SQLite** (host-owned `Ecto.Repo`), and **ETS** (ephemeral). Rheo
+is an Elixir/OTP library you embed in your supervision tree, not a standalone
+messaging server. Consume with `Rheo.Consumer` or feed a **Broadway** pipeline
+with `Rheo.Producer`.
 
 **Delivery guarantee:** at-least-once. Duplicates are possible after failures —
 use stable event IDs for idempotency. Ordering is guaranteed **within a
@@ -61,7 +62,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.10.0"}
+    {:rheo, "~> 0.11.0"}
   ]
 end
 ```
@@ -150,7 +151,7 @@ mix ecto.migrate
 `notify: true` for a PostgreSQL `NOTIFY rheo_events` wakeup hint, or
 `prefix: "rheo"` to keep the tables in their own schema. On PostgreSQL,
 `metadata` and `payload` are `jsonb`, so the event log stays queryable in plain
-SQL. See [ADR 017](https://hexdocs.pm/rheo/017-ecto-backend.html).
+SQL. See [ADR 017](https://github.com/thanos/rheo/blob/main/docs/adr/017-ecto-backend.md).
 
 Define a consumer — handlers implement `handle_event/2` and return an outcome;
 the local `Rheo.Group` started by the child spec owns fetch, concurrency, lease
@@ -203,10 +204,10 @@ Interactive walkthroughs (open from a clone in
 | [Index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) | Links to all demos ([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html)) |
 | [Quickstart](https://github.com/thanos/rheo/blob/main/notebooks/quickstart.livemd) | ETS publish / fetch / Consumer |
 | [Concepts](https://github.com/thanos/rheo/blob/main/notebooks/concepts.livemd) | Leases, search, replay, partitions |
-| [Ops](https://github.com/thanos/rheo/blob/main/notebooks/ops.livemd) | Inventory, lag, group health, dead letters (v0.10) |
+| [Ops](https://github.com/thanos/rheo/blob/main/notebooks/ops.livemd) | Inventory, lag, group health, dead letters |
 | [LiveDashboard](https://github.com/thanos/rheo/blob/main/notebooks/live_dashboard.livemd) | Control panel + real Rheo LiveDashboard via Phoenix Playground |
 | [Pipelines](https://github.com/thanos/rheo/blob/main/notebooks/pipelines.livemd) | GenStage, Flow, Broadway |
-| [Backends](https://github.com/thanos/rheo/blob/main/notebooks/backends.livemd) | ETS, Mongo, SQLite, PostgreSQL |
+| [Backends](https://github.com/thanos/rheo/blob/main/notebooks/backends.livemd) | ETS, Mnesia, Mongo, SQLite, PostgreSQL |
 
 ### Ops control & LiveDashboard
 
@@ -226,61 +227,55 @@ Guide: [Ops and observability](https://hexdocs.pm/rheo/ops.html).
 
 CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
 
-Upgrading:
+Upgrading: see [Upgrading](https://hexdocs.pm/rheo/upgrading.html) for the full
+list. Recent notes:
 
+- [0.10 → 0.11](https://hexdocs.pm/rheo/0-10-to-0-11.html) (Mnesia backend)
 - [0.9 → 0.10](https://hexdocs.pm/rheo/0-9-to-0-10.html) (ops surface)
-- [0.8 → 0.9](https://hexdocs.pm/rheo/0-8-to-0-9.html) (Redis Streams backend)
-- [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) (architectural reset)
-- [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) (additive — Broadway/GenStage interop)
-- [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) (additive — Ecto SQL backend)
-- [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html) (partitions, frontier, lag)
-- [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) (additive — search, replay, lineage)
-- [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html) (breaking Group / Query changes)
 
 ## Documentation
 
-Links below use [HexDocs](https://hexdocs.pm/rheo/) (and GitHub for the Livebook
-source). Relative `docs/…` paths break on [hex.pm](https://hex.pm/packages/rheo)
-because those files are not in the Hex tarball.
+Links below use [HexDocs](https://hexdocs.pm/rheo/) (and GitHub for archive /
+Livebook source). Relative `docs/…` paths break on
+[hex.pm](https://hex.pm/packages/rheo) because those files are not in the Hex
+tarball.
 
-**Guides**
+**Start** — [Quick Start](https://hexdocs.pm/rheo/quick-start.html) ·
+[Changelog](https://hexdocs.pm/rheo/changelog.html)
 
-- Introduction: [Quick Start](https://hexdocs.pm/rheo/quick-start.html) ·
-  [Configuration](https://hexdocs.pm/rheo/configuration.html) ·
-  [Consumer Groups](https://hexdocs.pm/rheo/consumer-groups.html) ·
-  [Enqueuing](https://hexdocs.pm/rheo/enqueuing.html) ·
-  [Dequeuing](https://hexdocs.pm/rheo/dequeuing.html)
-- Advanced: [Replay](https://hexdocs.pm/rheo/replay.html) ·
-  [Querying](https://hexdocs.pm/rheo/querying.html) ·
-  [Partitions and lag](https://hexdocs.pm/rheo/partitions-and-lag.html) ·
-  [Ops](https://hexdocs.pm/rheo/ops.html) ·
-  [Broadway](https://hexdocs.pm/rheo/broadway.html) ·
-  [GenStage](https://hexdocs.pm/rheo/genstage.html) ·
-  [Building your own backend](https://hexdocs.pm/rheo/building-your-own-backend.html)
-- Cookbook: [ETS](https://hexdocs.pm/rheo/ets.html) ·
-  [Mongo](https://hexdocs.pm/rheo/mongo.html) ·
-  [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html)
-- [Livebook demos](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs index](https://hexdocs.pm/rheo/rheo_demo.html)) — Quickstart, Concepts, Ops, LiveDashboard, Pipelines, Backends
-- [Changelog](https://hexdocs.pm/rheo/changelog.html)
+**Livebooks** —
+[Index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)
+([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html)) · Quickstart · Concepts ·
+Ops · LiveDashboard · Pipelines · Backends
 
-**Migrating from previous versions**
+**Guides** — [Configuration](https://hexdocs.pm/rheo/configuration.html) ·
+[Consumer Groups](https://hexdocs.pm/rheo/consumer-groups.html) ·
+[Enqueuing](https://hexdocs.pm/rheo/enqueuing.html) ·
+[Dequeuing](https://hexdocs.pm/rheo/dequeuing.html) ·
+[Replay](https://hexdocs.pm/rheo/replay.html) ·
+[Querying](https://hexdocs.pm/rheo/querying.html) ·
+[Partitions and lag](https://hexdocs.pm/rheo/partitions-and-lag.html) ·
+[Ops](https://hexdocs.pm/rheo/ops.html)
 
-- [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) · [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) · [0.5 → 0.6](https://hexdocs.pm/rheo/0-5-to-0-6.html) · [0.4 → 0.5](https://hexdocs.pm/rheo/0-4-to-0-5.html)
-- [0.3 → 0.4](https://hexdocs.pm/rheo/0-3-to-0-4.html) · [0.1 → 0.2](https://hexdocs.pm/rheo/0-1-to-0-2.html)
+**Backends** — [ETS](https://hexdocs.pm/rheo/ets.html) ·
+[Mnesia](https://hexdocs.pm/rheo/mnesia.html) ·
+[Mongo](https://hexdocs.pm/rheo/mongo.html) ·
+[Using Ecto](https://hexdocs.pm/rheo/using-ecto.html) ·
+[Redis](https://hexdocs.pm/rheo/redis.html) ·
+[Building your own backend](https://hexdocs.pm/rheo/building-your-own-backend.html)
 
-**Design**
+**Pipelines** — [Broadway](https://hexdocs.pm/rheo/broadway.html) ·
+[GenStage](https://hexdocs.pm/rheo/genstage.html)
 
-- Architecture: [Architecture](https://hexdocs.pm/rheo/architecture.html) ·
-  [Diagrams](https://hexdocs.pm/rheo/diagrams.html) ·
-  [Roadmap](https://hexdocs.pm/rheo/roadmap.html)
-- [ADRs](https://hexdocs.pm/rheo/adr.html) · [Tutorials index](https://hexdocs.pm/rheo/tutorials.html)
-- [Article 12: ACKs Are Not a Cursor](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)
-- [Article 13: One Consumer API, PostgreSQL and SQLite](https://hexdocs.pm/rheo/13-one-consumer-api-postgresql-and-sqlite.html)
-- [Article 14: Rheo Is Not Broadway — It Feeds Broadway](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
-- [Article 15: Breaking Rheo Before Anyone Depends on the Wrong Abstraction](https://hexdocs.pm/rheo/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.html)
-- [Article 16: Rheo on Redis Streams — Portable Sequence, Native PEL](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
-- [ADR 017: Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
-- [ADR 018: GenStage / Broadway interop](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
+**Upgrading** — [Index](https://hexdocs.pm/rheo/upgrading.html) ·
+[0.10 → 0.11](https://hexdocs.pm/rheo/0-10-to-0-11.html) ·
+[0.9 → 0.10](https://hexdocs.pm/rheo/0-9-to-0-10.html)
+
+**Design** — [Architecture](https://hexdocs.pm/rheo/architecture.html) ·
+[Diagrams](https://hexdocs.pm/rheo/diagrams.html) ·
+[Roadmap](https://hexdocs.pm/rheo/roadmap.html) ·
+[ADRs](https://hexdocs.pm/rheo/adr.html) ·
+[Tutorials](https://hexdocs.pm/rheo/tutorials.html)
 
 ## More examples
 
@@ -341,7 +336,7 @@ Rheo.query("market-events", correlation_id: "trade-42")
 Sequences are monotonic **per partition**. Append with a `:key` (or explicit
 `:partition`); ordering across partitions is undefined. Progress is a contiguous
 committed frontier — ACKs with holes do not advance lag (see
-[Article 12](https://hexdocs.pm/rheo/12-acks-are-not-a-cursor.html)).
+[Article 12](https://github.com/thanos/rheo/blob/main/docs/tutorials/12-acks-are-not-a-cursor.md)).
 
 ```elixir
 Rheo.create_stream("market-events", partition_count: 4)
@@ -429,8 +424,8 @@ Pick one surface per `{rheo, stream, group}`: `Rheo.Consumer` for the OTP handle
 API, `Rheo.Producer` when you want Broadway's batching, rate limiting, or
 fan-out. Plain GenStage consumers handle leases directly and settle with
 `Rheo.Producer.ack/3`, `nack/4`, or `reject/4`. See
-[Article 14](https://hexdocs.pm/rheo/14-rheo-is-not-broadway-it-feeds-broadway.html)
-and [ADR 018](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html).
+[Article 14](https://github.com/thanos/rheo/blob/main/docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md)
+and [ADR 018](https://github.com/thanos/rheo/blob/main/docs/adr/018-broadway-genstage-interop.md).
 
 ### Named instances
 
@@ -460,8 +455,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.7.1** | HexDocs Guides + Mermaid; Livebook Broadway section |
 | **0.8.0** | Architectural reset: read-only handler context, single group owner, lease receipts, typed capabilities, settlement vocabulary, Redis/Flow readiness |
 | **0.9.0** | Redis Streams native backend (optional `redix`); wakeup contract |
-| **0.10.0** (current) | Ops surface: dead-letter (DLQ) inspect, inventory, group health, optional LiveDashboard, Mix tasks |
-| **0.11.0** | Mnesia / BEAM-native distributed backend |
+| **0.10.0** | Ops surface: dead-letter (DLQ) inspect, inventory, group health, optional LiveDashboard, Mix tasks |
+| **0.11.0** (current) | Mnesia backend: durable ETS-shaped single-node `disc_copies` |
 | **0.12.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 

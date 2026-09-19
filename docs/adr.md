@@ -1,25 +1,10 @@
 # ADRs
 
-Architectural decision records (HexDocs: **Design: ADRs**):
+Architectural decision records. HexDocs publishes **019–028** (post v0.8 reset).
+Earlier ADRs remain in the repo on GitHub.
 
-1. [At-least-once delivery](https://hexdocs.pm/rheo/001-at-least-once-delivery.html)
-2. [Events immutable, consumer state separate](https://hexdocs.pm/rheo/002-events-immutable-consumer-state-separate.html)
-3. [MongoDB first backend](https://hexdocs.pm/rheo/003-mongodb-first-backend.html)
-4. [Lease and fencing model](https://hexdocs.pm/rheo/004-lease-and-fencing-model.html)
-5. [Backend boundary](https://hexdocs.pm/rheo/005-backend-boundary.html)
-6. [Rheo as embedded OTP library](https://hexdocs.pm/rheo/006-rheo-as-embedded-otp-library.html)
-7. [Demand and backpressure](https://hexdocs.pm/rheo/007-demand-and-backpressure.html)
-8. [MongoDB schema and indexes](https://hexdocs.pm/rheo/008-mongodb-schema-and-indexes.html)
-9. [Local consumer group runtime](https://hexdocs.pm/rheo/009-local-consumer-group-runtime.html)
-10. [Backend handle and instance model](https://hexdocs.pm/rheo/010-backend-handle-and-instance-model.html)
-11. [Backend capabilities](https://hexdocs.pm/rheo/011-backend-capabilities.html) — see also [023](https://hexdocs.pm/rheo/023-backend-capabilities-v2.html)
-12. [Backend conformance suite](https://hexdocs.pm/rheo/012-backend-conformance-suite.html)
-13. [Portable query model](https://hexdocs.pm/rheo/013-portable-query-model.html)
-14. [ETS backend](https://hexdocs.pm/rheo/014-ets-backend.html)
-15. [Replay semantics](https://hexdocs.pm/rheo/015-replay-semantics.html)
-16. [Partitions and ACK frontier](https://hexdocs.pm/rheo/016-partitions-and-ack-frontier.html)
-17. [Ecto SQL backend](https://hexdocs.pm/rheo/017-ecto-backend.html)
-18. [GenStage / Broadway interoperability](https://hexdocs.pm/rheo/018-broadway-genstage-interop.html)
+## Current (HexDocs)
+
 19. [v0.8 architectural reset](https://hexdocs.pm/rheo/019-v0-8-architectural-reset.html)
 20. [Package and dependency boundaries](https://hexdocs.pm/rheo/020-package-and-dependency-boundaries.html)
 21. [Logical sequence and native delivery receipts](https://hexdocs.pm/rheo/021-logical-sequence-and-native-delivery-receipts.html)
@@ -29,3 +14,25 @@ Architectural decision records (HexDocs: **Design: ADRs**):
 25. [Backend wakeup contract](https://hexdocs.pm/rheo/025-backend-wakeup-contract.html)
 26. [Redis Streams backend](https://hexdocs.pm/rheo/026-redis-streams-backend.html)
 27. [Ops surface for an embedded Rheo](https://hexdocs.pm/rheo/027-ops-surface.html)
+28. [Mnesia backend](https://hexdocs.pm/rheo/028-mnesia-backend.html)
+
+## Archive (GitHub)
+
+1. [At-least-once delivery](https://github.com/thanos/rheo/blob/main/docs/adr/001-at-least-once-delivery.md)
+2. [Events immutable, consumer state separate](https://github.com/thanos/rheo/blob/main/docs/adr/002-events-immutable-consumer-state-separate.md)
+3. [MongoDB first backend](https://github.com/thanos/rheo/blob/main/docs/adr/003-mongodb-first-backend.md)
+4. [Lease and fencing model](https://github.com/thanos/rheo/blob/main/docs/adr/004-lease-and-fencing-model.md)
+5. [Backend boundary](https://github.com/thanos/rheo/blob/main/docs/adr/005-backend-boundary.md)
+6. [Rheo as embedded OTP library](https://github.com/thanos/rheo/blob/main/docs/adr/006-rheo-as-embedded-otp-library.md)
+7. [Demand and backpressure](https://github.com/thanos/rheo/blob/main/docs/adr/007-demand-and-backpressure.md)
+8. [MongoDB schema and indexes](https://github.com/thanos/rheo/blob/main/docs/adr/008-mongodb-schema-and-indexes.md)
+9. [Local consumer group runtime](https://github.com/thanos/rheo/blob/main/docs/adr/009-local-consumer-group-runtime.md)
+10. [Backend handle and instance model](https://github.com/thanos/rheo/blob/main/docs/adr/010-backend-handle-and-instance-model.md)
+11. [Backend capabilities](https://github.com/thanos/rheo/blob/main/docs/adr/011-backend-capabilities.md) — see also [023](https://hexdocs.pm/rheo/023-backend-capabilities-v2.html)
+12. [Backend conformance suite](https://github.com/thanos/rheo/blob/main/docs/adr/012-backend-conformance-suite.md)
+13. [Portable query model](https://github.com/thanos/rheo/blob/main/docs/adr/013-portable-query-model.md)
+14. [ETS backend](https://github.com/thanos/rheo/blob/main/docs/adr/014-ets-backend.md)
+15. [Replay semantics](https://github.com/thanos/rheo/blob/main/docs/adr/015-replay-semantics.md)
+16. [Partitions and ACK frontier](https://github.com/thanos/rheo/blob/main/docs/adr/016-partitions-and-ack-frontier.md)
+17. [Ecto SQL backend](https://github.com/thanos/rheo/blob/main/docs/adr/017-ecto-backend.md)
+18. [GenStage / Broadway interoperability](https://github.com/thanos/rheo/blob/main/docs/adr/018-broadway-genstage-interop.md)
