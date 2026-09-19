@@ -460,7 +460,7 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.7.1** | HexDocs Guides + Mermaid; Livebook Broadway section |
 | **0.8.0** | Architectural reset: read-only handler context, single group owner, lease receipts, typed capabilities, settlement vocabulary, Redis/Flow readiness |
 | **0.9.0** | Redis Streams native backend (optional `redix`); wakeup contract |
-| **0.10.0** (current) | Ops surface: DLQ inspect, inventory, group health, optional LiveDashboard, Mix tasks |
+| **0.10.0** (current) | Ops surface: dead-letter (DLQ) inspect, inventory, group health, optional LiveDashboard, Mix tasks |
 | **0.11.0** | Mnesia / BEAM-native distributed backend |
 | **0.12.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |

@@ -4,8 +4,9 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
     @moduledoc """
     Thin LiveDashboard page over Rheo inspect APIs (ADR 027).
 
-    Read-only: group health (lag, inflight, dead letters). Does not settle
-    leases.
+    Read-only: group health (lag, inflight, **dead letters / DLQ**). Does not
+    settle leases. A dead letter is a delivery parked for the group after
+    `reject` or exhausted nacks — see the [ops guide](ops.html).
 
     ![Rheo LiveDashboard — group health](screenshots/Rheo-Screenshot-LiveDashboard.jpg)
 
@@ -49,7 +50,7 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
         <:col field={:group} header="Group" />
         <:col field={:lag} header="Lag" text_align="right" sortable={:desc} />
         <:col field={:inflight} header="Inflight" text_align="right" />
-        <:col field={:dead_letters} header="Dead letters" text_align="right" />
+        <:col field={:dead_letters} header="Dead letters (DLQ)" text_align="right" />
       </.live_table>
       """
     end

@@ -17,7 +17,7 @@ Open this folder from a **clone of the repo** so each notebook's
 livebook server notebooks/
 # or jump straight in:
 livebook server notebooks/quickstart.livemd
-# ops surface (v0.10):
+# ops functionality (v0.10):
 livebook server notebooks/ops.livemd
 # real LiveDashboard page via Phoenix Playground:
 livebook server notebooks/live_dashboard.livemd

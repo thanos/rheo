@@ -67,9 +67,9 @@ defmodule Rheo do
   ## Ops (v0.10+)
 
   Inventory and health without a second settle path: `list_streams/1`,
-  `list_groups/2`, `dead_letters/3`, `group_info/3`, plus Mix inspect tasks.
-  Optional `Rheo.LiveDashboard.Page` when `phoenix_live_dashboard` is present
-  (ADR 027). See the [ops guide](ops.html).
+  `list_groups/2`, `dead_letters/3` (DLQ = dead-letter queue), `group_info/3`,
+  plus Mix inspect tasks. Optional `Rheo.LiveDashboard.Page` when
+  `phoenix_live_dashboard` is present (ADR 027). See the [ops guide](ops.html).
   """
 
   use Supervisor
@@ -575,7 +575,12 @@ defmodule Rheo do
   end
 
   @doc """
-  Lists dead-lettered deliveries for a group (ops inspect, v0.10+ / ADR 027).
+  Lists **dead-lettered** (DLQ) deliveries for a group (ops inspect, v0.10+ /
+  ADR 027).
+
+  A dead letter is a delivery that will not be fetched again for this group
+  until `replay` / `reset_group` — typically after `reject/3` or max nack
+  attempts. See `Rheo.DeadLetter` and the [ops guide](ops.html).
 
   Options:
 

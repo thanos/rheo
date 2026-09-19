@@ -7,7 +7,8 @@ Accepted (v0.10.0)
 ## Context
 
 After Redis (v0.9), hosts need day-two visibility: which streams exist, how far
-a group has progressed, and what sits in the dead-letter path. NATS CLI
+a group has progressed, and what sits in the **dead-letter** path (**DLQ** =
+dead-letter queue: poison / exhausted deliveries parked per group). NATS CLI
 JetStream (`stream ls/info`, `consumer info`, DLQ follow-up, `bench`) is a useful
 checklist, but Rheo is an **embedded OTP library** (ADR 006), not a broker with
 a standalone control plane.
