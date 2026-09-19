@@ -24,10 +24,10 @@ end
 EOF
 
 cat > "$work/core_only/lib/check.exs" <<'EOF'
-present = for mod <- [Mongo, Ecto.Adapters.SQL, GenStage, Broadway, Redix], Code.ensure_loaded?(mod), do: mod
+present = for mod <- [Mongo, Ecto.Adapters.SQL, GenStage, Broadway, Redix, Telemetry.Metrics, Phoenix.LiveDashboard.PageBuilder], Code.ensure_loaded?(mod), do: mod
 if present != [], do: raise("optional dependencies leaked into the core-only build: #{inspect(present)}")
 
-absent = [Rheo.Backend.Mongo, Rheo.Backend.Ecto, Rheo.Backend.Redis, Rheo.Backend.Redis.Keys, Rheo.Backend.Redis.Codec, Rheo.Producer, Rheo.Broadway, Mix.Tasks.Rheo.Ecto.GenMigration]
+absent = [Rheo.Backend.Mongo, Rheo.Backend.Ecto, Rheo.Backend.Redis, Rheo.Backend.Redis.Keys, Rheo.Backend.Redis.Codec, Rheo.Producer, Rheo.Broadway, Rheo.Telemetry.Metrics, Rheo.LiveDashboard.Page, Mix.Tasks.Rheo.Ecto.GenMigration]
 for mod <- absent, Code.ensure_loaded?(mod), do: raise("#{inspect(mod)} compiled without its dependency")
 
 {:ok, _} = Rheo.start_link(name: CoreRheo, backend: Rheo.Backend.ETS)
@@ -36,6 +36,9 @@ for mod <- absent, Code.ensure_loaded?(mod), do: raise("#{inspect(mod)} compiled
 {:ok, _} = Rheo.append("s", %{type: "e"}, rheo: CoreRheo)
 {:ok, [lease]} = Rheo.fetch("s", "g", limit: 1, rheo: CoreRheo)
 :ok = Rheo.ack(lease, rheo: CoreRheo)
+{:ok, ["s"]} = Rheo.list_streams(rheo: CoreRheo)
+{:ok, ["g"]} = Rheo.list_groups("s", rheo: CoreRheo)
+{:ok, %Rheo.GroupInfo{}} = Rheo.group_info("s", "g", rheo: CoreRheo)
 
 try do
   Rheo.start_link(name: NoBackend, url: "mongodb://localhost/x")

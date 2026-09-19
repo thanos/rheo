@@ -63,6 +63,13 @@ defmodule Rheo do
   See `Rheo.Consumer` for the OTP handler API, `Rheo.Producer` and
   `Rheo.Broadway` for the GenStage/Broadway surface, and `Rheo.Backend` for
   adapters.
+
+  ## Ops (v0.10+)
+
+  Inventory and health without a second settle path: `list_streams/1`,
+  `list_groups/2`, `dead_letters/3`, `group_info/3`, plus Mix inspect tasks.
+  Optional `Rheo.LiveDashboard.Page` when `phoenix_live_dashboard` is present
+  (ADR 027). See the [ops guide](ops.html).
   """
 
   use Supervisor
@@ -541,6 +548,74 @@ defmodule Rheo do
   def lag(stream, group, opts \\ []) when is_binary(stream) and is_binary(group) do
     {backend, handle, opts} = resolve(opts)
     backend.lag(handle, stream, group, opts)
+  end
+
+  @doc """
+  Lists registered stream names (ops inspect, v0.10+ / ADR 027).
+
+  Returns `{:error, :unsupported}` when the backend does not implement
+  `list_streams/2`.
+  """
+  @spec list_streams(keyword()) :: {:ok, [stream()]} | {:error, term()}
+  def list_streams(opts \\ []) when is_list(opts) do
+    {backend, handle, opts} = resolve(opts)
+    dispatch_ops(backend, :list_streams, [handle, opts])
+  end
+
+  @doc """
+  Lists consumer group names for a stream (ops inspect, v0.10+ / ADR 027).
+
+  Returns `{:error, :unsupported}` when the backend does not implement
+  `list_groups/3`.
+  """
+  @spec list_groups(stream(), keyword()) :: {:ok, [group()]} | {:error, term()}
+  def list_groups(stream, opts \\ []) when is_binary(stream) and is_list(opts) do
+    {backend, handle, opts} = resolve(opts)
+    dispatch_ops(backend, :list_groups, [handle, stream, opts])
+  end
+
+  @doc """
+  Lists dead-lettered deliveries for a group (ops inspect, v0.10+ / ADR 027).
+
+  Options:
+
+    * `:limit` — max rows (default 100)
+    * `:after` — skip until after this `event_id` (cursor)
+    * `:rheo` — instance name
+
+  Returns `{:error, :unsupported}` when the backend does not implement
+  `dead_letters/4`.
+  """
+  @spec dead_letters(stream(), group(), keyword()) ::
+          {:ok, [Rheo.DeadLetter.t()]} | {:error, term()}
+  def dead_letters(stream, group, opts \\ [])
+      when is_binary(stream) and is_binary(group) and is_list(opts) do
+    {backend, handle, opts} = resolve(opts)
+    dispatch_ops(backend, :dead_letters, [handle, stream, group, opts])
+  end
+
+  @doc """
+  Returns group health: lag plus inflight and dead-letter counts (v0.10+ / ADR 027).
+
+  Returns `{:error, :unsupported}` when the backend does not implement
+  `group_info/4`.
+  """
+  @spec group_info(stream(), group(), keyword()) ::
+          {:ok, Rheo.GroupInfo.t()} | {:error, term()}
+  def group_info(stream, group, opts \\ [])
+      when is_binary(stream) and is_binary(group) and is_list(opts) do
+    {backend, handle, opts} = resolve(opts)
+    dispatch_ops(backend, :group_info, [handle, stream, group, opts])
+  end
+
+  defp dispatch_ops(backend, fun, args) do
+    arity = length(args)
+
+    if function_exported?(backend, fun, arity) do
+      apply(backend, fun, args)
+    else
+      {:error, :unsupported}
+    end
   end
 
   defp sequence_at_or_after(backend, handle, stream, %DateTime{} = dt) do

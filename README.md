@@ -6,7 +6,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.9.0** — Durable consumer-group semantics over searchable stores.
+**v0.10.0** — Durable consumer-group semantics over searchable stores.
 Backends: **Redis Streams**, **MongoDB**, **PostgreSQL / SQLite** (host-owned
 `Ecto.Repo`), and **ETS** (ephemeral). Rheo is an Elixir/OTP library you embed
 in your supervision tree, not a standalone messaging server. Consume with
@@ -61,7 +61,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.9.0"}
+    {:rheo, "~> 0.10.0"}
   ]
 end
 ```
@@ -203,13 +203,32 @@ Interactive walkthroughs (open from a clone in
 | [Index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) | Links to all demos ([HexDocs](https://hexdocs.pm/rheo/rheo_demo.html)) |
 | [Quickstart](https://github.com/thanos/rheo/blob/main/notebooks/quickstart.livemd) | ETS publish / fetch / Consumer |
 | [Concepts](https://github.com/thanos/rheo/blob/main/notebooks/concepts.livemd) | Leases, search, replay, partitions |
+| [Ops](https://github.com/thanos/rheo/blob/main/notebooks/ops.livemd) | Inventory, lag, group health, dead letters (v0.10) |
+| [LiveDashboard](https://github.com/thanos/rheo/blob/main/notebooks/live_dashboard.livemd) | Control panel + real Rheo LiveDashboard via Phoenix Playground |
 | [Pipelines](https://github.com/thanos/rheo/blob/main/notebooks/pipelines.livemd) | GenStage, Flow, Broadway |
 | [Backends](https://github.com/thanos/rheo/blob/main/notebooks/backends.livemd) | ETS, Mongo, SQLite, PostgreSQL |
+
+### Ops control & LiveDashboard
+
+Playground demo (`iex examples/live_dashboard_ops.exs` or the LiveDashboard
+notebook): toggle a publisher and consumers, watch the stream tail, then open
+the optional LiveDashboard page.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thanos/rheo/main/docs/screenshots/Rheo-Screenshot-Example-Control.jpg" alt="Rheo ops control panel — publisher, consumers, stream tail" width="720" />
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thanos/rheo/main/docs/screenshots/Rheo-Screenshot-LiveDashboard.jpg" alt="Rheo LiveDashboard — group health" width="720" />
+</p>
+
+Guide: [Ops and observability](https://hexdocs.pm/rheo/ops.html).
 
 CLI demo: `mix rheo.demo` (ETS) or `RHEO_BACKEND=mongo mix rheo.demo`.
 
 Upgrading:
 
+- [0.9 → 0.10](https://hexdocs.pm/rheo/0-9-to-0-10.html) (ops surface)
 - [0.8 → 0.9](https://hexdocs.pm/rheo/0-8-to-0-9.html) (Redis Streams backend)
 - [0.7 → 0.8](https://hexdocs.pm/rheo/0-7-to-0-8.html) (architectural reset)
 - [0.6 → 0.7](https://hexdocs.pm/rheo/0-6-to-0-7.html) (additive — Broadway/GenStage interop)
@@ -234,13 +253,14 @@ because those files are not in the Hex tarball.
 - Advanced: [Replay](https://hexdocs.pm/rheo/replay.html) ·
   [Querying](https://hexdocs.pm/rheo/querying.html) ·
   [Partitions and lag](https://hexdocs.pm/rheo/partitions-and-lag.html) ·
+  [Ops](https://hexdocs.pm/rheo/ops.html) ·
   [Broadway](https://hexdocs.pm/rheo/broadway.html) ·
   [GenStage](https://hexdocs.pm/rheo/genstage.html) ·
   [Building your own backend](https://hexdocs.pm/rheo/building-your-own-backend.html)
 - Cookbook: [ETS](https://hexdocs.pm/rheo/ets.html) ·
   [Mongo](https://hexdocs.pm/rheo/mongo.html) ·
   [Using Ecto](https://hexdocs.pm/rheo/using-ecto.html)
-- [Livebook demos](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs index](https://hexdocs.pm/rheo/rheo_demo.html)) — Quickstart, Concepts, Pipelines, Backends
+- [Livebook demos](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd) ([HexDocs index](https://hexdocs.pm/rheo/rheo_demo.html)) — Quickstart, Concepts, Ops, LiveDashboard, Pipelines, Backends
 - [Changelog](https://hexdocs.pm/rheo/changelog.html)
 
 **Migrating from previous versions**
@@ -439,9 +459,9 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.7.0** | GenStage/Broadway interop: `Rheo.Producer`, lease-aware acknowledger |
 | **0.7.1** | HexDocs Guides + Mermaid; Livebook Broadway section |
 | **0.8.0** | Architectural reset: read-only handler context, single group owner, lease receipts, typed capabilities, settlement vocabulary, Redis/Flow readiness |
-| **0.9.0** (current) | Redis Streams native backend (optional `redix`); wakeup contract |
-| **0.10.0** | Mnesia / BEAM-native distributed backend |
-| **0.11.0** | Operations: DLQ inspection, LiveDashboard, benchmarks |
+| **0.9.0** | Redis Streams native backend (optional `redix`); wakeup contract |
+| **0.10.0** (current) | Ops surface: DLQ inspect, inventory, group health, optional LiveDashboard, Mix tasks |
+| **0.11.0** | Mnesia / BEAM-native distributed backend |
 | **0.12.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 

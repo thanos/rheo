@@ -1,0 +1,271 @@
+# Rheo Ops: inventory, lag, DLQ (v0.10.0)
+
+```elixir
+Mix.install(
+  [
+    # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
+    # {:rheo, "~> 0.10.0"},
+    {:rheo, path: Path.join(__DIR__, "..")},
+    {:kino, "~> 0.14"}
+  ],
+  config: [
+    rheo: [
+      start_on_application: false,
+      clock: Rheo.Clock.System,
+      default_lease_ms: 5_000,
+      default_max_attempts: 3
+    ]
+  ]
+)
+```
+
+## Intro
+
+v0.10 adds a **library-first ops surface** (ADR 027): inspect APIs that answer
+the day-two questions without a Rheo control plane or a second settle path.
+
+You will:
+
+1. Start Rheo on **ETS** (no Docker)
+2. Create streams / groups and publish work
+3. Inspect **inventory**, **lag**, and **group health**
+4. **Reject** a poison event and list **dead letters**
+5. Recover with **replay** (still the only mutation path for reopen)
+
+Inspect is **read-only**. Settle stays on `ack` / `nack` / `reject` / `replay` /
+`reset_group`.
+
+Sibling notebooks: [Quickstart](quickstart.livemd) · [Concepts](concepts.livemd) ·
+[LiveDashboard](live_dashboard.livemd) · [Pipelines](pipelines.livemd) ·
+[Backends](backends.livemd) · [Index](rheo_demo.livemd)
+
+Guide: [Ops and observability](https://hexdocs.pm/rheo/ops.html)
+
+<!-- livebook:{"break_markdown":true} -->
+
+### Before you evaluate
+
+1. Open `notebooks/ops.livemd` from the repo so the path dependency works
+2. Run cells in order
+3. No Docker required
+
+---
+
+## 1. Start Rheo on ETS
+
+```elixir
+case Process.whereis(Rheo) do
+  nil -> :ok
+  pid -> GenServer.stop(pid)
+end
+
+{:ok, _} = Rheo.start_link(backend: Rheo.Backend.ETS)
+:ok = Rheo.ensure_indexes()
+:ok = Rheo.ping()
+
+:started
+```
+
+---
+
+## 2. Seed streams, groups, and events
+
+Two streams and two groups give inventory something to list. One event will be
+rejected later for the DLQ cell.
+
+```elixir
+suffix = Integer.to_string(System.unique_integer([:positive]))
+orders = "orders-" <> suffix
+fills = "fills-" <> suffix
+
+:ok = Rheo.create_stream(orders, partition_count: 2)
+:ok = Rheo.create_stream(fills)
+
+:ok = Rheo.create_group(orders, "risk")
+:ok = Rheo.create_group(orders, "billing")
+:ok = Rheo.create_group(fills, "ledger")
+
+{:ok, good} = Rheo.append(orders, %{type: "order_placed", id: "o-1"}, key: "acct-a")
+{:ok, poison} = Rheo.append(orders, %{type: "order_placed", id: "o-bad"}, key: "acct-b")
+{:ok, _} = Rheo.append(fills, %{type: "fill", qty: 10}, key: "acct-a")
+
+%{orders: orders, fills: fills, good_id: good.id, poison_id: poison.id}
+```
+
+---
+
+## 3. Inventory — `list_streams` / `list_groups`
+
+NATS-style `stream ls` / `consumer ls`, as Elixir APIs.
+
+```elixir
+{:ok, streams} = Rheo.list_streams()
+{:ok, order_groups} = Rheo.list_groups(orders)
+{:ok, fill_groups} = Rheo.list_groups(fills)
+
+Kino.DataTable.new([
+  %{api: "list_streams/1", result: inspect(Enum.sort(streams))},
+  %{api: "list_groups(orders)", result: inspect(Enum.sort(order_groups))},
+  %{api: "list_groups(fills)", result: inspect(Enum.sort(fill_groups))}
+])
+```
+
+---
+
+## 4. Lag and group health
+
+`Rheo.lag/3` is contiguous-frontier lag (v0.5+). `Rheo.group_info/3` adds
+**inflight** and **dead-letter** counts — the ops “consumer info” snapshot.
+
+```elixir
+# Nothing claimed yet → lag equals published high-watermark on orders.
+{:ok, lag_before} = Rheo.lag(orders, "risk")
+{:ok, info_before} = Rheo.group_info(orders, "risk")
+
+Kino.DataTable.new([
+  %{
+    when: "before fetch",
+    lag: lag_before.lag,
+    inflight: info_before.inflight_count,
+    dead_letters: info_before.dead_letter_count
+  }
+])
+```
+
+Claim one event and leave it leased (do **not** ack yet) so inflight becomes
+visible.
+
+```elixir
+{:ok, [leased]} = Rheo.fetch(orders, "risk", limit: 1, consumer_id: "ops-demo")
+
+{:ok, lag_inflight} = Rheo.lag(orders, "risk")
+{:ok, info_inflight} = Rheo.group_info(orders, "risk")
+
+Kino.DataTable.new([
+  %{
+    when: "one lease held",
+    leased_event: leased.event_id,
+    lag: lag_inflight.lag,
+    inflight: info_inflight.inflight_count,
+    dead_letters: info_inflight.dead_letter_count,
+    partition_0: inspect(lag_inflight.partitions[0])
+  }
+])
+```
+
+ACK the healthy lease, then reject the next one as poison.
+
+```elixir
+:ok = Rheo.ack(leased)
+
+{:ok, [bad_lease]} = Rheo.fetch(orders, "risk", limit: 1, consumer_id: "ops-demo")
+:ok = Rheo.reject(bad_lease, :invalid_payload)
+
+{:ok, lag_after} = Rheo.lag(orders, "risk")
+{:ok, info_after} = Rheo.group_info(orders, "risk")
+
+Kino.DataTable.new([
+  %{
+    when: "after ack + reject",
+    rejected_event: bad_lease.event_id,
+    lag: lag_after.lag,
+    inflight: info_after.inflight_count,
+    dead_letters: info_after.dead_letter_count
+  }
+])
+```
+
+---
+
+## 5. Dead letters — `dead_letters/3`
+
+Portable `%Rheo.DeadLetter{}` rows (ETS/Mongo/Ecto flip delivery status; Redis
+uses a DLQ stream — same inspect shape).
+
+```elixir
+{:ok, dead} = Rheo.dead_letters(orders, "risk", limit: 20)
+
+rows =
+  Enum.map(dead, fn d ->
+    %{
+      event_id: d.event_id,
+      sequence: d.sequence,
+      partition: d.partition,
+      reason: inspect(d.reason),
+      dead_lettered_at: d.dead_lettered_at && DateTime.to_iso8601(d.dead_lettered_at),
+      type: d.event && d.event.type
+    }
+  end)
+
+Kino.DataTable.new(rows)
+```
+
+Cursor pagination with `:after` (skip past a known `event_id`):
+
+```elixir
+case dead do
+  [%{event_id: first} | _] ->
+    {:ok, next_page} = Rheo.dead_letters(orders, "risk", limit: 20, after: first)
+    %{after: first, remaining: length(next_page)}
+
+  [] ->
+    %{after: nil, remaining: 0}
+end
+```
+
+---
+
+## 6. Recover with replay (not a dashboard settle)
+
+Ops APIs never reopen work. Use `Rheo.replay/3` when you intend to redeliver.
+
+```elixir
+:ok = Rheo.replay(orders, "risk", from_sequence: 0)
+
+{:ok, again} = Rheo.fetch(orders, "risk", limit: 10, consumer_id: "ops-demo")
+Enum.each(again, &Rheo.ack/1)
+
+{:ok, info_final} = Rheo.group_info(orders, "risk")
+
+%{
+  replayed_and_acked: length(again),
+  lag: info_final.lag.lag,
+  inflight: info_final.inflight_count,
+  # Rejected rows remain listed until you reset_group or recreate — replay
+  # reopens deliveries; dead-letter history may still show prior rejects
+  # depending on backend shape. Prefer group_info + dead_letters for ops.
+  dead_letter_count: info_final.dead_letter_count
+}
+```
+
+---
+
+## 7. Mix tasks (same APIs from the shell)
+
+From a host app (or this repo with Rheo started):
+
+```bash
+mix rheo.streams
+mix rheo.lag STREAM GROUP
+mix rheo.group_info STREAM GROUP
+mix rheo.dead_letters STREAM GROUP --limit 20
+mix rheo.bench --count 2000
+```
+
+Optional LiveDashboard: add `{:phoenix_live_dashboard, "~> 0.8"}` and register
+`Rheo.LiveDashboard.Page` — see the [ops guide](https://hexdocs.pm/rheo/ops.html).
+
+---
+
+## Takeaways
+
+| Question                 | API                                    |
+| ------------------------ | -------------------------------------- |
+| What streams exist?      | `Rheo.list_streams/1`                  |
+| What groups on a stream? | `Rheo.list_groups/2`                   |
+| How far behind?          | `Rheo.lag/3` / `Rheo.group_info/3`     |
+| What’s poisoned?       | `Rheo.dead_letters/3`                  |
+| How do I reopen?         | `Rheo.replay/3` / `Rheo.reset_group/3` |
+
+Next: [Backends](backends.livemd) to run the same inspect APIs on Redis/Mongo, or
+[0.9 → 0.10 migration](https://hexdocs.pm/rheo/0-9-to-0-10.html).

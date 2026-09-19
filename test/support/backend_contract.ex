@@ -290,6 +290,35 @@ defmodule Rheo.BackendContract do
         end
       end
 
+      describe "ops inspect" do
+        test "list streams and groups, dead letters, group info", %{rheo: rheo} do
+          s = stream()
+          assert :ok = Rheo.create_stream(s, ropts(rheo))
+          assert :ok = Rheo.create_group(s, "g", Keyword.put(ropts(rheo), :max_attempts, 5))
+          assert :ok = Rheo.create_group(s, "other", ropts(rheo))
+          assert {:ok, event} = Rheo.append(s, %{type: "e"}, ropts(rheo))
+
+          assert {:ok, streams} = Rheo.list_streams(ropts(rheo))
+          assert s in streams
+
+          assert {:ok, groups} = Rheo.list_groups(s, ropts(rheo))
+          assert Enum.sort(groups) == ["g", "other"]
+
+          assert {:ok, [lease]} = Rheo.fetch(s, "g", [limit: 1] ++ ropts(rheo))
+          assert :ok = Rheo.reject(lease, :bad, ropts(rheo))
+
+          assert {:ok, [%Rheo.DeadLetter{} = dead]} =
+                   Rheo.dead_letters(s, "g", [limit: 10] ++ ropts(rheo))
+
+          assert dead.event_id == event.id
+          assert dead.reason == :bad or is_binary(dead.reason)
+
+          assert {:ok, %Rheo.GroupInfo{} = info} = Rheo.group_info(s, "g", ropts(rheo))
+          assert info.dead_letter_count >= 1
+          assert info.lag.stream == s
+        end
+      end
+
       describe "replay" do
         test "replay and reset_group", %{rheo: rheo} do
           s = stream()
