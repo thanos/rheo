@@ -138,6 +138,28 @@ if Code.ensure_loaded?(Redix) do
     def dlq(name, stream, group), do: prefix(name) <> "dlq:" <> stream <> ":" <> group
 
     @doc """
+    `SCAN` pattern matching every stream meta hash.
+
+    ## Examples
+
+        iex> Rheo.Backend.Redis.Keys.meta_pattern(MyApp.Redis)
+        "rheo:MyApp.Redis:meta:*"
+    """
+    @spec meta_pattern(atom() | String.t()) :: String.t()
+    def meta_pattern(name), do: prefix(name) <> "meta:*"
+
+    @doc """
+    `SCAN` pattern matching every group meta hash for one stream.
+
+    ## Examples
+
+        iex> Rheo.Backend.Redis.Keys.group_meta_pattern(MyApp.Redis, "market")
+        "rheo:MyApp.Redis:gmeta:market:*"
+    """
+    @spec group_meta_pattern(atom() | String.t(), String.t()) :: String.t()
+    def group_meta_pattern(name, stream), do: prefix(name) <> "gmeta:" <> stream <> ":*"
+
+    @doc """
     Group meta field holding a partition's committed ACK frontier.
 
     ## Examples

@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.9.0**. Redis Streams native backend over the v0.8 API.
+Current release: **v0.10.0**. Ops surface over the v0.9 backends.
 
 ## Done in 0.1.0
 
@@ -98,10 +98,16 @@ Current release: **v0.9.0**. Redis Streams native backend over the v0.8 API.
 - [0.8 → 0.9 migration](https://hexdocs.pm/rheo/0-8-to-0-9.html); Redis guide
 - Article 16 (portable sequence, native PEL)
 
-## Next (0.10+)
+## Done in 0.10.0
 
-- Mnesia / BEAM-native distributed backend
-- Ops surface: DLQ inspection, lag metrics, LiveDashboard, benchmarks
+- Ops surface (ADR 027): DLQ listing, stream/group inventory, group health,
+  telemetry metrics helpers, optional LiveDashboard, Mix inspect tasks,
+  formalized benchmarks
+- [0.9 → 0.10 migration](https://hexdocs.pm/rheo/0-9-to-0-10.html)
+
+## Next (0.11+)
+
+- Mnesia / BEAM-native distributed backend (deferred from 0.10)
 - API freeze candidate (0.12)
 - Article candidate: Rheo + Flow settlement narrative
 

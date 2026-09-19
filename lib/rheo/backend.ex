@@ -14,6 +14,8 @@ defmodule Rheo.Backend do
     * log — `append/4`, `append_batch/4`, `read/3`, `query/2`
     * delivery — `fetch/4`, `renew/3`, `ack/2`, `retry/3`, `reject/3`
     * group progress — `replay/4`, `reset_group/4`, `lag/4`
+    * ops inspect (optional) — `list_streams/2`, `list_groups/3`,
+      `dead_letters/4`, `group_info/4` (ADR 027)
     * lifecycle and health — `child_spec/1`, `capabilities/0`,
       `ensure_indexes/1`, `ping/1`
 
@@ -46,7 +48,7 @@ defmodule Rheo.Backend do
   guarantees; it never skips fencing or at-least-once checks.
   """
 
-  alias Rheo.{Event, Lease, Query}
+  alias Rheo.{DeadLetter, Event, GroupInfo, Lease, Query}
 
   @typedoc "Opaque backend connection handle (process name, pid, table ref, …)."
   @type handle :: term()
@@ -129,4 +131,45 @@ defmodule Rheo.Backend do
 
   @doc "Health-checks the backend connection."
   @callback ping(handle()) :: :ok | {:error, term()}
+
+  @doc """
+  Lists registered stream names (ops inspect, ADR 027).
+
+  Optional — when unimplemented, `Rheo.list_streams/1` returns
+  `{:error, :unsupported}`.
+  """
+  @callback list_streams(handle(), opts()) :: {:ok, [stream()]} | {:error, term()}
+
+  @doc """
+  Lists consumer group names for a stream (ops inspect, ADR 027).
+
+  Optional — when unimplemented, `Rheo.list_groups/2` returns
+  `{:error, :unsupported}`.
+  """
+  @callback list_groups(handle(), stream(), opts()) :: {:ok, [group()]} | {:error, term()}
+
+  @doc """
+  Lists dead-lettered deliveries for a group (ops inspect, ADR 027).
+
+  Options typically include `:limit` (default 100) and `:after` (event id cursor).
+
+  Optional — when unimplemented, `Rheo.dead_letters/3` returns
+  `{:error, :unsupported}`.
+  """
+  @callback dead_letters(handle(), stream(), group(), opts()) ::
+              {:ok, [DeadLetter.t()]} | {:error, term()}
+
+  @doc """
+  Returns lag plus inflight and dead-letter counts (ops inspect, ADR 027).
+
+  Optional — when unimplemented, `Rheo.group_info/3` returns
+  `{:error, :unsupported}`.
+  """
+  @callback group_info(handle(), stream(), group(), opts()) ::
+              {:ok, GroupInfo.t()} | {:error, term()}
+
+  @optional_callbacks list_streams: 2,
+                      list_groups: 3,
+                      dead_letters: 4,
+                      group_info: 4
 end

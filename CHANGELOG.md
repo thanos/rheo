@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-09-18
+
+Ops surface for an embedded Rheo. Inventory, DLQ listing, group health,
+optional metrics/LiveDashboard, and Mix inspect tasks — without changing
+Consumer / Event / Query semantics or inventing a control plane.
+
+See [0.9 → 0.10 migration](https://hexdocs.pm/rheo/0-9-to-0-10.html) and
+[ADR 027](https://hexdocs.pm/rheo/027-ops-surface.html).
+
+### Added
+
+- `Rheo.list_streams/1`, `Rheo.list_groups/2`, `Rheo.dead_letters/3`,
+  `Rheo.group_info/3` plus `%Rheo.DeadLetter{}` / `%Rheo.GroupInfo{}`
+- Backend optional callbacks implemented on ETS, Mongo, Ecto, Redis
+- Optional `Rheo.Telemetry.Metrics` (requires `telemetry_metrics`)
+- Optional `Rheo.LiveDashboard.Page` (requires `phoenix_live_dashboard`)
+- Mix tasks: `rheo.streams`, `rheo.lag`, `rheo.dead_letters`, `rheo.group_info`,
+  `rheo.bench`
+- Ops Livebook (`notebooks/ops.livemd`); LiveDashboard Playground demo
+  (`notebooks/live_dashboard.livemd`, `examples/live_dashboard_ops.exs`);
+  ops guide, ADR 027, migration `0.9-to-0.10`
+
+### Changed
+
+- Roadmap: Ops is 0.10; Mnesia deferred to 0.11
+- Version bump only for hosts that ignore the new inspect APIs
+
 ## [0.9.0] - 2026-09-18
 
 Redis Streams native backend. v0.8 prepared Model C receipts and the semantic

@@ -18,7 +18,7 @@ defmodule Rheo.Backend.ETS do
   @behaviour Rheo.Backend
   use GenServer
 
-  alias Rheo.{Clock, Event, Id, Lag, Lease, Partition, Query, Telemetry}
+  alias Rheo.{Clock, DeadLetter, Event, GroupInfo, Id, Lag, Lease, Partition, Query, Telemetry}
 
   defstruct [:name, :streams, :events, :groups, :deliveries]
 
@@ -145,6 +145,22 @@ defmodule Rheo.Backend.ETS do
   @impl true
   def lag(handle, stream, group, opts \\ []),
     do: call(handle, {:lag, stream, group, opts})
+
+  @impl true
+  def list_streams(handle, opts \\ []),
+    do: call(handle, {:list_streams, opts})
+
+  @impl true
+  def list_groups(handle, stream, opts \\ []),
+    do: call(handle, {:list_groups, stream, opts})
+
+  @impl true
+  def dead_letters(handle, stream, group, opts \\ []),
+    do: call(handle, {:dead_letters, stream, group, opts})
+
+  @impl true
+  def group_info(handle, stream, group, opts \\ []),
+    do: call(handle, {:group_info, stream, group, opts})
 
   defp call(handle, request) do
     timeout = Application.get_env(:rheo, :ets_call_timeout, 5_000)
@@ -528,6 +544,148 @@ defmodule Rheo.Backend.ETS do
       end
 
     {:reply, reply, state}
+  end
+
+  def handle_call({:list_streams, _opts}, _from, state) do
+    streams =
+      state.streams
+      |> :ets.tab2list()
+      |> Enum.map(fn {name, _} -> name end)
+      |> Enum.sort()
+
+    {:reply, {:ok, streams}, state}
+  end
+
+  def handle_call({:list_groups, stream, _opts}, _from, state) do
+    reply =
+      case :ets.lookup(state.streams, stream) do
+        [] ->
+          {:error, :stream_not_found}
+
+        [_] ->
+          groups =
+            state.groups
+            |> :ets.tab2list()
+            |> Enum.filter(fn {{s, _g}, _} -> s == stream end)
+            |> Enum.map(fn {{_s, g}, _} -> g end)
+            |> Enum.sort()
+
+          {:ok, groups}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:dead_letters, stream, group, opts}, _from, state) do
+    reply =
+      case :ets.lookup(state.groups, {stream, group}) do
+        [] ->
+          {:error, :group_not_found}
+
+        [_] ->
+          limit = Keyword.get(opts, :limit, 100)
+          after_id = Keyword.get(opts, :after)
+
+          rows =
+            state.deliveries
+            |> :ets.tab2list()
+            |> Enum.filter(fn {{s, g, _}, d} ->
+              s == stream and g == group and d.status == :rejected
+            end)
+            |> Enum.map(fn {_, d} -> delivery_to_dead_letter(state, d) end)
+            |> Enum.sort_by(fn %DeadLetter{sequence: seq, dead_lettered_at: at} ->
+              {seq || 0, at || ~U[1970-01-01 00:00:00Z]}
+            end)
+            |> drop_after(after_id)
+            |> Enum.take(limit)
+
+          {:ok, rows}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:group_info, stream, group, opts}, _from, state) do
+    reply =
+      case {:ets.lookup(state.streams, stream), :ets.lookup(state.groups, {stream, group})} do
+        {_, []} ->
+          {:error, :group_not_found}
+
+        {[], _} ->
+          {:error, :stream_not_found}
+
+        {[{^stream, stream_rec}], [{_, group_rec}]} ->
+          with {:ok, partitions} <- resolve_assignment(opts, stream_rec.partition_count) do
+            lag =
+              Lag.from_maps(
+                stream,
+                group,
+                group_frontiers(group_rec),
+                stream_next_sequences(stream_rec),
+                partitions
+              )
+
+            {inflight, dead} = count_group_statuses(state, stream, group)
+
+            {:ok,
+             %GroupInfo{
+               stream: stream,
+               group: group,
+               lag: lag,
+               inflight_count: inflight,
+               dead_letter_count: dead
+             }}
+          end
+      end
+
+    {:reply, reply, state}
+  end
+
+  defp count_group_statuses(state, stream, group) do
+    state.deliveries
+    |> :ets.tab2list()
+    |> Enum.reduce({0, 0}, &tally_group_status(&1, stream, group, &2))
+  end
+
+  defp tally_group_status({{s, g, _}, %{status: :leased}}, stream, group, {inf, dl})
+       when s == stream and g == group,
+       do: {inf + 1, dl}
+
+  defp tally_group_status({{s, g, _}, %{status: :rejected}}, stream, group, {inf, dl})
+       when s == stream and g == group,
+       do: {inf, dl + 1}
+
+  defp tally_group_status(_entry, _stream, _group, acc), do: acc
+
+  defp delivery_to_dead_letter(state, delivery) do
+    event =
+      case :ets.lookup(
+             state.events,
+             {delivery.stream, delivery.partition, delivery.sequence}
+           ) do
+        [{_, %Event{} = e}] -> e
+        _ -> nil
+      end
+
+    %DeadLetter{
+      stream: delivery.stream,
+      group: delivery.group,
+      event_id: delivery.event_id,
+      partition: delivery.partition,
+      sequence: delivery.sequence,
+      reason: Map.get(delivery, :reason),
+      dead_lettered_at: Map.get(delivery, :dead_lettered_at),
+      event: event
+    }
+  end
+
+  defp drop_after(rows, nil), do: rows
+
+  defp drop_after(rows, after_id) when is_binary(after_id) do
+    case Enum.find_index(rows, &(&1.event_id == after_id)) do
+      nil -> rows
+      idx -> Enum.drop(rows, idx + 1)
+    end
   end
 
   defp do_reject(state, lease, delivery, reason) do

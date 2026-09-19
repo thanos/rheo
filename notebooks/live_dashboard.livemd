@@ -1,0 +1,505 @@
+# Rheo LiveDashboard via Phoenix Playground (v0.10.0)
+
+```elixir
+Mix.install(
+  [
+    # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
+    # {:rheo, "~> 0.10.0"},
+    {:rheo, path: Path.join(__DIR__, "..")},
+    {:phoenix_playground, "~> 0.1.9"},
+    {:phoenix_live_dashboard, "~> 0.8"}
+  ],
+  config: [
+    rheo: [start_on_application: false]
+  ]
+)
+```
+
+## Intro
+
+Boots a **single-file Phoenix app** with
+[Phoenix Playground](https://hex.pm/packages/phoenix_playground):
+
+* Control panel — toggle a **publisher**, toggle **risk** / **billing** consumers,
+  watch the **stream tail**
+* LiveDashboard — real `Rheo.LiveDashboard.Page` at `/dashboard/rheo`
+
+![Rheo ops control panel](https://raw.githubusercontent.com/thanos/rheo/main/docs/screenshots/Rheo-Screenshot-Example-Control.jpg)
+
+![Rheo LiveDashboard — group health](https://raw.githubusercontent.com/thanos/rheo/main/docs/screenshots/Rheo-Screenshot-LiveDashboard.jpg)
+
+Sibling: [Ops APIs](ops.livemd) · [Index](rheo_demo.livemd) ·
+`examples/live_dashboard_ops.exs`
+
+<!-- livebook:{"break_markdown":true} -->
+
+### Before you evaluate
+
+1. Open from a **repo clone** so the path dependency resolves
+2. Free **port 4000**
+3. Evaluate **Install**, then **Start** — opens the control panel
+
+---
+
+## Start
+
+```elixir
+unless Code.ensure_loaded?(Rheo.LiveDashboard.Page) do
+  raise """
+  Rheo.LiveDashboard.Page did not compile.
+
+  phoenix_live_dashboard must be in Mix.install so the optional Rheo page
+  module is available (ADR 020).
+  """
+end
+
+Application.put_env(:rheo, Rheo.LiveDashboard, rheo: DemoRheo)
+
+defmodule Demo.RiskConsumer do
+  use Rheo.Consumer
+
+  @impl true
+  def setup(_opts), do: {:ok, %{}}
+
+  @impl true
+  def handle_event(_event, _ctx), do: :ack
+end
+
+defmodule Demo.BillingConsumer do
+  use Rheo.Consumer
+
+  @impl true
+  def setup(_opts), do: {:ok, %{}}
+
+  @impl true
+  def handle_event(_event, _ctx), do: :ack
+end
+
+defmodule Demo.Publisher do
+  @moduledoc false
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def running?, do: GenServer.call(__MODULE__, :running?)
+  def start_publishing, do: GenServer.call(__MODULE__, :start)
+  def stop_publishing, do: GenServer.call(__MODULE__, :stop)
+
+  @impl true
+  def init(opts) do
+    {:ok,
+     %{
+       stream: Keyword.fetch!(opts, :stream),
+       rheo: Keyword.fetch!(opts, :rheo),
+       n: 0,
+       timer: nil
+     }}
+  end
+
+  @impl true
+  def handle_call(:running?, _from, state), do: {:reply, state.timer != nil, state}
+
+  def handle_call(:start, _from, %{timer: nil} = state) do
+    {:reply, :ok, schedule(state)}
+  end
+
+  def handle_call(:start, _from, state), do: {:reply, :ok, state}
+
+  def handle_call(:stop, _from, state) do
+    if state.timer, do: Process.cancel_timer(state.timer)
+    {:reply, :ok, %{state | timer: nil}}
+  end
+
+  @impl true
+  def handle_info(:tick, %{timer: nil} = state), do: {:noreply, state}
+
+  def handle_info(:tick, state) do
+    n = state.n + 1
+    key = "k-#{rem(n, 4)}"
+
+    _ =
+      Rheo.append(
+        state.stream,
+        %{type: "order_placed", n: n, source: "publisher"},
+        key: key,
+        rheo: state.rheo
+      )
+
+    {:noreply, schedule(%{state | n: n})}
+  end
+
+  defp schedule(state) do
+    %{state | timer: Process.send_after(self(), :tick, 750)}
+  end
+end
+
+defmodule Demo.ControlLive do
+  use Phoenix.LiveView
+
+  @stream "orders-demo"
+  @tail_limit 20
+  @refresh_ms 1_000
+
+  @impl true
+  def mount(_params, _session, socket) do
+    if connected?(socket), do: Process.send_after(self(), :refresh, @refresh_ms)
+
+    {:ok,
+     socket
+     |> assign(page_title: "Rheo ops control")
+     |> assign_status()}
+  end
+
+  @impl true
+  def render(assigns) do
+    ~H"""
+    <main class="wrap">
+      <header class="row">
+        <div>
+          <h1>Rheo ops control</h1>
+          <p class="muted">
+            Publisher + consumers on <code>{@stream}</code> ·
+            <a href="/dashboard/rheo">LiveDashboard → Rheo</a>
+          </p>
+        </div>
+      </header>
+
+      <section class="panel">
+        <h2>Publisher</h2>
+        <p class="muted">Appends to {@stream} every ~750ms while running.</p>
+        <div class="row gap">
+          <button
+            phx-click="toggle_publisher"
+            class={if(@publisher_on, do: "btn danger", else: "btn primary")}
+          >
+            {if @publisher_on, do: "Stop publisher", else: "Start publisher"}
+          </button>
+          <span class={if(@publisher_on, do: "pill on", else: "pill")}>
+            {if @publisher_on, do: "running", else: "stopped"}
+          </span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Consumers</h2>
+        <div class="grid">
+          <div class="card-ish">
+            <strong>risk</strong>
+            <div class="row gap">
+              <button
+                phx-click="toggle_consumer"
+                phx-value-group="risk"
+                class={if(@risk_on, do: "btn danger", else: "btn primary")}
+              >
+                {if @risk_on, do: "Stop", else: "Start"}
+              </button>
+              <span class={if(@risk_on, do: "pill on", else: "pill")}>
+                {if @risk_on, do: "on", else: "off"}
+              </span>
+            </div>
+            <p class="stats">
+              lag={@risk_info.lag} · inflight={@risk_info.inflight} · dlq={@risk_info.dead}
+            </p>
+          </div>
+          <div class="card-ish">
+            <strong>billing</strong>
+            <div class="row gap">
+              <button
+                phx-click="toggle_consumer"
+                phx-value-group="billing"
+                class={if(@billing_on, do: "btn danger", else: "btn primary")}
+              >
+                {if @billing_on, do: "Stop", else: "Start"}
+              </button>
+              <span class={if(@billing_on, do: "pill on", else: "pill")}>
+                {if @billing_on, do: "on", else: "off"}
+              </span>
+            </div>
+            <p class="stats">
+              lag={@billing_info.lag} · inflight={@billing_info.inflight} · dlq={@billing_info.dead}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Stream tail <span class="muted">({@stream}, last {@tail_limit})</span></h2>
+        <div class="tail">
+          <table>
+            <thead>
+              <tr>
+                <th>seq</th>
+                <th>p</th>
+                <th>type</th>
+                <th>key</th>
+                <th>payload</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr :for={e <- @tail}>
+                <td>{e.sequence}</td>
+                <td>{e.partition}</td>
+                <td>{e.type}</td>
+                <td>{e.key || "—"}</td>
+                <td class="mono">{inspect(e.payload)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p :if={@tail == []} class="muted">No events yet — start the publisher.</p>
+        </div>
+      </section>
+    </main>
+
+    <style type="text/css">
+      :root {
+        --bg: #f4f1ea;
+        --ink: #1a1a1a;
+        --muted: #5c5c5c;
+        --line: #d9d2c5;
+        --panel: #fffdf8;
+        --accent: #0b6e4f;
+        --danger: #8b2e2e;
+      }
+      body { margin: 0; background: var(--bg); color: var(--ink); }
+      .wrap { max-width: 56rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif; }
+      h1 { font-size: 1.75rem; margin: 0 0 0.25rem; letter-spacing: -0.02em; }
+      h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+      .muted { color: var(--muted); font-size: 0.9rem; }
+      a { color: var(--accent); }
+      .row { display: flex; align-items: center; flex-wrap: wrap; }
+      .gap { gap: 0.75rem; }
+      .panel { background: var(--panel); border: 1px solid var(--line); padding: 1rem 1.1rem; margin: 1rem 0; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+      @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+      .card-ish { border: 1px solid var(--line); padding: 0.85rem; background: #fff; }
+      .btn { border: 1px solid var(--ink); background: #fff; color: var(--ink); padding: 0.45rem 0.85rem; cursor: pointer; font: inherit; }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+      .pill { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--line); padding: 0.2rem 0.5rem; color: var(--muted); }
+      .pill.on { border-color: var(--accent); color: var(--accent); }
+      .stats { margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; }
+      .tail { max-height: 16rem; overflow: auto; border: 1px solid var(--line); background: #1b1b1b; color: #e8e2d6; }
+      .tail table { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+      .tail th, .tail td { padding: 0.35rem 0.55rem; border-bottom: 1px solid #333; text-align: left; vertical-align: top; }
+      .tail th { position: sticky; top: 0; background: #111; color: #a8a29a; font-weight: 500; }
+      .mono { word-break: break-all; }
+    </style>
+    """
+  end
+
+  @impl true
+  def handle_event("toggle_publisher", _params, socket) do
+    if Demo.Publisher.running?() do
+      :ok = Demo.Publisher.stop_publishing()
+    else
+      :ok = Demo.Publisher.start_publishing()
+    end
+
+    {:noreply, assign_status(socket)}
+  end
+
+  def handle_event("toggle_consumer", %{"group" => group}, socket) do
+    _ = toggle_consumer(group)
+    {:noreply, assign_status(socket)}
+  end
+
+  @impl true
+  def handle_info(:refresh, socket) do
+    Process.send_after(self(), :refresh, @refresh_ms)
+    {:noreply, assign_status(socket)}
+  end
+
+  defp toggle_consumer(group) when group in ["risk", "billing"] do
+    name = group_name(group)
+
+    if Process.whereis(name) do
+      GenServer.stop(name)
+    else
+      module = if group == "risk", do: Demo.RiskConsumer, else: Demo.BillingConsumer
+
+      {:ok, _} =
+        module.start_link(stream: @stream, group: group, rheo: DemoRheo)
+    end
+  end
+
+  defp assign_status(socket) do
+    assign(socket,
+      stream: @stream,
+      tail_limit: @tail_limit,
+      publisher_on: publisher_on?(),
+      risk_on: alive?(group_name("risk")),
+      billing_on: alive?(group_name("billing")),
+      risk_info: group_snapshot("risk"),
+      billing_info: group_snapshot("billing"),
+      tail: stream_tail()
+    )
+  end
+
+  defp group_name(group), do: Rheo.Names.group(DemoRheo, @stream, group)
+
+  defp publisher_on? do
+    alive?(Demo.Publisher) and Demo.Publisher.running?()
+  rescue
+    _ -> false
+  end
+
+  defp alive?(name), do: is_pid(Process.whereis(name))
+
+  defp group_snapshot(group) do
+    case Rheo.group_info(@stream, group, rheo: DemoRheo) do
+      {:ok, info} ->
+        %{lag: info.lag.lag, inflight: info.inflight_count, dead: info.dead_letter_count}
+
+      _ ->
+        %{lag: "—", inflight: "—", dead: "—"}
+    end
+  end
+
+  defp stream_tail do
+    case Rheo.query(@stream, order_by: [sequence: :desc], limit: @tail_limit, rheo: DemoRheo) do
+      {:ok, events} -> events
+      _ -> []
+    end
+  end
+end
+
+defmodule Demo.Router do
+  use Phoenix.Router
+  import Phoenix.LiveView.Router
+  import Phoenix.LiveDashboard.Router
+
+  # Playground layout LiveSocket has no CSRF param — omit protect_from_forgery here.
+  pipeline :browser do
+    plug :accepts, ["html"]
+    plug :fetch_session
+    plug :put_root_layout, html: {PhoenixPlayground.Layout, :root}
+    plug :put_secure_browser_headers
+  end
+
+  # LiveDashboard layout expects csrf-token meta from protect_from_forgery.
+  pipeline :dashboard do
+    plug :accepts, ["html"]
+    plug :fetch_session
+    plug :protect_from_forgery
+    plug :put_secure_browser_headers
+  end
+
+  scope "/" do
+    pipe_through :browser
+    live "/", Demo.ControlLive
+  end
+
+  scope "/" do
+    pipe_through :dashboard
+
+    live_dashboard "/dashboard",
+      additional_pages: [rheo: Rheo.LiveDashboard.Page]
+  end
+end
+
+defmodule Demo.Seed do
+  @stream "orders-demo"
+
+  def run do
+    ensure_stream(@stream, partition_count: 2)
+    ensure_group(@stream, "risk")
+    ensure_group(@stream, "billing")
+    ensure_stream("fills-demo")
+    ensure_group("fills-demo", "ledger")
+
+    if seed_needed?() do
+      {:ok, _} =
+        Rheo.append(@stream, %{type: "order_placed", n: 0, source: "seed"},
+          key: "seed",
+          rheo: DemoRheo
+        )
+
+      # One poison path so LiveDashboard shows a dead letter without a consumer.
+      {:ok, _} =
+        Rheo.append(@stream, %{type: "order_placed", n: -1, source: "poison"},
+          key: "poison",
+          rheo: DemoRheo
+        )
+
+      {:ok, [lease]} = Rheo.fetch(@stream, "risk", limit: 1, consumer_id: "seed", rheo: DemoRheo)
+      :ok = Rheo.ack(lease, rheo: DemoRheo)
+      {:ok, [bad]} = Rheo.fetch(@stream, "risk", limit: 1, consumer_id: "seed", rheo: DemoRheo)
+      :ok = Rheo.reject(bad, :invalid_payload, rheo: DemoRheo)
+    end
+
+    Rheo.group_info(@stream, "risk", rheo: DemoRheo)
+  end
+
+  defp ensure_stream(stream, opts \\ []) do
+    case Rheo.create_stream(stream, Keyword.put(opts, :rheo, DemoRheo)) do
+      :ok -> :ok
+      {:error, :already_exists} -> :ok
+      other -> other
+    end
+  end
+
+  defp ensure_group(stream, group) do
+    case Rheo.create_group(stream, group, rheo: DemoRheo) do
+      :ok -> :ok
+      {:error, :already_exists} -> :ok
+      other -> other
+    end
+  end
+
+  defp seed_needed? do
+    case Rheo.group_info(@stream, "risk", rheo: DemoRheo) do
+      {:ok, %{dead_letter_count: n}} when n > 0 -> false
+      _ -> true
+    end
+  end
+end
+
+for name <- [
+      Rheo.Names.group(DemoRheo, "orders-demo", "risk"),
+      Rheo.Names.group(DemoRheo, "orders-demo", "billing"),
+      Demo.Publisher,
+      DemoRheo
+    ] do
+  if pid = Process.whereis(name) do
+    try do
+      GenServer.stop(pid)
+    catch
+      :exit, _ -> :ok
+    end
+  end
+end
+
+PhoenixPlayground.start(
+  plug: Demo.Router,
+  child_specs: [
+    {Rheo, name: DemoRheo, backend: Rheo.Backend.ETS},
+    {Demo.Publisher, stream: "orders-demo", rheo: DemoRheo}
+  ],
+  port: 4000,
+  open_browser: true,
+  endpoint_options: [
+    secret_key_base:
+      "rheo_live_dashboard_ops_demo_secret_key_base_at_least_64_bytes!!"
+  ]
+)
+
+{:ok, info} = Demo.Seed.run()
+
+%{
+  control: "http://localhost:4000/",
+  dashboard: "http://localhost:4000/dashboard/rheo",
+  risk_dead_letters: info.dead_letter_count
+}
+```
+
+## How to use
+
+1. **Start publisher** — watch the stream tail fill
+2. **Start risk / billing** — lag drops as consumers ack
+3. Open **[LiveDashboard → Rheo](http://localhost:4000/dashboard/rheo)** for inventory / health
+
+## CLI twin
+
+```bash
+iex examples/live_dashboard_ops.exs
+```

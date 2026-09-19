@@ -49,7 +49,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     @behaviour Rheo.Backend
 
     alias Rheo.Backend.Ecto.{Codec, Migrations, Server}
-    alias Rheo.{Clock, Event, Id, Lag, Lease, Partition, Query, Telemetry}
+    alias Rheo.{Clock, DeadLetter, Event, GroupInfo, Id, Lag, Lease, Partition, Query, Telemetry}
 
     @streams "rheo_streams"
     @sequences "rheo_stream_sequences"
@@ -332,6 +332,118 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
            {:ok, high_watermarks} <- stream_next_sequences(config, stream) do
         {:ok,
          Lag.from_maps(stream, group, group_frontiers(group_row), high_watermarks, partitions)}
+      end
+    end
+
+    @impl true
+    def list_streams(handle, _opts \\ []) do
+      with {:ok, config} <- Server.config(handle) do
+        sql = "SELECT name FROM #{table(config, @streams)} ORDER BY name"
+
+        with {:ok, rows} <- all(config, sql, []) do
+          {:ok, Enum.map(rows, & &1["name"])}
+        end
+      end
+    end
+
+    @impl true
+    def list_groups(handle, stream, _opts \\ []) do
+      with {:ok, config} <- Server.config(handle),
+           {:ok, _} <- fetch_stream(config, stream) do
+        sql =
+          "SELECT name FROM #{table(config, @groups)} WHERE stream = ? ORDER BY name"
+
+        with {:ok, rows} <- all(config, sql, [stream]) do
+          {:ok, Enum.map(rows, & &1["name"])}
+        end
+      end
+    end
+
+    @impl true
+    def dead_letters(handle, stream, group, opts \\ []) do
+      with {:ok, config} <- Server.config(handle),
+           {:ok, _} <- fetch_group(config, stream, group) do
+        limit = Keyword.get(opts, :limit, 100)
+        after_id = Keyword.get(opts, :after)
+
+        sql =
+          "SELECT event_id, partition, sequence, reason, dead_lettered_at FROM " <>
+            "#{table(config, @deliveries)} WHERE stream = ? AND group_name = ? " <>
+            "AND status = 'rejected' ORDER BY sequence ASC, event_id ASC"
+
+        with {:ok, rows} <- all(config, sql, [stream, group]) do
+          rows =
+            rows
+            |> drop_after_row(after_id)
+            |> Enum.take(limit)
+
+          {:ok, Enum.map(rows, &ecto_dead_letter(config, stream, group, &1))}
+        end
+      end
+    end
+
+    @impl true
+    def group_info(handle, stream, group, opts \\ []) do
+      with {:ok, config} <- Server.config(handle),
+           {:ok, lag} <- lag(handle, stream, group, opts) do
+        inflight = count_status(config, stream, group, "leased")
+        dead = count_status(config, stream, group, "rejected")
+
+        {:ok,
+         %GroupInfo{
+           stream: stream,
+           group: group,
+           lag: lag,
+           inflight_count: inflight,
+           dead_letter_count: dead
+         }}
+      end
+    end
+
+    defp count_status(config, stream, group, status) do
+      sql =
+        "SELECT COUNT(*) AS c FROM #{table(config, @deliveries)} " <>
+          "WHERE stream = ? AND group_name = ? AND status = ?"
+
+      case one(config, sql, [stream, group, status]) do
+        {:ok, %{"c" => c}} when is_integer(c) -> c
+        {:ok, %{"c" => c}} when is_binary(c) -> String.to_integer(c)
+        _ -> 0
+      end
+    end
+
+    defp ecto_dead_letter(config, stream, group, row) do
+      event_id = row["event_id"]
+
+      event =
+        case one(
+               config,
+               "SELECT #{@event_columns} FROM #{table(config, @events)} WHERE id = ?",
+               [event_id]
+             ) do
+          {:ok, nil} -> nil
+          {:ok, event_row} -> Codec.event_from_row(event_row)
+          _ -> nil
+        end
+
+      %DeadLetter{
+        stream: stream,
+        group: group,
+        event_id: event_id,
+        partition: row["partition"] || 0,
+        sequence: row["sequence"],
+        reason: row["reason"],
+        dead_lettered_at: row["dead_lettered_at"],
+        event: event
+      }
+    end
+
+    defp drop_after_row(rows, nil), do: rows
+
+    defp drop_after_row(rows, after_id) when is_binary(after_id) do
+      case Enum.find_index(rows, &(&1["event_id"] == after_id)) do
+        nil -> rows
+        idx -> Enum.drop(rows, idx + 1)
       end
     end
 

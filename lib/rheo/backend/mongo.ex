@@ -29,7 +29,7 @@ if Code.ensure_loaded?(Mongo) do
 
     alias Rheo.Backend.Mongo.Client
     alias Rheo.Backend.Mongo.Codec
-    alias Rheo.{Clock, Event, Id, Lag, Lease, Partition, Query, Telemetry}
+    alias Rheo.{Clock, DeadLetter, Event, GroupInfo, Id, Lag, Lease, Partition, Query, Telemetry}
 
     @streams "streams"
     @events "events"
@@ -615,6 +615,139 @@ if Code.ensure_loaded?(Mongo) do
            stream_next_sequences(stream_doc),
            partitions
          )}
+      end
+    end
+
+    @impl true
+    def list_streams(topo, _opts \\ []) do
+      names =
+        topo
+        |> client().find(@streams, %{}, sort: %{"name" => 1}, projection: %{"name" => 1})
+        |> Enum.map(fn doc -> doc["name"] || doc[:name] end)
+        |> Enum.reject(&is_nil/1)
+
+      {:ok, names}
+    rescue
+      error -> {:error, map_backend_error(error)}
+    end
+
+    @impl true
+    def list_groups(topo, stream, _opts \\ []) do
+      with {:ok, _} <- fetch_stream(topo, stream) do
+        names =
+          topo
+          |> client().find(@groups, %{"stream" => stream},
+            sort: %{"name" => 1},
+            projection: %{"name" => 1}
+          )
+          |> Enum.map(fn doc -> doc["name"] || doc[:name] end)
+          |> Enum.reject(&is_nil/1)
+
+        {:ok, names}
+      end
+    rescue
+      error -> {:error, map_backend_error(error)}
+    end
+
+    @impl true
+    def dead_letters(topo, stream, group, opts \\ []) do
+      with {:ok, _} <- fetch_group(topo, stream, group) do
+        limit = Keyword.get(opts, :limit, 100)
+        after_id = Keyword.get(opts, :after)
+
+        docs =
+          topo
+          |> client().find(
+            @deliveries,
+            %{"stream" => stream, "group" => group, "status" => "rejected"},
+            sort: %{"sequence" => 1, "event_id" => 1}
+          )
+          |> Enum.to_list()
+          |> drop_after_event_id(after_id)
+          |> Enum.take(limit)
+
+        {:ok, Enum.map(docs, &mongo_dead_letter(topo, &1))}
+      end
+    rescue
+      error -> {:error, map_backend_error(error)}
+    end
+
+    @impl true
+    def group_info(topo, stream, group, opts \\ []) do
+      with {:ok, lag} <- lag(topo, stream, group, opts) do
+        inflight =
+          count_deliveries(topo, stream, group, "leased")
+
+        dead =
+          count_deliveries(topo, stream, group, "rejected")
+
+        {:ok,
+         %GroupInfo{
+           stream: stream,
+           group: group,
+           lag: lag,
+           inflight_count: inflight,
+           dead_letter_count: dead
+         }}
+      end
+    end
+
+    defp count_deliveries(topo, stream, group, status) do
+      topo
+      |> client().find(
+        @deliveries,
+        %{"stream" => stream, "group" => group, "status" => status},
+        projection: %{"_id" => 1}
+      )
+      |> Enum.count()
+    rescue
+      _ -> 0
+    end
+
+    defp mongo_dead_letter(topo, delivery) do
+      event_id = doc_get(delivery, "event_id")
+
+      %DeadLetter{
+        stream: doc_get(delivery, "stream"),
+        group: doc_get(delivery, "group"),
+        event_id: event_id,
+        partition: doc_get(delivery, "partition") || 0,
+        sequence: doc_get(delivery, "sequence"),
+        reason: doc_get(delivery, "reason"),
+        dead_lettered_at: doc_get(delivery, "dead_lettered_at"),
+        event: load_event(topo, event_id)
+      }
+    end
+
+    defp load_event(topo, event_id) do
+      case client().find_one(topo, @events, %{"_id" => event_id}) do
+        nil -> nil
+        doc -> Codec.event_from_doc(doc)
+      end
+    end
+
+    defp doc_get(doc, key) when is_map(doc) do
+      case Map.fetch(doc, key) do
+        {:ok, value} -> value
+        :error -> Map.get(doc, atom_field(key))
+      end
+    end
+
+    defp atom_field("event_id"), do: :event_id
+    defp atom_field("stream"), do: :stream
+    defp atom_field("group"), do: :group
+    defp atom_field("partition"), do: :partition
+    defp atom_field("sequence"), do: :sequence
+    defp atom_field("reason"), do: :reason
+    defp atom_field("dead_lettered_at"), do: :dead_lettered_at
+    defp atom_field(other), do: other
+
+    defp drop_after_event_id(docs, nil), do: docs
+
+    defp drop_after_event_id(docs, after_id) when is_binary(after_id) do
+      case Enum.find_index(docs, &(doc_get(&1, "event_id") == after_id)) do
+        nil -> docs
+        idx -> Enum.drop(docs, idx + 1)
       end
     end
 

@@ -53,7 +53,7 @@ if Code.ensure_loaded?(Redix) do
 
     alias Rheo.Backend.Redis.Codec
     alias Rheo.Backend.Redis.Keys
-    alias Rheo.{Clock, Event, Id, Lag, Lease, Partition, Query, Telemetry}
+    alias Rheo.{Clock, DeadLetter, Event, GroupInfo, Id, Lag, Lease, Partition, Query, Telemetry}
 
     @command_timeout 5_000
     @pending_scan 100
@@ -1116,6 +1116,142 @@ if Code.ensure_loaded?(Redix) do
           end)
 
         {:ok, Lag.from_maps(stream, group, frontiers, high_watermarks, partitions)}
+      end
+    end
+
+    @impl Rheo.Backend
+    def list_streams(handle, _opts \\ []) do
+      with {:ok, keys} <- scan_keys(handle, Keys.meta_pattern(handle), "0", []) do
+        prefix = Keys.prefix(handle) <> "meta:"
+
+        names =
+          keys
+          |> Enum.map(fn key -> String.replace_prefix(key, prefix, "") end)
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.sort()
+
+        {:ok, names}
+      end
+    end
+
+    @impl Rheo.Backend
+    def list_groups(handle, stream, _opts \\ []) do
+      with {:ok, _} <- partition_count(handle, stream),
+           {:ok, keys} <- scan_keys(handle, Keys.group_meta_pattern(handle, stream), "0", []) do
+        prefix = Keys.prefix(handle) <> "gmeta:" <> stream <> ":"
+
+        names =
+          keys
+          |> Enum.map(fn key -> String.replace_prefix(key, prefix, "") end)
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.sort()
+
+        {:ok, names}
+      end
+    end
+
+    @impl Rheo.Backend
+    def dead_letters(handle, stream, group, opts \\ []) do
+      with {:ok, _} <- group_meta(handle, stream, group) do
+        limit = Keyword.get(opts, :limit, 100)
+        after_id = Keyword.get(opts, :after)
+        key = Keys.dlq(handle, stream, group)
+
+        case command(handle, ["XRANGE", key, "-", "+", "COUNT", to_str(max(limit * 4, 100))]) do
+          {:ok, entries} when is_list(entries) ->
+            rows =
+              entries
+              |> Enum.map(fn [_id, fields] -> redis_dead_letter(stream, group, fields) end)
+              |> drop_after_dead(after_id)
+              |> Enum.take(limit)
+
+            {:ok, rows}
+
+          {:ok, nil} ->
+            {:ok, []}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+      end
+    end
+
+    @impl Rheo.Backend
+    def group_info(handle, stream, group, opts \\ []) do
+      with {:ok, lag} <- lag(handle, stream, group, opts),
+           {:ok, count} <- partition_count(handle, stream),
+           {:ok, partitions} <- resolve_assignment(opts, count),
+           {:ok, inflight} <- pending_count(handle, stream, group, partitions),
+           {:ok, dead} <- dlq_count(handle, stream, group) do
+        {:ok,
+         %GroupInfo{
+           stream: stream,
+           group: group,
+           lag: lag,
+           inflight_count: inflight,
+           dead_letter_count: dead
+         }}
+      end
+    end
+
+    defp pending_count(handle, stream, group, partitions) do
+      Enum.reduce_while(partitions, {:ok, 0}, fn partition, {:ok, acc} ->
+        key = Keys.events(handle, stream, partition)
+
+        case group_command(handle, ["XPENDING", key, group]) do
+          {:ok, [count | _]} -> {:cont, {:ok, acc + Codec.to_integer(count, 0)}}
+          {:ok, _} -> {:cont, {:ok, acc}}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+    end
+
+    defp dlq_count(handle, stream, group) do
+      case command(handle, ["XLEN", Keys.dlq(handle, stream, group)]) do
+        {:ok, n} -> {:ok, Codec.to_integer(n, 0)}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+
+    defp redis_dead_letter(stream, group, fields) do
+      event = Codec.event_from_fields(stream, fields)
+      map = Codec.to_map(fields)
+
+      %DeadLetter{
+        stream: stream,
+        group: group,
+        event_id: event.id,
+        partition: event.partition,
+        sequence: event.sequence,
+        reason: map["reason"],
+        dead_lettered_at: parse_iso(map["dead_lettered_at"]),
+        event: event
+      }
+    end
+
+    defp drop_after_dead(rows, nil), do: rows
+
+    defp drop_after_dead(rows, after_id) when is_binary(after_id) do
+      case Enum.find_index(rows, &(&1.event_id == after_id)) do
+        nil -> rows
+        idx -> Enum.drop(rows, idx + 1)
+      end
+    end
+
+    defp scan_keys(handle, pattern, cursor, acc) do
+      with {:ok, [next, keys]} <-
+             command(handle, ["SCAN", cursor, "MATCH", pattern, "COUNT", "500"]) do
+        acc = acc ++ List.wrap(keys)
+        if next == "0", do: {:ok, acc}, else: scan_keys(handle, pattern, next, acc)
+      end
+    end
+
+    defp parse_iso(nil), do: nil
+
+    defp parse_iso(value) when is_binary(value) do
+      case DateTime.from_iso8601(value) do
+        {:ok, dt, _} -> dt
+        _ -> nil
       end
     end
 

@@ -1,4 +1,4 @@
-# Rheo Livebooks (v0.9.0)
+# Rheo Livebooks (v0.10.0)
 
 ## Section
 
@@ -17,18 +17,24 @@ Open this folder from a **clone of the repo** so each notebook's
 livebook server notebooks/
 # or jump straight in:
 livebook server notebooks/quickstart.livemd
+# ops surface (v0.10):
+livebook server notebooks/ops.livemd
+# real LiveDashboard page via Phoenix Playground:
+livebook server notebooks/live_dashboard.livemd
 ```
 
 | Notebook                                                 | Story                                                       |
 | -------------------------------------------------------- | ----------------------------------------------------------- |
 | [Quickstart](quickstart.livemd)                          | From zero to “I published, fetched, and ACKed an event” |
 | [Concepts & Overview](concepts.livemd)                   | Why leases, groups, search, replay, and frontiers exist     |
+| [Ops: inventory, lag, DLQ](ops.livemd)                   | v0.10 inspect APIs — list, health, dead letters             |
+| [LiveDashboard (Playground)](live_dashboard.livemd)      | Real `Rheo.LiveDashboard.Page` via Phoenix Playground       |
 | [GenStage, Flow & Broadway](pipelines.livemd)            | Rheo owns delivery; pipelines own topology                  |
 | [ETS, Mongo, Redis, SQLite, PostgreSQL](backends.livemd) | Same API, different durability and ops trade-offs           |
 
-**Docker?** Not for Quickstart, Concepts, or Pipelines (they use ETS). The
-Backends notebook optionally talks to Mongo / Redis (`docker compose up -d`)
-and/or Postgres (`RHEO_POSTGRES_URL`).
+**Docker?** Not for Quickstart, Concepts, Ops, LiveDashboard, or Pipelines
+(they use ETS). The Backends notebook optionally talks to Mongo / Redis
+(`docker compose up -d`) and/or Postgres (`RHEO_POSTGRES_URL`).
 
 ## What Rheo is (and is not)
 
@@ -38,9 +44,13 @@ backed by a database (or ETS for tests).
 
 Delivery is **at-least-once**. Handlers should be idempotent on `event.id`.
 
-**v0.9** adds optional **Redis Streams** (`{:redix, "~> 1.5"}`) with Model C
+**v0.10** adds inspect ops (`list_streams`, `group_info`, `dead_letters`, Mix
+tasks, optional LiveDashboard) without a control plane — see
+[ops.livemd](ops.livemd) and [ADR 027](https://hexdocs.pm/rheo/027-ops-surface.html).
+
+**v0.9** added optional **Redis Streams** (`{:redix, "~> 1.5"}`) with Model C
 receipts — same Consumer API as ETS/Mongo/Ecto.
 
 Further reading: [Quick Start](https://hexdocs.pm/rheo/quick-start.html) ·
-[0.8 → 0.9 migration](https://hexdocs.pm/rheo/0-8-to-0-9.html) ·
-[Article 16](https://hexdocs.pm/rheo/16-rheo-on-redis-streams-portable-sequence-native-pel.html)
+[Ops](https://hexdocs.pm/rheo/ops.html) ·
+[0.9 → 0.10 migration](https://hexdocs.pm/rheo/0-9-to-0-10.html)

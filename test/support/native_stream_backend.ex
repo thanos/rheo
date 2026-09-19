@@ -11,7 +11,7 @@ defmodule Rheo.Backend.NativeStreamDouble do
   @behaviour Rheo.Backend
   use GenServer
 
-  alias Rheo.{Clock, Event, Id, Lag, Lease, Partition, Query}
+  alias Rheo.{Clock, DeadLetter, Event, GroupInfo, Id, Lag, Lease, Partition, Query}
 
   defstruct name: nil, streams: %{}, events: %{}, groups: %{}, deliveries: %{}, native_seq: 0
 
@@ -111,6 +111,22 @@ defmodule Rheo.Backend.NativeStreamDouble do
   @impl true
   def lag(handle, stream, group, opts \\ []),
     do: call(handle, {:lag, stream, group, opts})
+
+  @impl true
+  def list_streams(handle, opts \\ []),
+    do: call(handle, {:list_streams, opts})
+
+  @impl true
+  def list_groups(handle, stream, opts \\ []),
+    do: call(handle, {:list_groups, stream, opts})
+
+  @impl true
+  def dead_letters(handle, stream, group, opts \\ []),
+    do: call(handle, {:dead_letters, stream, group, opts})
+
+  @impl true
+  def group_info(handle, stream, group, opts \\ []),
+    do: call(handle, {:group_info, stream, group, opts})
 
   defp call(handle, msg) do
     GenServer.call(handle, msg, 5_000)
@@ -302,7 +318,12 @@ defmodule Rheo.Backend.NativeStreamDouble do
     settle(state, lease, fn d ->
       if d.attempt >= max_attempts do
         {:ok,
-         %{d | status: :rejected, reason: {:max_attempts, reason}, lease_id: nil, expires_at: nil}}
+         d
+         |> Map.put(:status, :rejected)
+         |> Map.put(:reason, {:max_attempts, reason})
+         |> Map.put(:lease_id, nil)
+         |> Map.put(:expires_at, nil)
+         |> Map.put(:dead_lettered_at, Clock.utc_now())}
       else
         {:ok, %{d | status: :available, lease_id: nil, expires_at: nil}}
       end
@@ -311,7 +332,13 @@ defmodule Rheo.Backend.NativeStreamDouble do
 
   def handle_call({:reject, lease, reason}, _from, state) do
     settle(state, lease, fn d ->
-      {:ok, %{d | status: :rejected, reason: reason, lease_id: nil, expires_at: nil}}
+      {:ok,
+       d
+       |> Map.put(:status, :rejected)
+       |> Map.put(:reason, reason)
+       |> Map.put(:lease_id, nil)
+       |> Map.put(:expires_at, nil)
+       |> Map.put(:dead_lettered_at, Clock.utc_now())}
     end)
   end
 
@@ -332,6 +359,112 @@ defmodule Rheo.Backend.NativeStreamDouble do
       {:error, _} = error -> {:reply, error, state}
     end
   end
+
+  def handle_call({:list_streams, _opts}, _from, state) do
+    {:reply, {:ok, state.streams |> Map.keys() |> Enum.sort()}, state}
+  end
+
+  def handle_call({:list_groups, stream, _opts}, _from, state) do
+    if Map.has_key?(state.streams, stream) do
+      groups =
+        state.groups
+        |> Map.keys()
+        |> Enum.filter(fn {s, _} -> s == stream end)
+        |> Enum.map(fn {_, g} -> g end)
+        |> Enum.sort()
+
+      {:reply, {:ok, groups}, state}
+    else
+      {:reply, {:error, :stream_not_found}, state}
+    end
+  end
+
+  def handle_call({:dead_letters, stream, group, opts}, _from, state) do
+    case fetch_group(state, group_key(stream, group)) do
+      {:ok, _} ->
+        rows = list_dead_letters(state, stream, group, opts)
+        {:reply, {:ok, rows}, state}
+
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
+  end
+
+  def handle_call({:group_info, stream, group, opts}, _from, state) do
+    with {:ok, g} <- fetch_group(state, group_key(stream, group)),
+         {:ok, partitions} <- assignment(state, stream, opts) do
+      high = Map.new(partitions, &{&1, get_in(state.streams, [stream, :sequences, &1])})
+      lag = Lag.from_maps(stream, group, g.frontiers, high, partitions)
+      {inflight, dead} = count_group_statuses(state, stream, group)
+
+      info = %GroupInfo{
+        stream: stream,
+        group: group,
+        lag: lag,
+        inflight_count: inflight,
+        dead_letter_count: dead
+      }
+
+      {:reply, {:ok, info}, state}
+    else
+      {:error, _} = error -> {:reply, error, state}
+    end
+  end
+
+  defp list_dead_letters(state, stream, group, opts) do
+    limit = Keyword.get(opts, :limit, 100)
+    after_id = Keyword.get(opts, :after)
+
+    state.deliveries
+    |> Map.values()
+    |> Enum.filter(&(&1.stream == stream and &1.group == group and &1.status == :rejected))
+    |> Enum.sort_by(&{&1.sequence, &1.event_id})
+    |> drop_after_event_id(after_id)
+    |> Enum.take(limit)
+    |> Enum.map(&to_dead_letter(state, stream, group, &1))
+  end
+
+  defp drop_after_event_id(list, nil), do: list
+
+  defp drop_after_event_id(list, after_id) when is_binary(after_id) do
+    case Enum.find_index(list, &(&1.event_id == after_id)) do
+      nil -> list
+      idx -> Enum.drop(list, idx + 1)
+    end
+  end
+
+  defp to_dead_letter(state, stream, group, d) do
+    event =
+      case Map.get(state.events, d.event_id) do
+        nil -> nil
+        row -> to_event(row)
+      end
+
+    %DeadLetter{
+      stream: stream,
+      group: group,
+      event_id: d.event_id,
+      partition: d.partition,
+      sequence: d.sequence,
+      reason: Map.get(d, :reason),
+      dead_lettered_at: Map.get(d, :dead_lettered_at),
+      event: event
+    }
+  end
+
+  defp count_group_statuses(state, stream, group) do
+    Enum.reduce(Map.values(state.deliveries), {0, 0}, &tally_group_status(&1, stream, group, &2))
+  end
+
+  defp tally_group_status(%{stream: s, group: g, status: :leased}, stream, group, {inf, dl})
+       when s == stream and g == group,
+       do: {inf + 1, dl}
+
+  defp tally_group_status(%{stream: s, group: g, status: :rejected}, stream, group, {inf, dl})
+       when s == stream and g == group,
+       do: {inf, dl + 1}
+
+  defp tally_group_status(_delivery, _stream, _group, acc), do: acc
 
   # Fenced settle: `lease_id` and `receipt` must both match the current claim.
   defp settle(state, %Lease{} = lease, fun) do
