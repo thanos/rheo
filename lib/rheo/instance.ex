@@ -1,10 +1,7 @@
 defmodule Rheo.Instance do
-  @moduledoc """
-  Runtime metadata for a named Rheo instance.
-
-  Holds the backend module and opaque handle used by public `Rheo` APIs.
-  Started under the Rheo instance supervisor; not authoritative for durable state.
-  """
+  @moduledoc false
+  # Internal instance metadata (backend module + handle). Hosts call `Rheo`;
+  # do not depend on this module (ADR 029).
   use GenServer
 
   @type t :: %__MODULE__{
@@ -21,21 +18,7 @@ defmodule Rheo.Instance do
     GenServer.start_link(__MODULE__, opts, name: Rheo.Names.instance(name))
   end
 
-  @doc """
-  Fetches instance metadata for a Rheo instance name.
-
-  ## Examples
-
-      iex> %Rheo.Instance{name: Rheo, backend: Rheo.Backend.Mongo} = Rheo.Instance.fetch!(Rheo)
-
-  ## Returns
-
-  `%Rheo.Instance{}`
-
-  ## Errors / raises
-
-  Raises if the instance process is not running.
-  """
+  @doc false
   @spec fetch!(atom()) :: t()
   def fetch!(rheo) when is_atom(rheo) do
     :persistent_term.get({__MODULE__, rheo})

@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.11.1**. Correctness patch on the v0.11 Mnesia backend.
+Current release: **v0.12.0**. API freeze candidate before 1.0 SemVer.
 
 ## Done in 0.1.0
 
@@ -119,9 +119,16 @@ Current release: **v0.11.1**. Correctness patch on the v0.11 Mnesia backend.
 - Shared ETS/Mnesia table engine with indexes; stream-first fetch errors
 - [0.11 → 0.11.1 migration](https://hexdocs.pm/rheo/0-11-to-0-11-1.html)
 
-## Next (0.12+)
+## Done in 0.12.0
 
-- API freeze candidate (0.12)
+- API freeze candidate (ADR 029): HexDocs publishes Facade / Consume / Values /
+  Backend / Runtime / Ops; internal modules filtered
+- Public API guide; unavailable-handle contract case; Metrics coverage
+- [0.11.1 → 0.12 migration](https://hexdocs.pm/rheo/0-11-1-to-0-12.html)
+
+## Next (1.0+)
+
+- Stable public API under SemVer (`Rheo` / `Rheo.Consumer` / `Rheo.Backend`)
 - Multi-node Mnesia table copies (backend arbitration only — not a Rheo cluster)
 - Article candidate: Rheo + Flow settlement narrative
 

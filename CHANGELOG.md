@@ -5,6 +5,36 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-09-20
+
+API freeze candidate before 1.0. No Consumer / Event / Query / Backend-callback
+meaning changes from 0.11.1. HexDocs publishes the frozen surface; optional ops
+remain non-SemVer-core.
+
+See [0.11.1 → 0.12 migration](https://hexdocs.pm/rheo/0-11-1-to-0-12.html) and
+[ADR 029](https://hexdocs.pm/rheo/029-api-freeze-candidate.html).
+
+### Added
+
+- ADR 029 (API freeze candidate) with module inventory
+- [Public API](https://hexdocs.pm/rheo/public-api.html) guide and portable
+  error-atom table
+- Conformance **unavailable** group: dead-handle `ping` → `:backend_unavailable`
+- Tutorial 17 (GitHub archive): freezing Rheo before 1.0
+
+### Changed
+
+- HexDocs `groups_for_modules` (Facade / Consume / Values / Backend / Runtime /
+  Ops) + `filter_modules` hide table engine and driver/client modules; Mix
+  inspect tasks publish under Ops (optional, not SemVer-core)
+- `Rheo.Instance` and `Rheo.Backend.Mnesia.Store` are internal (`@moduledoc false`)
+- Roadmap: 0.12 done; next is 1.0 SemVer (multi-node Mnesia still deferred)
+
+### Kept (compatibility)
+
+- Legacy `%{after_sequence: n}` page cursor
+- `{Rheo, url: …}` Mongo shorthand when `mongodb_driver` is present
+
 ## [0.11.1] - 2026-09-20
 
 Correctness patch on v0.11.0: composite page cursors, a single Group poll

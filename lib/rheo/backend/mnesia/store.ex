@@ -1,11 +1,8 @@
 defmodule Rheo.Backend.Mnesia.Store do
-  @moduledoc """
-  Thin behaviour over the `:mnesia` operations Rheo uses.
-
-  The default implementation delegates to OTP `:mnesia`.
-  Tests may swap in a Mox mock via
-  `Application.put_env(:rheo, :mnesia_store, Mock)`.
-  """
+  @moduledoc false
+  # Thin behaviour over `:mnesia` ops. Default impl is
+  # `Rheo.Backend.Mnesia.Store.Mnesia`; tests may swap via
+  # `Application.put_env(:rheo, :mnesia_store, Mock)`.
 
   @type table :: atom()
   @type key :: term()

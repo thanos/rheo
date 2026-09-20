@@ -7,6 +7,10 @@ defmodule Rheo.Backend do
   Application code calls `Rheo`, which resolves the handle for the named
   instance and dispatches here.
 
+  Part of the v0.12 frozen surface (ADR 029). Required callbacks and the
+  fencing / settle vocabulary will not change meaning without a major version
+  after 1.0. Ops inspect callbacks remain optional.
+
   ## Semantic contract
 
   Callbacks describe what Rheo needs, not how storage does it:

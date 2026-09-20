@@ -75,6 +75,13 @@ defmodule Rheo.BackendContract do
         end
       end
 
+      describe "unavailable" do
+        test "ping on a dead handle maps to backend_unavailable" do
+          handle = :"no_such_rheo_#{System.unique_integer([:positive])}"
+          assert {:error, :backend_unavailable} = @backend.ping(handle)
+        end
+      end
+
       describe "event log" do
         test "append batch assigns contiguous sequences", %{rheo: rheo} do
           s = stream()

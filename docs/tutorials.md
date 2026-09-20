@@ -20,6 +20,7 @@ For how-to docs, start with [Quick Start](https://hexdocs.pm/rheo/quick-start.ht
 14. [Rheo is not Broadway — it feeds Broadway](https://github.com/thanos/rheo/blob/main/docs/tutorials/14-rheo-is-not-broadway-it-feeds-broadway.md)
 15. [Breaking Rheo before anyone depends on the wrong abstraction](https://github.com/thanos/rheo/blob/main/docs/tutorials/15-breaking-rheo-before-anyone-depends-on-the-wrong-abstraction.md)
 16. [Rheo on Redis Streams: portable sequence, native PEL](https://github.com/thanos/rheo/blob/main/docs/tutorials/16-rheo-on-redis-streams-portable-sequence-native-pel.md)
+17. [Freezing Rheo before 1.0](https://github.com/thanos/rheo/blob/main/docs/tutorials/17-freezing-rheo-before-1-0.md)
 
 Hands-on: [Livebook demos](https://hexdocs.pm/rheo/rheo_demo.html)
 ([source index](https://github.com/thanos/rheo/blob/main/notebooks/rheo_demo.livemd)).

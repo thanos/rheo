@@ -23,13 +23,13 @@ livebook server notebooks/ops.livemd
 livebook server notebooks/live_dashboard.livemd
 ```
 
-| Notebook                                                 | Story                                                       |
-| -------------------------------------------------------- | ----------------------------------------------------------- |
-| [Quickstart](quickstart.livemd)                          | From zero to “I published, fetched, and ACKed an event” |
-| [Concepts & Overview](concepts.livemd)                   | Why leases, groups, search, replay, and frontiers exist     |
-| [Ops: inventory, lag, DLQ](ops.livemd)                   | Inspect APIs — list, health, dead letters                   |
-| [LiveDashboard (Playground)](live_dashboard.livemd)      | Real `Rheo.LiveDashboard.Page` via Phoenix Playground       |
-| [GenStage, Flow & Broadway](pipelines.livemd)            | Rheo owns delivery; pipelines own topology                  |
+| Notebook                                                         | Story                                                       |
+| ---------------------------------------------------------------- | ----------------------------------------------------------- |
+| [Quickstart](quickstart.livemd)                                  | From zero to “I published, fetched, and ACKed an event” |
+| [Concepts & Overview](concepts.livemd)                           | Why leases, groups, search, replay, and frontiers exist     |
+| [Ops: inventory, lag, DLQ](ops.livemd)                           | Inspect APIs — list, health, dead letters                 |
+| [LiveDashboard (Playground)](live_dashboard.livemd)              | Real `Rheo.LiveDashboard.Page` via Phoenix Playground       |
+| [GenStage, Flow & Broadway](pipelines.livemd)                    | Rheo owns delivery; pipelines own topology                  |
 | [ETS, Mnesia, Mongo, Redis, SQLite, PostgreSQL](backends.livemd) | Same API, different durability and ops trade-offs           |
 
 **Docker?** Not for Quickstart, Concepts, Ops, LiveDashboard, or Pipelines

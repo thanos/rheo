@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.11.1"
+  @version "0.12.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -27,10 +27,69 @@ defmodule Rheo.MixProject do
         source_url: @source_url,
         source_ref: "v#{@version}",
         assets: %{"docs/screenshots" => "screenshots"},
+        filter_modules: &filter_modules/2,
+        skip_code_autolink_to: &skip_code_autolink_to?/1,
+        skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
+        groups_for_modules: [
+          Facade: [
+            Rheo
+          ],
+          Consume: [
+            Rheo.Consumer,
+            Rheo.Group,
+            Rheo.GroupSupervisor,
+            Rheo.Producer,
+            Rheo.Broadway,
+            Rheo.Broadway.Acknowledger
+          ],
+          Values: [
+            Rheo.Event,
+            Rheo.Event.Lineage,
+            Rheo.Lease,
+            Rheo.Query,
+            Rheo.Page,
+            Rheo.Lag,
+            Rheo.DeadLetter,
+            Rheo.GroupInfo,
+            Rheo.Settle,
+            Rheo.Partition
+          ],
+          Backend: [
+            Rheo.Backend,
+            Rheo.Backend.Capabilities,
+            Rheo.Backend.Wakeup,
+            Rheo.Backend.ETS,
+            Rheo.Backend.Mnesia,
+            Rheo.Backend.Mongo,
+            Rheo.Backend.Ecto,
+            Rheo.Backend.Redis
+          ],
+          Runtime: [
+            Rheo.Application,
+            Rheo.Inflight,
+            Rheo.Backoff,
+            Rheo.Clock,
+            Rheo.Clock.Frozen,
+            Rheo.Clock.System,
+            Rheo.Id,
+            Rheo.Telemetry
+          ],
+          Ops: [
+            Rheo.LiveDashboard.Page,
+            Rheo.Telemetry.Metrics,
+            Mix.Tasks.Rheo.Streams,
+            Mix.Tasks.Rheo.Lag,
+            Mix.Tasks.Rheo.GroupInfo,
+            Mix.Tasks.Rheo.DeadLetters,
+            Mix.Tasks.Rheo.Bench,
+            Mix.Tasks.Rheo.Ecto.GenMigration
+          ]
+        ],
         extras: [
           "README.md",
           "LICENSE",
           "docs/guides/quick-start.md",
+          "docs/guides/public-api.md",
           "CHANGELOG.md",
           "notebooks/rheo_demo.livemd",
           "notebooks/quickstart.livemd",
@@ -59,6 +118,7 @@ defmodule Rheo.MixProject do
           "docs/migrations/0.9-to-0.10.md",
           "docs/migrations/0.10-to-0.11.md",
           "docs/migrations/0.11-to-0.11.1.md",
+          "docs/migrations/0.11.1-to-0.12.md",
           "docs/architecture.md",
           "docs/diagrams.md",
           "docs/roadmap.md",
@@ -73,6 +133,7 @@ defmodule Rheo.MixProject do
           "docs/adr/026-redis-streams-backend.md",
           "docs/adr/027-ops-surface.md",
           "docs/adr/028-mnesia-backend.md",
+          "docs/adr/029-api-freeze-candidate.md",
           "docs/tutorials.md"
         ],
         groups_for_extras: [
@@ -80,6 +141,7 @@ defmodule Rheo.MixProject do
             "README.md",
             "LICENSE",
             "docs/guides/quick-start.md",
+            "docs/guides/public-api.md",
             "CHANGELOG.md"
           ],
           Livebooks: [
@@ -117,7 +179,8 @@ defmodule Rheo.MixProject do
             "docs/upgrading.md",
             "docs/migrations/0.9-to-0.10.md",
             "docs/migrations/0.10-to-0.11.md",
-            "docs/migrations/0.11-to-0.11.1.md"
+            "docs/migrations/0.11-to-0.11.1.md",
+            "docs/migrations/0.11.1-to-0.12.md"
           ],
           Design: [
             "docs/architecture.md",
@@ -134,6 +197,7 @@ defmodule Rheo.MixProject do
             "docs/adr/026-redis-streams-backend.md",
             "docs/adr/027-ops-surface.md",
             "docs/adr/028-mnesia-backend.md",
+            "docs/adr/029-api-freeze-candidate.md",
             "docs/tutorials.md"
           ]
         ],
@@ -176,6 +240,41 @@ defmodule Rheo.MixProject do
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
+
+  # HexDocs publishes only the freeze surface (ADR 029). Mix tasks, table
+  # engine, and driver/client modules stay out of the module list.
+  @internal_modules [
+    Rheo.Names,
+    Rheo.Instance,
+    Rheo.Backend.TableEngine,
+    Rheo.Backend.Table.Store,
+    Rheo.Backend.Table.ETS,
+    Rheo.Backend.Table.Mnesia,
+    Rheo.Backend.Mongo.Client,
+    Rheo.Backend.Mongo.Client.Driver,
+    Rheo.Backend.Mongo.Codec,
+    Rheo.Backend.Redis.Client,
+    Rheo.Backend.Redis.Codec,
+    Rheo.Backend.Redis.Keys,
+    Rheo.Backend.Ecto.Server,
+    Rheo.Backend.Ecto.Codec,
+    Rheo.Backend.Ecto.Migrations,
+    Rheo.Backend.Ecto.Migrations.V1,
+    Rheo.Backend.Mnesia.Store,
+    Rheo.Backend.Mnesia.Store.Mnesia,
+    Mix.Tasks.Rheo.InspectOpts
+  ]
+
+  defp filter_modules(module, _metadata) do
+    module not in @internal_modules
+  end
+
+  defp skip_code_autolink_to?(ref) when is_binary(ref) do
+    Enum.any?(@internal_modules, fn mod ->
+      name = inspect(mod)
+      ref == name or String.starts_with?(ref, name <> ".")
+    end)
+  end
 
   defp deps do
     [
