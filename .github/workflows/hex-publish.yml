@@ -60,9 +60,10 @@ jobs:
       RHEO_REDIS_URL: redis://localhost:6379
 
     steps:
+      # Do not set fetch-tags: true on tag-push workflows. With fetch-depth: 1,
+      # actions/checkout fetches `+SHA:refs/tags/vX` and also the annotated tag
+      # object into the same ref → `Cannot fetch both … to refs/tags/vX` (exit 128).
       - uses: actions/checkout@v4
-        with:
-          fetch-tags: true
 
       - uses: erlef/setup-beam@v1
         with:
@@ -85,7 +86,12 @@ jobs:
       - name: Assert tag matches mix.exs version
         run: |
           VERSION=$(mix run -e 'IO.puts(Mix.Project.config()[:version])')
-          TAG=$(git describe --tags --exact-match)
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            git fetch --tags --force origin
+            TAG=$(git describe --tags --exact-match)
+          fi
           if [ "$TAG" != "v$VERSION" ]; then
             echo "Tag $TAG does not match mix.exs version v$VERSION"
             exit 1
