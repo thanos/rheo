@@ -212,12 +212,13 @@ if Code.ensure_loaded?(GenStage) do
     @doc """
     Stops fetching and waits until inflight leases are settled or `timeout` elapses.
 
-    Returns `:ok` when nothing is inflight, `:timeout` otherwise. The producer
+    Returns `:ok` when nothing is inflight, `:timeout` otherwise, or
+    `{:error, :already_draining}` if a drain is already pending. The producer
     keeps serving confirmations and renewals while a drain is pending. Broadway
     calls `prepare_for_draining/1` on its own during shutdown; this is the
     equivalent for plain GenStage pipelines.
     """
-    @spec drain(GenServer.server(), timeout()) :: :ok | :timeout
+    @spec drain(GenServer.server(), timeout()) :: :ok | :timeout | {:error, :already_draining}
     def drain(producer, timeout \\ @drain_timeout_ms) do
       GenStage.call(producer, {:drain, timeout}, timeout + 1_000)
     end
@@ -299,6 +300,11 @@ if Code.ensure_loaded?(GenStage) do
     def handle_cast(_other, state), do: {:noreply, [], state}
 
     @impl true
+    def handle_call({:drain, _timeout}, _from, %{drain_from: from} = state)
+        when not is_nil(from) do
+      {:reply, {:error, :already_draining}, [], state}
+    end
+
     def handle_call({:drain, timeout}, from, state) do
       state = stop_fetching(state)
 

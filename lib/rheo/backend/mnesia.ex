@@ -783,43 +783,7 @@ defmodule Rheo.Backend.Mnesia do
   end
 
   defp claim_many(state, stream, group, partitions, consumer_id, lease_ms, limit, now) do
-    ctx = %{
-      state: state,
-      stream: stream,
-      group: group,
-      partitions: partitions,
-      consumer_id: consumer_id,
-      lease_ms: lease_ms,
-      now: now
-    }
-
-    claim_loop(ctx, limit, [])
-  end
-
-  defp claim_loop(_ctx, 0, acc), do: Enum.reverse(acc)
-
-  defp claim_loop(ctx, remaining, acc) do
-    %{
-      state: state,
-      stream: stream,
-      group: group,
-      partitions: partitions,
-      consumer_id: consumer_id,
-      lease_ms: lease_ms,
-      now: now
-    } = ctx
-
-    case claim_one(state, stream, group, partitions, consumer_id, lease_ms, now) do
-      nil ->
-        Enum.reverse(acc)
-
-      lease ->
-        claim_loop(ctx, remaining - 1, [lease | acc])
-    end
-  end
-
-  defp claim_one(state, stream, group, partitions, consumer_id, lease_ms, now) do
-    TableEngine.claim_one(state, stream, group, partitions, consumer_id, lease_ms, now)
+    TableEngine.claim_batch(state, stream, group, partitions, consumer_id, lease_ms, limit, now)
   end
 
   defp fetch_active_delivery(state, lease) do

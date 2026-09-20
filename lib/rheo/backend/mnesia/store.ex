@@ -22,6 +22,7 @@ defmodule Rheo.Backend.Mnesia.Store do
   @callback dirty_write(row()) :: :ok
   @callback dirty_delete(table(), key()) :: :ok
   @callback dirty_select(table(), term()) :: [term()]
+  @callback dirty_next(table(), key()) :: key() | :"$end_of_table"
 
   @doc false
   @spec current() :: module()
@@ -68,4 +69,7 @@ defmodule Rheo.Backend.Mnesia.Store.Mnesia do
 
   @impl true
   def dirty_select(table, match_spec), do: :mnesia.dirty_select(table, match_spec)
+
+  @impl true
+  def dirty_next(table, key), do: :mnesia.dirty_next(table, key)
 end

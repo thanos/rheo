@@ -22,13 +22,7 @@ defmodule Rheo.Backend.TableEngine do
   end
 
   def read_partition(state, stream, partition, after_seq, limit) do
-    head = {{stream, partition, :"$1"}, :"$2"}
-    spec = [{head, [{:>, :"$1", after_seq}], [:"$2"]}]
-
-    state.events
-    |> then(&store(state).select(&1, spec))
-    |> Enum.sort_by(& &1.sequence)
-    |> Enum.take(limit)
+    scan_events(state, stream, partition, after_seq, limit)
   end
 
   def query_events(state, %Query{} = query) do
@@ -44,13 +38,37 @@ defmodule Rheo.Backend.TableEngine do
   end
 
   def events_from_sequence(state, stream, partition, next_sequence, limit) do
-    head = {{stream, partition, :"$1"}, :"$2"}
-    spec = [{head, [{:>=, :"$1", next_sequence}], [:"$2"]}]
+    scan_events(state, stream, partition, next_sequence - 1, limit)
+  end
 
-    state.events
-    |> then(&store(state).select(&1, spec))
-    |> Enum.sort_by(& &1.sequence)
-    |> Enum.take(limit)
+  # `events` is an `ordered_set` keyed `{stream, partition, sequence}`, so
+  # walking from a probe key yields the range in sequence order and costs
+  # O(limit) rather than O(events in the stream). A guarded `select/2` would
+  # traverse and materialize every later event before `Enum.take/2` dropped it.
+  defp scan_events(_state, _stream, _partition, _after_seq, limit) when limit <= 0, do: []
+
+  defp scan_events(state, stream, partition, after_seq, limit) do
+    state
+    |> walk_events({stream, partition, after_seq}, stream, partition, limit, [])
+    |> Enum.reverse()
+  end
+
+  defp walk_events(_state, _key, _stream, _partition, 0, acc), do: acc
+
+  defp walk_events(state, key, stream, partition, remaining, acc) do
+    case store(state).next_key(state.events, key) do
+      {^stream, ^partition, _seq} = next ->
+        case store(state).lookup(state.events, next) do
+          [{^next, %Event{} = event}] ->
+            walk_events(state, next, stream, partition, remaining - 1, [event | acc])
+
+          _ ->
+            walk_events(state, next, stream, partition, remaining, acc)
+        end
+
+      _past_partition_or_end ->
+        acc
+    end
   end
 
   def insert_event(state, %Event{} = event) do
@@ -97,25 +115,64 @@ defmodule Rheo.Backend.TableEngine do
     :ok
   end
 
-  def claim_one(state, stream, group, partitions, consumer_id, lease_ms, now) do
-    partition_set = MapSet.new(partitions)
-    head = {{stream, group, :"$1", :"$2"}, :"$3"}
-    spec = [{head, [], [{{:"$1", :"$2", :"$3"}}]}]
+  @doc """
+  Claims up to `limit` deliveries for a group in one ordered pass.
 
-    candidates =
-      state.open_deliveries
-      |> then(&store(state).select(&1, spec))
-      |> Enum.filter(fn {partition, _seq, _id} -> MapSet.member?(partition_set, partition) end)
-      |> Enum.sort()
+  `open_deliveries` is an `ordered_set` keyed `{stream, group, partition,
+  sequence}`, so a single walk yields candidates already in partition/sequence
+  order. The walk carries its position across claims: restarting it per lease
+  re-scanned the growing already-leased prefix, making one `fetch` quadratic in
+  `:limit`.
+  """
+  def claim_batch(state, stream, group, partitions, consumer_id, lease_ms, limit, now) do
+    ctx = %{
+      state: state,
+      stream: stream,
+      group: group,
+      partitions: MapSet.new(partitions),
+      consumer_id: consumer_id,
+      lease_ms: lease_ms,
+      now: now
+    }
 
-    case Enum.find_value(candidates, fn {_partition, _seq, event_id} ->
-           case store(state).lookup(state.deliveries, {stream, group, event_id}) do
-             [{_key, delivery}] -> claim_if_ready(state, delivery, consumer_id, lease_ms, now)
-             [] -> nil
-           end
-         end) do
-      {:lease, lease} -> lease
-      _ -> nil
+    ctx
+    |> collect_claims({stream, group, -1, -1}, limit, [])
+    |> Enum.reverse()
+  end
+
+  defp collect_claims(_ctx, _key, remaining, acc) when remaining <= 0, do: acc
+
+  defp collect_claims(ctx, key, remaining, acc) do
+    case next_claim(ctx, key) do
+      :done -> acc
+      {:skip, next} -> collect_claims(ctx, next, remaining, acc)
+      {:lease, lease, next} -> collect_claims(ctx, next, remaining - 1, [lease | acc])
+    end
+  end
+
+  defp next_claim(%{state: state, stream: stream, group: group} = ctx, key) do
+    case store(state).next_key(state.open_deliveries, key) do
+      {^stream, ^group, partition, _seq} = next ->
+        case try_claim(ctx, next, partition) do
+          {:lease, lease} -> {:lease, lease, next}
+          _not_claimable -> {:skip, next}
+        end
+
+      _past_group_or_end ->
+        :done
+    end
+  end
+
+  defp try_claim(%{partitions: partitions} = ctx, key, partition) do
+    if MapSet.member?(partitions, partition) do
+      %{state: state, stream: stream, group: group} = ctx
+
+      with [{^key, event_id}] <- store(state).lookup(state.open_deliveries, key),
+           [{_key, delivery}] <- store(state).lookup(state.deliveries, {stream, group, event_id}) do
+        claim_if_ready(state, delivery, ctx.consumer_id, ctx.lease_ms, ctx.now)
+      else
+        _ -> nil
+      end
     end
   end
 

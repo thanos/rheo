@@ -43,7 +43,7 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
         dom_id="rheo-group-health"
         page={@page}
         title="Rheo group health"
-        row_fetcher={&fetch_health/2}
+        row_fetcher={{&fetch_health/3, nil}}
         rows_name="groups"
       >
         <:col field={:stream} header="Stream" />
@@ -55,15 +55,37 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
       """
     end
 
-    @doc false
-    def fetch_health(params, _node) do
-      rows =
-        rheo_name()
-        |> health_rows()
-        |> sort_rows(params)
+    # Building the table costs one `list_streams` plus a `list_groups` per
+    # stream plus a `group_info` per group. Re-sorting or re-paging must not
+    # replay that against the backend, and neither should the dashboard's
+    # refresh timer firing faster than the data is worth. Rows are cached for
+    # `@cache_ttl_ms` in the row_fetcher's state.
+    @cache_ttl_ms 2_000
 
-      {Enum.take(rows, row_limit(params, length(rows))), length(rows)}
+    @doc false
+    def fetch_health(params, _node, state) do
+      {rows, state} = cached_rows(state)
+      sorted = sort_rows(rows, params)
+
+      {Enum.take(sorted, row_limit(params, length(sorted))), length(sorted), state}
     end
+
+    defp cached_rows({rows, fetched_at}) do
+      if monotonic_ms() - fetched_at < @cache_ttl_ms do
+        {rows, {rows, fetched_at}}
+      else
+        fresh_rows()
+      end
+    end
+
+    defp cached_rows(_state), do: fresh_rows()
+
+    defp fresh_rows do
+      rows = health_rows(rheo_name())
+      {rows, {rows, monotonic_ms()}}
+    end
+
+    defp monotonic_ms, do: System.monotonic_time(:millisecond)
 
     defp health_rows(rheo) do
       case Rheo.list_streams(rheo: rheo) do
