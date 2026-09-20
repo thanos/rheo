@@ -6,6 +6,10 @@ defmodule Rheo.Query do
   `Rheo.query/2`, `Rheo.query_page/2`, or `Rheo.stream_query/2` rather than
   constructing backend-specific documents (Mongo filters, SQL, …).
 
+  Part of the v0.12 frozen surface (ADR 029). Field meanings and page-cursor
+  shape (`%{partition => after_sequence}`, legacy `%{after_sequence: n}` still
+  accepted) will not change without a major version after 1.0.
+
   ## Fields
 
     * `:stream` — stream name (required)

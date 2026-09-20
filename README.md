@@ -64,7 +64,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.11.1"}
+    {:rheo, "~> 0.12.0"}
   ]
 end
 ```
@@ -459,8 +459,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.9.0** | Redis Streams native backend (optional `redix`); wakeup contract |
 | **0.10.0** | Ops surface: dead-letter (DLQ) inspect, inventory, group health, optional LiveDashboard, Mix tasks |
 | **0.11.0** | Mnesia backend: durable ETS-shaped single-node `disc_copies` |
-| **0.11.1** (current) | Correctness: composite cursors, Registry groups, table-engine indexes |
-| **0.12.0** | API freeze candidate |
+| **0.11.1** | Correctness: composite cursors, Registry groups, table-engine indexes |
+| **0.12.0** (current) | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 
 Still out of scope through 1.0 unless demand forces it: standalone Rheo server,

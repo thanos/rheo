@@ -4,7 +4,7 @@
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.11.0"},
+    {:rheo, "~> 0.12.0"},
     # {:rheo, path: Path.join(__DIR__, "..")},
     {:phoenix_playground, "~> 0.1.9"},
     {:phoenix_live_dashboard, "~> 0.8"}
@@ -309,7 +309,7 @@ defmodule Demo.ControlLive do
   defp toggle_consumer(group) when group in ["risk", "billing"] do
     name = group_name(group)
 
-    if Process.whereis(name) do
+    if GenServer.whereis(name) do
       GenServer.stop(name)
     else
       module = if group == "risk", do: Demo.RiskConsumer, else: Demo.BillingConsumer
@@ -340,7 +340,7 @@ defmodule Demo.ControlLive do
     _ -> false
   end
 
-  defp alive?(name), do: is_pid(Process.whereis(name))
+  defp alive?(name), do: is_pid(GenServer.whereis(name))
 
   defp group_snapshot(group) do
     case Rheo.group_info(@stream, group, rheo: DemoRheo) do
@@ -457,7 +457,7 @@ for name <- [
       Demo.Publisher,
       DemoRheo
     ] do
-  if pid = Process.whereis(name) do
+  if pid = GenServer.whereis(name) do
     try do
       GenServer.stop(pid)
     catch

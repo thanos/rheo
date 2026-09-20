@@ -289,7 +289,7 @@ defmodule Demo.ControlLive do
   defp toggle_consumer(group) when group in ["risk", "billing"] do
     name = group_name(group)
 
-    if Process.whereis(name) do
+    if GenServer.whereis(name) do
       GenServer.stop(name)
     else
       module = if group == "risk", do: Demo.RiskConsumer, else: Demo.BillingConsumer

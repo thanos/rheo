@@ -64,7 +64,8 @@ defmodule Rheo do
 
   See `Rheo.Consumer` for the OTP handler API, `Rheo.Producer` and
   `Rheo.Broadway` for the GenStage/Broadway surface, and `Rheo.Backend` for
-  adapters.
+  adapters. v0.12 freezes this surface before 1.0 — see the
+  [public API guide](public-api.html) and [ADR 029](029-api-freeze-candidate.html).
 
   ## Ops (v0.10+)
 
@@ -72,6 +73,18 @@ defmodule Rheo do
   `list_groups/2`, `dead_letters/3` (DLQ = dead-letter queue), `group_info/3`,
   plus Mix inspect tasks. Optional `Rheo.LiveDashboard.Page` when
   `phoenix_live_dashboard` is present (ADR 027). See the [ops guide](ops.html).
+
+  ## Error atoms
+
+  Portable reasons returned by public APIs and backends:
+
+    * `:stream_not_found`, `:group_not_found`, `:already_exists`
+    * `:stale_lease`, `:receipt_mismatch`, `:cursor_not_found`
+    * `:already_draining`, `:unsupported`, `:backend_unavailable`
+    * `:confirm_required`
+    * `{:ambiguous, cause}`, `{:failed, cause}`
+
+  `Rheo.Settle.classify/1` maps settle errors for Group / Producer policy.
   """
 
   use Supervisor

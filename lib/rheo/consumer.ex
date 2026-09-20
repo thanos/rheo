@@ -6,6 +6,9 @@ defmodule Rheo.Consumer do
   `Rheo.Group`. The Group owns demand, concurrency, lease renewal, and
   settlement; the module implements `c:handle_event/2`.
 
+  Part of the v0.12 frozen surface (ADR 029) — handler outcomes and read-only
+  context will not change meaning without a major version after 1.0.
+
   ## Handler contract
 
   `handle_event/2` receives the event and a read-only context map built once by

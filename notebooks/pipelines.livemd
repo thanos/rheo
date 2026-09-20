@@ -4,7 +4,7 @@
 Mix.install(
   [
     # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 0.11.0"},
+    {:rheo, "~> 0.12.0"},
     # {:rheo, path: Path.join(__DIR__, "..")},
     {:kino, "~> 0.14"},
     {:broadway, "~> 1.3"},
@@ -124,7 +124,7 @@ end
     poll_ms: 50
   )
 
-{:ok, _sink} = Pipelines.Sink.start_link(producer: producer, owner: self())
+{:ok, sink} = Pipelines.Sink.start_link(producer: producer, owner: self())
 
 genstage_leases =
   for _ <- 1..4 do
@@ -151,7 +151,14 @@ end)
 `inflight_after_confirm` should be `0`. Stop this producer before the Flow
 section so we do not leave a polling process around.
 
+In Livebook, stop the **consumer first**, then the producer. If you only stop the
+producer, GenStage logs a cancel notice on the sink *after* the cell returns —
+Livebook's stdout is already closed, so Logger's Writer dies with `:epipe`. The
+stop itself already succeeded (`:normal`); the epipe is I/O noise, not a failed
+shutdown.
+
 ```elixir
+:ok = GenStage.stop(sink)
 :ok = GenStage.stop(producer)
 ```
 
@@ -192,10 +199,15 @@ run_flow! = fn producer, flow, n, timeout ->
 
   case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
     {:ok, result} ->
+      # Wait for Flow stages to unsubscribe before stopping the producer so
+      # GenStage's cancel notice is not logged after Livebook closes the cell I/O
+      # (that race shows up as Logger Writer `:epipe`, not a failed stop).
+      Process.sleep(50)
       _ = GenStage.stop(producer)
       result
 
     nil ->
+      Process.sleep(50)
       _ = GenStage.stop(producer)
       raise "Flow did not finish in #{timeout}ms"
   end

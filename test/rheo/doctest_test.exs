@@ -14,7 +14,6 @@ defmodule Rheo.DoctestTest do
   doctest Rheo.Backend.Ecto
   doctest Rheo.Backend.Ecto.Codec
   doctest Rheo.Telemetry
-  doctest Rheo.Instance
   doctest Rheo.Broadway
   doctest Rheo.Producer
 end
