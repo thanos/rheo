@@ -4,6 +4,7 @@ Recent migrations ship on HexDocs. Older notes stay in the repo on GitHub.
 
 ## Current
 
+- [0.11 → 0.11.1](https://hexdocs.pm/rheo/0-11-to-0-11-1.html) — composite cursors, stream lookup, CAS flag
 - [0.10 → 0.11](https://hexdocs.pm/rheo/0-10-to-0-11.html) — Mnesia backend
 - [0.9 → 0.10](https://hexdocs.pm/rheo/0-9-to-0-10.html) — ops surface
 

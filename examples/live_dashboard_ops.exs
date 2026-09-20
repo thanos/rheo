@@ -320,7 +320,7 @@ defmodule Demo.ControlLive do
     _ -> false
   end
 
-  defp alive?(name), do: is_pid(Process.whereis(name))
+  defp alive?(name), do: is_pid(GenServer.whereis(name))
 
   defp group_snapshot(group) do
     case Rheo.group_info(@stream, group, rheo: DemoRheo) do

@@ -23,7 +23,7 @@ market-events
 2. `Rheo.append/2` writes immutable events
 3. `Rheo.create_group/2` registers group state
 4. `Rheo.fetch/3` leases work
-5. `Rheo.ack/1` / `Rheo.nack/2` / `Rheo.reject/2` record outcomes
+5. `Rheo.ack/2` / `Rheo.nack/3` / `Rheo.reject/3` record outcomes
 
 Cursors and leases live in Mongo `groups` and `deliveries` collections — see
 `Rheo.Backend.Mongo`.

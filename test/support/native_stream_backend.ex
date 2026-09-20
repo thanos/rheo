@@ -242,7 +242,8 @@ defmodule Rheo.Backend.NativeStreamDouble do
   end
 
   def handle_call({:fetch, stream, group, opts}, _from, state) do
-    with {:ok, group_meta} <- fetch_group(state, group_key(stream, group)),
+    with {:ok, _} <- fetch_stream(state, stream),
+         {:ok, group_meta} <- fetch_group(state, group_key(stream, group)),
          {:ok, partitions} <- assignment(state, stream, opts) do
       limit = Keyword.get(opts, :limit, 10)
       consumer_id = Keyword.get(opts, :consumer_id, "native-1")
@@ -382,8 +383,7 @@ defmodule Rheo.Backend.NativeStreamDouble do
   def handle_call({:dead_letters, stream, group, opts}, _from, state) do
     case fetch_group(state, group_key(stream, group)) do
       {:ok, _} ->
-        rows = list_dead_letters(state, stream, group, opts)
-        {:reply, {:ok, rows}, state}
+        {:reply, list_dead_letters(state, stream, group, opts), state}
 
       {:error, _} = error ->
         {:reply, error, state}
@@ -415,21 +415,30 @@ defmodule Rheo.Backend.NativeStreamDouble do
     limit = Keyword.get(opts, :limit, 100)
     after_id = Keyword.get(opts, :after)
 
-    state.deliveries
-    |> Map.values()
-    |> Enum.filter(&(&1.stream == stream and &1.group == group and &1.status == :rejected))
-    |> Enum.sort_by(&{&1.sequence, &1.event_id})
-    |> drop_after_event_id(after_id)
-    |> Enum.take(limit)
-    |> Enum.map(&to_dead_letter(state, stream, group, &1))
+    rows =
+      state.deliveries
+      |> Map.values()
+      |> Enum.filter(&(&1.stream == stream and &1.group == group and &1.status == :rejected))
+      |> Enum.sort_by(&{&1.sequence, &1.event_id})
+
+    case drop_after_event_id(rows, after_id) do
+      {:ok, rows} ->
+        {:ok,
+         rows
+         |> Enum.take(limit)
+         |> Enum.map(&to_dead_letter(state, stream, group, &1))}
+
+      error ->
+        error
+    end
   end
 
-  defp drop_after_event_id(list, nil), do: list
+  defp drop_after_event_id(list, nil), do: {:ok, list}
 
   defp drop_after_event_id(list, after_id) when is_binary(after_id) do
     case Enum.find_index(list, &(&1.event_id == after_id)) do
-      nil -> list
-      idx -> Enum.drop(list, idx + 1)
+      nil -> {:error, :cursor_not_found}
+      idx -> {:ok, Enum.drop(list, idx + 1)}
     end
   end
 
@@ -596,7 +605,7 @@ defmodule Rheo.Backend.NativeStreamDouble do
     Enum.all?(query.where, &where_match?(row, &1)) and
       (is_nil(query.from) or DateTime.compare(row.timestamp, query.from) != :lt) and
       (is_nil(query.to) or DateTime.compare(row.timestamp, query.to) != :gt) and
-      (is_nil(query.after_sequence) or row.sequence > query.after_sequence) and
+      Query.past_after?(row, query) and
       (is_nil(query.until_sequence) or row.sequence <= query.until_sequence)
   end
 
@@ -611,6 +620,8 @@ defmodule Rheo.Backend.NativeStreamDouble do
 
   defp where_match?(row, {field, value}),
     do: Map.get(row.payload, Atom.to_string(field)) == value
+
+  defp where_match?(_, _), do: false
 
   defp order_fun(order_by) do
     fn a, b ->
@@ -628,6 +639,13 @@ defmodule Rheo.Backend.NativeStreamDouble do
   end
 
   defp to_event(row), do: struct(Event, Map.drop(row, [:native_id]))
+
+  defp fetch_stream(state, stream) do
+    case Map.fetch(state.streams, stream) do
+      {:ok, rec} -> {:ok, rec}
+      :error -> {:error, :stream_not_found}
+    end
+  end
 
   defp fetch_group(state, key) do
     case Map.fetch(state.groups, key) do

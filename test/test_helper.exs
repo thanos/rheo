@@ -6,12 +6,20 @@ Application.put_env(:rheo, :mongo_client, Rheo.Backend.Mongo.Client.Driver)
 {:ok, _} = Application.ensure_all_started(:mongodb_driver)
 {:ok, _} = Application.ensure_all_started(:ecto_sql)
 
-case Rheo.start_link(url: url) do
-  {:ok, _} -> :ok
-  {:error, {:already_started, _}} -> :ok
-end
+# Mongo-backed suites need a reachable server; skipped when absent (same
+# pattern as Redis / Postgres). Mocked client tests are untagged and still run.
+mongo_exclude =
+  if Rheo.Test.Mongo.available?() do
+    case Rheo.start_link(url: url) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
 
-:ok = Rheo.ensure_indexes()
+    :ok = Rheo.ensure_indexes()
+    []
+  else
+    [:mongo]
+  end
 
 # Ecto SQL backend: SQLite always runs on a throwaway file database. PostgreSQL
 # is opt-in through RHEO_POSTGRES_URL (or DATABASE_URL).
@@ -48,4 +56,4 @@ integration_exclude =
     [:integration]
   end
 
-ExUnit.start(exclude: integration_exclude ++ postgres_exclude ++ redis_exclude)
+ExUnit.start(exclude: integration_exclude ++ postgres_exclude ++ redis_exclude ++ mongo_exclude)

@@ -50,6 +50,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
     alias Rheo.Backend.Ecto.{Codec, Migrations, Server}
     alias Rheo.{Clock, DeadLetter, Event, GroupInfo, Id, Lag, Lease, Partition, Query, Telemetry}
+    require Logger
 
     @streams "rheo_streams"
     @sequences "rheo_stream_sequences"
@@ -371,13 +372,12 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
             "#{table(config, @deliveries)} WHERE stream = ? AND group_name = ? " <>
             "AND status = 'rejected' ORDER BY sequence ASC, event_id ASC"
 
-        with {:ok, rows} <- all(config, sql, [stream, group]) do
-          rows =
-            rows
-            |> drop_after_row(after_id)
-            |> Enum.take(limit)
-
-          {:ok, Enum.map(rows, &ecto_dead_letter(config, stream, group, &1))}
+        with {:ok, rows} <- all(config, sql, [stream, group]),
+             {:ok, rows} <- drop_after_row(rows, after_id) do
+          {:ok,
+           rows
+           |> Enum.take(limit)
+           |> Enum.map(&ecto_dead_letter(config, stream, group, &1))}
         end
       end
     end
@@ -438,12 +438,12 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       }
     end
 
-    defp drop_after_row(rows, nil), do: rows
+    defp drop_after_row(rows, nil), do: {:ok, rows}
 
     defp drop_after_row(rows, after_id) when is_binary(after_id) do
       case Enum.find_index(rows, &(&1["event_id"] == after_id)) do
-        nil -> rows
-        idx -> Enum.drop(rows, idx + 1)
+        nil -> {:error, :cursor_not_found}
+        idx -> {:ok, Enum.drop(rows, idx + 1)}
       end
     end
 
@@ -731,10 +731,30 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       [
         query.from && {~s{"timestamp" >= ?}, [timestamp(config, query.from)]},
         query.to && {~s{"timestamp" <= ?}, [timestamp(config, query.to)]},
-        query.after_sequence && {"sequence > ?", [query.after_sequence]},
+        sequence_after_clause(query),
         query.until_sequence && {"sequence <= ?", [query.until_sequence]}
       ]
     end
+
+    defp sequence_after_clause(%Query{after_sequences: seqs})
+         when is_map(seqs) and map_size(seqs) > 0 do
+      partitions = Map.keys(seqs)
+
+      {parts, params} =
+        Enum.reduce(seqs, {[], []}, fn {partition, seq}, {sql, params} ->
+          {["(partition = ? AND sequence > ?)" | sql], params ++ [partition, seq]}
+        end)
+
+      placeholders = Enum.map_join(partitions, ", ", fn _ -> "?" end)
+      unseen = "(partition NOT IN (#{placeholders}))"
+      sql = "(" <> Enum.join(Enum.reverse(parts) ++ [unseen], " OR ") <> ")"
+      {sql, params ++ partitions}
+    end
+
+    defp sequence_after_clause(%Query{after_sequence: n}) when is_integer(n),
+      do: {"sequence > ?", [n]}
+
+    defp sequence_after_clause(_query), do: nil
 
     defp where_clause(_config, {:type, type}), do: {~s{"type" = ?}, [type]}
     defp where_clause(_config, {:key, key}), do: {~s{"key" = ?}, [key]}
@@ -745,7 +765,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       {"#{json_extract(config, column, path)} = ?", [to_string(value)]}
     end
 
-    defp where_clause(_config, _other), do: nil
+    defp where_clause(_config, _other), do: {"1 = 0", []}
 
     @metadata_fields [:correlation_id, :causation_id, :producer, :schema, :schema_version]
 
@@ -801,8 +821,8 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     ## Fetch, materialize, claim
 
     defp do_fetch(config, stream, group, opts) do
-      with {:ok, _group_row} <- fetch_group(config, stream, group),
-           {:ok, stream_row} <- fetch_stream(config, stream),
+      with {:ok, stream_row} <- fetch_stream(config, stream),
+           {:ok, _group_row} <- fetch_group(config, stream, group),
            {:ok, partitions} <- resolve_assignment(opts, stream_row["partition_count"]) do
         consumer_id = Keyword.get_lazy(opts, :consumer_id, &Id.generate/0)
 
@@ -991,8 +1011,15 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       claimed
       |> Enum.reduce_while({:ok, []}, fn entry, {:ok, acc} ->
         case load_lease(ctx, entry, expires_at) do
-          {:ok, lease} -> {:cont, {:ok, [lease | acc]}}
-          {:error, _reason} = error -> {:halt, error}
+          {:ok, lease} ->
+            {:cont, {:ok, [lease | acc]}}
+
+          {:error, {:event_missing, event_id}} ->
+            _ = dead_letter_missing(ctx, entry, event_id)
+            {:cont, {:ok, acc}}
+
+          {:error, _reason} = error ->
+            {:halt, error}
         end
       end)
       |> case do
@@ -1020,6 +1047,38 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
            receipt: lease_id
          }}
       end
+    end
+
+    defp dead_letter_missing(ctx, %{event_id: event_id, lease_id: lease_id}, event_id) do
+      Logger.warning(
+        "Rheo fetch skipped missing event stream=#{ctx.stream} group=#{ctx.group} event_id=#{event_id}"
+      )
+
+      set =
+        "status = 'rejected', dead_lettered_at = ?, reason = ?, lease_id = NULL, expires_at = NULL"
+
+      sql =
+        "UPDATE #{table(ctx.config, @deliveries)} SET #{set} " <>
+          "WHERE stream = ? AND group_name = ? AND event_id = ? AND lease_id = ?"
+
+      params = [
+        timestamp(ctx.config, Clock.utc_now()),
+        encode_reason({:event_missing, event_id}),
+        ctx.stream,
+        ctx.group,
+        event_id,
+        lease_id
+      ]
+
+      _ = run(ctx.config, sql, params)
+
+      Telemetry.execute([:rheo, :dead_letter], %{count: 1}, %{
+        stream: ctx.stream,
+        group: ctx.group,
+        event_id: event_id
+      })
+
+      :ok
     end
 
     defp delivery_attempt(ctx, event_id) do
@@ -1568,6 +1627,9 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     # handler terms verbatim.
     defp encode_reason(reason) when is_binary(reason), do: String.slice(reason, 0, 1_000)
     defp encode_reason(reason), do: reason |> inspect(limit: 50) |> String.slice(0, 1_000)
+
+    defp map_backend_error(%DBConnection.ConnectionError{reason: :timeout}),
+      do: {:ambiguous, :timeout}
 
     defp map_backend_error(%DBConnection.ConnectionError{}), do: :backend_unavailable
     defp map_backend_error(exception), do: {:failed, exception}

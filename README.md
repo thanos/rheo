@@ -6,7 +6,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.11.0** — Durable consumer-group semantics over searchable stores.
+**v0.11.1** — Durable consumer-group semantics over searchable stores.
 Backends: **Mnesia** (single-node `disc_copies`), **Redis Streams**, **MongoDB**,
 **PostgreSQL / SQLite** (host-owned `Ecto.Repo`), and **ETS** (ephemeral). Rheo
 is an Elixir/OTP library you embed in your supervision tree, not a standalone
@@ -44,6 +44,8 @@ clients, exactly-once claims) or when a simple job queue is enough.
 | **Rheo + MongoDB** | Searchable history + durable groups in one store; embeds in OTP | At-least-once only |
 | **Rheo + PostgreSQL** | Uses the database you already run; `jsonb` event log you can query in SQL; `SKIP LOCKED` claims across nodes | At-least-once only; you own the repo and migrations |
 | **Rheo + SQLite** | Durable with no service at all; same API | Single node only (`distributed: false`) |
+| **Rheo + Redis Streams** | Native PEL / reclaim; several BEAM nodes on one group | Requires Redis 6.2+; history search is secondary |
+| **Rheo + Mnesia** | Durable ETS-shaped store without Docker; same API as ETS | Single-node `disc_copies` in v0.11 (`distributed: false`) |
 | **Rheo + ETS** | Same API with no Docker/DB; great for tests and Livebook | Ephemeral — data dies with the owner process |
 | **Kafka / Pulsar** | Huge throughput, mature ops, many languages | Separate cluster; history search is not the primary model |
 | **RabbitMQ / NATS** | Classic messaging, routing | Not an immutable searchable event log |
@@ -52,8 +54,8 @@ clients, exactly-once claims) or when a simple job queue is enough.
 
 Databases already store and search historical events well. Message brokers
 already coordinate consumers well. Rheo combines those strengths: immutable,
-queryable events in a database you run (MongoDB or PostgreSQL/SQLite), with
-leases, acknowledgement, retry, and competing consumers in OTP.
+queryable events in a store you run (MongoDB, PostgreSQL/SQLite, Redis Streams,
+or Mnesia), with leases, acknowledgement, retry, and competing consumers in OTP.
 
 ## Installation
 
@@ -62,7 +64,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.11.0"}
+    {:rheo, "~> 0.11.1"}
   ]
 end
 ```
@@ -456,7 +458,8 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.8.0** | Architectural reset: read-only handler context, single group owner, lease receipts, typed capabilities, settlement vocabulary, Redis/Flow readiness |
 | **0.9.0** | Redis Streams native backend (optional `redix`); wakeup contract |
 | **0.10.0** | Ops surface: dead-letter (DLQ) inspect, inventory, group health, optional LiveDashboard, Mix tasks |
-| **0.11.0** (current) | Mnesia backend: durable ETS-shaped single-node `disc_copies` |
+| **0.11.0** | Mnesia backend: durable ETS-shaped single-node `disc_copies` |
+| **0.11.1** (current) | Correctness: composite cursors, Registry groups, table-engine indexes |
 | **0.12.0** | API freeze candidate |
 | **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 

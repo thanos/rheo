@@ -393,8 +393,10 @@ defmodule Rheo do
   Queries one page of historical events.
 
   Returns `{:ok, %Rheo.Page{}}`. When more results may exist, `page.next_cursor`
-  is set; pass it as `cursor:` on the next call (or embed on `%Rheo.Query{}`).
-  Cursor pagination is defined for ascending sequence order.
+  is a `%{partition => after_sequence}` map; pass it as `cursor:` on the next
+  call (or embed on `%Rheo.Query{}`). Cursor pagination is defined for
+  ascending sequence order. The legacy `%{after_sequence: n}` cursor is still
+  accepted as a global lower bound.
   """
   @spec query_page(Query.t() | stream(), keyword()) :: {:ok, Rheo.Page.t()} | {:error, term()}
   def query_page(query_or_stream, opts \\ [])
@@ -405,10 +407,7 @@ defmodule Rheo do
 
     case backend.query(handle, query) do
       {:ok, events} ->
-        next =
-          if length(events) >= query.limit and events != [] do
-            %{after_sequence: List.last(events).sequence}
-          end
+        next = Query.next_cursor(events, query)
 
         {:ok, %Rheo.Page{events: events, next_cursor: next}}
 
@@ -639,9 +638,9 @@ defmodule Rheo do
   end
 
   defp replay_query(backend, handle, stream, group, %Query{} = query, _opts) do
-    query = %{query | stream: stream, limit: max(query.limit, 10_000)}
+    query = %{query | stream: stream}
 
-    case backend.query(handle, query) do
+    case collect_query_pages(backend, handle, query, []) do
       {:ok, events} ->
         backend.replay(handle, stream, group,
           event_ids: Enum.map(events, & &1.id),
@@ -656,6 +655,24 @@ defmodule Rheo do
   defp replay_query(backend, handle, stream, group, query_opts, opts)
        when is_list(query_opts) do
     replay_query(backend, handle, stream, group, Query.new(stream, query_opts), opts)
+  end
+
+  defp collect_query_pages(backend, handle, query, acc) do
+    case backend.query(handle, Query.apply_cursor(query)) do
+      {:ok, events} ->
+        acc = acc ++ events
+
+        case Query.next_cursor(events, query) do
+          nil ->
+            {:ok, acc}
+
+          cursor ->
+            collect_query_pages(backend, handle, %{query | cursor: cursor}, acc)
+        end
+
+      error ->
+        error
+    end
   end
 
   @doc """
@@ -729,7 +746,7 @@ defmodule Rheo do
   ## Arguments
 
     * `lease` — `%Rheo.Lease{}` returned by `fetch/3`
-    * `opts` — optional `:rheo` instance name
+    * `opts` — only `:rheo` (instance name) is honoured
 
   ## Examples
 
@@ -767,7 +784,7 @@ defmodule Rheo do
 
     * `lease` — `%Rheo.Lease{}` from `fetch/3`
     * `reason` — any term stored for diagnostics (default `:retry`)
-    * `opts` — optional `:rheo` instance name
+    * `opts` — only `:rheo` (instance name) is honoured
 
   ## Examples
 
@@ -805,7 +822,7 @@ defmodule Rheo do
 
     * `lease` — `%Rheo.Lease{}` from `fetch/3`
     * `reason` — any term stored on the delivery (default `:rejected`)
-    * `opts` — optional `:rheo` instance name
+    * `opts` — only `:rheo` (instance name) is honoured
 
   ## Examples
 
@@ -838,7 +855,7 @@ defmodule Rheo do
 
   ## Arguments
 
-    * `opts` — optional `:rheo` instance name
+    * `opts` — only `:rheo` (instance name) is honoured
 
   ## Examples
 
@@ -861,7 +878,7 @@ defmodule Rheo do
 
   ## Arguments
 
-    * `opts` — optional `:rheo` instance name
+    * `opts` — only `:rheo` (instance name) is honoured
 
   ## Examples
 

@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Rheo.Lag do
   @impl true
   def run(args) do
     Mix.Task.run("app.start")
-    {opts, [stream, group], _} = Mix.Tasks.Rheo.InspectOpts.parse_with_argv(args)
+    {opts, [stream, group]} = Mix.Tasks.Rheo.InspectOpts.parse!(args, 2, @moduledoc)
 
     case Rheo.lag(stream, group, opts) do
       {:ok, lag} ->

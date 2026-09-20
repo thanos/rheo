@@ -117,7 +117,7 @@ defmodule Rheo.Consumer do
       start: {__MODULE__, :start_link, [module, Keyword.delete(opts, :id)]},
       type: :worker,
       restart: :permanent,
-      shutdown: Rheo.Group.child_spec(opts).shutdown
+      shutdown: Rheo.Group.shutdown_ms()
     }
   end
 

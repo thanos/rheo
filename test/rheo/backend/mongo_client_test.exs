@@ -1,6 +1,7 @@
 defmodule Rheo.Backend.Mongo.ClientTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
   import Mox
 
   alias Rheo.Backend.Mongo, as: MongoBackend
@@ -132,6 +133,16 @@ defmodule Rheo.Backend.Mongo.ClientTest do
     assert {:error, :backend_unavailable} = MongoBackend.renew(:h, lease)
   end
 
+  test "renew maps in-flight write timeouts to ambiguous" do
+    lease = sample_lease()
+
+    expect(ClientMock, :find_one_and_update, fn :h, "deliveries", _f, _u, _o ->
+      {:error, %DBConnection.ConnectionError{reason: :timeout, message: "timeout"}}
+    end)
+
+    assert {:error, {:ambiguous, :timeout}} = MongoBackend.renew(:h, lease)
+  end
+
   test "renew success updates expires_at" do
     lease = sample_lease()
 
@@ -159,12 +170,21 @@ defmodule Rheo.Backend.Mongo.ClientTest do
     assert {:error, :backend_unavailable} = MongoBackend.ack(:h, lease)
   end
 
+  test "fetch stream not found" do
+    expect(ClientMock, :find_one, fn :h, "streams", _ -> nil end)
+    assert {:error, :stream_not_found} = MongoBackend.fetch(:h, "s", "g", limit: 1)
+  end
+
   test "fetch group not found" do
-    expect(ClientMock, :find_one, fn :h, "groups", _ -> nil end)
+    stub(ClientMock, :find_one, fn
+      :h, "streams", _ -> %{"name" => "s"}
+      :h, "groups", _ -> nil
+    end)
+
     assert {:error, :group_not_found} = MongoBackend.fetch(:h, "s", "g", limit: 1)
   end
 
-  test "fetch claim with missing event" do
+  test "fetch claim with missing event dead-letters and continues" do
     stub(ClientMock, :find_one, fn
       :h, "groups", _ ->
         %{
@@ -177,18 +197,39 @@ defmodule Rheo.Backend.Mongo.ClientTest do
 
       :h, "streams", %{"name" => "s"} ->
         %{"name" => "s"}
-
-      :h, "events", %{"_id" => "missing"} ->
-        nil
     end)
 
-    expect(ClientMock, :find, fn :h, "events", _f, _o -> [] end)
+    stub(ClientMock, :find, fn
+      :h, "events", filter, _o ->
+        if match?(%{"_id" => %{"$in" => _}}, filter), do: [], else: []
 
-    expect(ClientMock, :find_one_and_update, fn :h, "deliveries", _f, _u, _o ->
-      {:ok, %Mongo.FindAndModifyResult{value: %{"event_id" => "missing", "attempt" => 1}}}
+      :h, "deliveries", filter, opts ->
+        delivery = %{
+          "_id" => "d1",
+          "event_id" => "missing",
+          "attempt" => 1,
+          "partition" => 0,
+          "sequence" => 1
+        }
+
+        cond do
+          is_list(opts) and Keyword.get(opts, :limit) == 1 -> [delivery]
+          Map.has_key?(filter, "lease_id") -> [delivery]
+          true -> []
+        end
     end)
 
-    assert {:error, {:event_missing, "missing"}} = MongoBackend.fetch(:h, "s", "g", limit: 1)
+    stub(ClientMock, :update_many, fn :h, "deliveries", _f, _u, _o -> {:ok, %{}} end)
+
+    stub(ClientMock, :find_one_and_update, fn :h, "deliveries", filter, update, _o ->
+      assert update["$set"]["status"] == "rejected"
+      assert filter["event_id"] == "missing"
+      {:ok, %Mongo.FindAndModifyResult{value: %{}}}
+    end)
+
+    capture_log(fn ->
+      assert {:ok, []} = MongoBackend.fetch(:h, "s", "g", limit: 1)
+    end)
   end
 
   test "retry dead-letters at max attempts" do
@@ -489,33 +530,45 @@ defmodule Rheo.Backend.Mongo.ClientTest do
         }
     end)
 
-    expect(ClientMock, :find, fn :h, "events", _f, _o ->
-      [
-        %{
-          "_id" => "e1",
-          "stream" => "s",
-          "partition" => 0,
-          "sequence" => 1,
-          "timestamp" => ~U[2026-01-01 00:00:00Z],
-          "type" => "t",
-          "payload" => %{}
-        }
-      ]
-    end)
-
     expect(ClientMock, :insert_many, fn :h, "deliveries", _docs, _opts ->
       {:error, %Mongo.WriteError{write_errors: [%{"code" => 11_000}]}}
     end)
 
+    stub(ClientMock, :find, fn
+      :h, "events", _f, _o ->
+        [
+          %{
+            "_id" => "e1",
+            "stream" => "s",
+            "partition" => 0,
+            "sequence" => 1,
+            "timestamp" => ~U[2026-01-01 00:00:00Z],
+            "type" => "t",
+            "payload" => %{}
+          }
+        ]
+
+      :h, "deliveries", filter, opts ->
+        delivery = %{
+          "_id" => "d1",
+          "event_id" => "e1",
+          "attempt" => 1,
+          "partition" => 0,
+          "sequence" => 1
+        }
+
+        cond do
+          is_list(opts) and Keyword.has_key?(opts, :limit) -> [delivery]
+          Map.has_key?(filter, "lease_id") -> [delivery]
+          true -> []
+        end
+    end)
+
+    stub(ClientMock, :update_many, fn :h, "deliveries", _f, _u, _o -> {:ok, %{}} end)
+
     stub(ClientMock, :find_one_and_update, fn
       :h, "groups", _f, _u, _o ->
         {:ok, %Mongo.FindAndModifyResult{value: %{}}}
-
-      :h, "deliveries", _f, _u, _o ->
-        {:ok,
-         %Mongo.FindAndModifyResult{
-           value: %{"event_id" => "e1", "attempt" => 1}
-         }}
     end)
 
     assert {:ok, [%Lease{event_id: "e1"}]} =

@@ -684,6 +684,7 @@ defmodule Rheo.GroupUnitTest do
       Task.async(fn -> Rheo.Group.drain(group_pid, 2_000) end)
 
     Process.sleep(30)
+    assert {:error, :already_draining} = Rheo.Group.drain(group_pid, 100)
     Process.exit(worker, :kill)
 
     assert_receive :drain_worker_crash, 2_000

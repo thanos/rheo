@@ -30,6 +30,7 @@ if Code.ensure_loaded?(Mongo) do
     alias Rheo.Backend.Mongo.Client
     alias Rheo.Backend.Mongo.Codec
     alias Rheo.{Clock, DeadLetter, Event, GroupInfo, Id, Lag, Lease, Partition, Query, Telemetry}
+    require Logger
 
     @streams "streams"
     @events "events"
@@ -98,7 +99,7 @@ if Code.ensure_loaded?(Mongo) do
     def capabilities do
       Rheo.Backend.Capabilities.new(%{
         durable: true,
-        distributed: false,
+        distributed: true,
         atomic_compare_and_set: true,
         notifications: false,
         change_feed: false,
@@ -115,7 +116,7 @@ if Code.ensure_loaded?(Mongo) do
     def ping(topo) do
       case client().command(topo, ping: 1) do
         {:ok, _} -> :ok
-        {:error, reason} -> {:error, reason}
+        {:error, reason} -> {:error, map_backend_error(reason)}
       end
     end
 
@@ -308,12 +309,12 @@ if Code.ensure_loaded?(Mongo) do
         "sequence" => %{"$gt" => after_seq}
       }
 
-      events =
-        topo
-        |> then(&client().find(&1, @events, filter, sort: %{"sequence" => 1}, limit: limit))
-        |> Enum.map(&Codec.event_from_doc/1)
-
-      {:ok, events}
+      case mongo_enum(
+             client().find(topo, @events, filter, sort: %{"sequence" => 1}, limit: limit)
+           ) do
+        {:ok, docs} -> {:ok, Enum.map(docs, &Codec.event_from_doc/1)}
+        error -> error
+      end
     end
 
     @impl true
@@ -323,12 +324,10 @@ if Code.ensure_loaded?(Mongo) do
         filter = build_query_filter(query)
         sort = order_to_sort(query.order_by)
 
-        events =
-          topo
-          |> then(&client().find(&1, @events, filter, sort: sort, limit: query.limit))
-          |> Enum.map(&Codec.event_from_doc/1)
-
-        {:ok, events}
+        case mongo_enum(client().find(topo, @events, filter, sort: sort, limit: query.limit)) do
+          {:ok, docs} -> {:ok, Enum.map(docs, &Codec.event_from_doc/1)}
+          error -> error
+        end
       end)
     end
 
@@ -340,8 +339,8 @@ if Code.ensure_loaded?(Mongo) do
     end
 
     defp do_fetch(topo, stream, group, opts) do
-      with {:ok, _} <- fetch_group(topo, stream, group),
-           {:ok, stream_doc} <- fetch_stream(topo, stream),
+      with {:ok, stream_doc} <- fetch_stream(topo, stream),
+           {:ok, _} <- fetch_group(topo, stream, group),
            {:ok, partitions} <- resolve_assignment(opts, partition_count(stream_doc)) do
         limit = Keyword.get(opts, :limit, Application.get_env(:rheo, :default_max_demand, 10))
         consumer_id = Keyword.get_lazy(opts, :consumer_id, &Id.generate/0)
@@ -620,33 +619,47 @@ if Code.ensure_loaded?(Mongo) do
 
     @impl true
     def list_streams(topo, _opts \\ []) do
-      names =
-        topo
-        |> client().find(@streams, %{}, sort: %{"name" => 1}, projection: %{"name" => 1})
-        |> Enum.map(fn doc -> doc["name"] || doc[:name] end)
-        |> Enum.reject(&is_nil/1)
+      case mongo_enum(
+             client().find(topo, @streams, %{}, sort: %{"name" => 1}, projection: %{"name" => 1})
+           ) do
+        {:ok, docs} ->
+          {:ok,
+           docs
+           |> Enum.map(fn doc -> doc["name"] || doc[:name] end)
+           |> Enum.reject(&is_nil/1)}
 
-      {:ok, names}
+        error ->
+          error
+      end
     rescue
       error -> {:error, map_backend_error(error)}
+    catch
+      :exit, _reason -> {:error, :backend_unavailable}
     end
 
     @impl true
     def list_groups(topo, stream, _opts \\ []) do
       with {:ok, _} <- fetch_stream(topo, stream) do
-        names =
-          topo
-          |> client().find(@groups, %{"stream" => stream},
-            sort: %{"name" => 1},
-            projection: %{"name" => 1}
-          )
-          |> Enum.map(fn doc -> doc["name"] || doc[:name] end)
-          |> Enum.reject(&is_nil/1)
+        case mongo_enum(
+               client().find(topo, @groups, %{"stream" => stream},
+                 sort: %{"name" => 1},
+                 projection: %{"name" => 1}
+               )
+             ) do
+          {:ok, docs} ->
+            {:ok,
+             docs
+             |> Enum.map(fn doc -> doc["name"] || doc[:name] end)
+             |> Enum.reject(&is_nil/1)}
 
-        {:ok, names}
+          error ->
+            error
+        end
       end
     rescue
       error -> {:error, map_backend_error(error)}
+    catch
+      :exit, _reason -> {:error, :backend_unavailable}
     end
 
     @impl true
@@ -655,21 +668,34 @@ if Code.ensure_loaded?(Mongo) do
         limit = Keyword.get(opts, :limit, 100)
         after_id = Keyword.get(opts, :after)
 
-        docs =
-          topo
-          |> client().find(
-            @deliveries,
-            %{"stream" => stream, "group" => group, "status" => "rejected"},
-            sort: %{"sequence" => 1, "event_id" => 1}
-          )
-          |> Enum.to_list()
-          |> drop_after_event_id(after_id)
-          |> Enum.take(limit)
+        case mongo_enum(
+               client().find(
+                 topo,
+                 @deliveries,
+                 %{"stream" => stream, "group" => group, "status" => "rejected"},
+                 sort: %{"sequence" => 1, "event_id" => 1}
+               )
+             ) do
+          {:ok, docs} ->
+            case drop_after_event_id(docs, after_id) do
+              {:ok, docs} ->
+                {:ok,
+                 docs
+                 |> Enum.take(limit)
+                 |> Enum.map(&mongo_dead_letter(topo, &1))}
 
-        {:ok, Enum.map(docs, &mongo_dead_letter(topo, &1))}
+              error ->
+                error
+            end
+
+          error ->
+            error
+        end
       end
     rescue
       error -> {:error, map_backend_error(error)}
+    catch
+      :exit, _reason -> {:error, :backend_unavailable}
     end
 
     @impl true
@@ -721,6 +747,7 @@ if Code.ensure_loaded?(Mongo) do
 
     defp load_event(topo, event_id) do
       case client().find_one(topo, @events, %{"_id" => event_id}) do
+        {:error, _} -> nil
         nil -> nil
         doc -> Codec.event_from_doc(doc)
       end
@@ -742,12 +769,12 @@ if Code.ensure_loaded?(Mongo) do
     defp atom_field("dead_lettered_at"), do: :dead_lettered_at
     defp atom_field(other), do: other
 
-    defp drop_after_event_id(docs, nil), do: docs
+    defp drop_after_event_id(docs, nil), do: {:ok, docs}
 
     defp drop_after_event_id(docs, after_id) when is_binary(after_id) do
       case Enum.find_index(docs, &(doc_get(&1, "event_id") == after_id)) do
-        nil -> docs
-        idx -> Enum.drop(docs, idx + 1)
+        nil -> {:error, :cursor_not_found}
+        idx -> {:ok, Enum.drop(docs, idx + 1)}
       end
     end
 
@@ -914,6 +941,7 @@ if Code.ensure_loaded?(Mongo) do
              "sequence" => next,
              "status" => %{"$in" => ["acked", "rejected"]}
            }) do
+        {:error, _} -> frontier
         nil -> frontier
         _delivery -> walk_frontier(topo, stream, group, partition, next)
       end
@@ -1152,6 +1180,11 @@ if Code.ensure_loaded?(Mongo) do
       }
     end
 
+    # Find-then-update_many can lose a whole candidate window to a concurrent
+    # fetch. Retry so the next find sees the remaining available rows instead of
+    # treating an empty claim as end-of-stream.
+    @claim_race_retries 32
+
     defp claim_deliveries(
            topo,
            stream,
@@ -1162,54 +1195,69 @@ if Code.ensure_loaded?(Mongo) do
            limit,
            now
          ) do
-      ctx = %{
-        topo: topo,
-        stream: stream,
-        group: group,
-        partitions: partitions,
-        consumer_id: consumer_id,
-        lease_ms: lease_ms,
-        now: now
-      }
-
-      claim_loop(ctx, limit, [])
+      args = {topo, stream, group, partitions, consumer_id, lease_ms, limit, now}
+      claim_with_retry(args, 0)
     end
 
-    defp claim_loop(_ctx, 0, acc) do
-      {:ok, Enum.reverse(acc)}
+    defp claim_with_retry(_args, attempts) when attempts >= @claim_race_retries do
+      {:ok, []}
     end
 
-    defp claim_loop(ctx, remaining, acc) do
-      %{
-        topo: topo,
-        stream: stream,
-        group: group,
-        partitions: partitions,
-        consumer_id: consumer_id,
-        lease_ms: lease_ms,
-        now: now
-      } = ctx
-
-      case claim_one(topo, stream, group, partitions, consumer_id, lease_ms, now) do
-        {:ok, nil} ->
-          {:ok, Enum.reverse(acc)}
-
-        {:ok, lease} ->
-          claim_loop(ctx, remaining - 1, [lease | acc])
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+    defp claim_with_retry(
+           {_topo, _stream, _group, _partitions, _cid, _lease_ms, limit, _now},
+           _attempts
+         )
+         when limit <= 0 do
+      {:ok, []}
     end
 
-    defp claim_one(topo, stream, group, partitions, consumer_id, lease_ms, now) do
-      lease_id = Id.generate()
-      expires_at = DateTime.add(now, lease_ms, :millisecond)
-
+    defp claim_with_retry(
+           {topo, stream, group, partitions, _consumer_id, _lease_ms, limit, now} = args,
+           attempts
+         ) do
       filter = %{
         "stream" => stream,
         "group" => group,
         "partition" => %{"$in" => partitions},
+        "$or" => [
+          %{"status" => "available"},
+          %{"status" => "leased", "expires_at" => %{"$lte" => now}}
+        ]
+      }
+
+      with {:ok, candidates} <-
+             mongo_enum(
+               client().find(topo, @deliveries, filter,
+                 sort: %{"partition" => 1, "sequence" => 1},
+                 limit: limit
+               )
+             ) do
+        claim_or_retry(args, attempts, candidates)
+      end
+    end
+
+    defp claim_or_retry(_args, _attempts, []) do
+      {:ok, []}
+    end
+
+    defp claim_or_retry(
+           {topo, stream, group, _partitions, consumer_id, lease_ms, _limit, now} = args,
+           attempts,
+           candidates
+         ) do
+      case claim_candidates(topo, stream, group, consumer_id, lease_ms, now, candidates) do
+        {:ok, []} -> claim_with_retry(args, attempts + 1)
+        other -> other
+      end
+    end
+
+    defp claim_candidates(topo, stream, group, consumer_id, lease_ms, now, candidates) do
+      lease_id = Id.generate()
+      expires_at = DateTime.add(now, lease_ms, :millisecond)
+      ids = Enum.map(candidates, &(&1["_id"] || &1[:_id]))
+
+      claim_filter = %{
+        "_id" => %{"$in" => ids},
         "$or" => [
           %{"status" => "available"},
           %{"status" => "leased", "expires_at" => %{"$lte" => now}}
@@ -1227,47 +1275,140 @@ if Code.ensure_loaded?(Mongo) do
         "$inc" => %{"attempt" => 1}
       }
 
-      case client().find_one_and_update(topo, @deliveries, filter, update,
-             sort: %{"partition" => 1, "sequence" => 1},
-             return_document: :after
-           ) do
-        {:ok, result} ->
-          to_lease(topo, stream, group, consumer_id, lease_id, expires_at, now, get_value(result))
-
-        {:error, reason} ->
-          {:error, reason}
+      with {:ok, _} <-
+             map_update_result(client().update_many(topo, @deliveries, claim_filter, update, [])),
+           {:ok, claimed} <-
+             mongo_enum(
+               client().find(
+                 topo,
+                 @deliveries,
+                 %{
+                   "stream" => stream,
+                   "group" => group,
+                   "lease_id" => lease_id
+                 },
+                 []
+               )
+             ) do
+        load_claimed_leases(topo, stream, group, consumer_id, lease_id, expires_at, now, claimed)
       end
     end
 
-    defp to_lease(_topo, _stream, _group, _consumer_id, _lease_id, _expires_at, _now, nil) do
-      {:ok, nil}
+    defp map_update_result({:ok, _} = ok), do: ok
+    defp map_update_result({:error, reason}), do: {:error, map_backend_error(reason)}
+
+    defp load_claimed_leases(
+           _topo,
+           _stream,
+           _group,
+           _consumer_id,
+           _lease_id,
+           _expires_at,
+           _now,
+           []
+         ) do
+      {:ok, []}
     end
 
-    defp to_lease(topo, stream, group, consumer_id, lease_id, expires_at, now, delivery) do
-      event_id = delivery["event_id"] || delivery[:event_id]
+    defp load_claimed_leases(topo, stream, group, consumer_id, lease_id, expires_at, now, claimed) do
+      claimed = Enum.sort_by(claimed, &claim_order/1)
+      event_ids = Enum.map(claimed, &delivery_event_id/1)
 
-      case client().find_one(topo, @events, %{"_id" => event_id}) do
+      with {:ok, events} <-
+             mongo_enum(client().find(topo, @events, %{"_id" => %{"$in" => event_ids}}, [])) do
+        events_by_id = Map.new(events, &{&1["_id"] || &1[:_id], &1})
+        ctx = {topo, stream, group, consumer_id, lease_id, expires_at, now}
+        {:ok, claimed_to_leases(claimed, events_by_id, ctx)}
+      end
+    end
+
+    defp claim_order(delivery),
+      do:
+        {delivery["partition"] || delivery[:partition] || 0,
+         delivery["sequence"] || delivery[:sequence] || 0}
+
+    defp delivery_event_id(delivery), do: delivery["event_id"] || delivery[:event_id]
+
+    defp claimed_to_leases(claimed, events_by_id, ctx) do
+      claimed
+      |> Enum.reduce([], fn delivery, acc ->
+        prepend_claimed_lease(delivery, events_by_id, ctx, acc)
+      end)
+      |> Enum.reverse()
+    end
+
+    defp prepend_claimed_lease(
+           delivery,
+           events_by_id,
+           {topo, stream, group, _, _, _, _} = ctx,
+           acc
+         ) do
+      event_id = delivery_event_id(delivery)
+
+      case Map.get(events_by_id, event_id) do
         nil ->
-          {:error, {:event_missing, event_id}}
+          _ = dead_letter_missing(topo, stream, group, event_id)
+          acc
 
         event_doc ->
-          attempt = delivery["attempt"] || delivery[:attempt]
-          maybe_redelivery(stream, group, event_id, attempt)
-
-          {:ok,
-           %Lease{
-             lease_id: lease_id,
-             stream: stream,
-             group: group,
-             event_id: event_id,
-             event: Codec.event_from_doc(event_doc),
-             consumer_id: consumer_id,
-             attempt: attempt,
-             leased_at: now,
-             expires_at: expires_at,
-             receipt: lease_id
-           }}
+          [claimed_lease(delivery, event_doc, event_id, ctx) | acc]
       end
+    end
+
+    defp claimed_lease(
+           delivery,
+           event_doc,
+           event_id,
+           {_topo, stream, group, consumer_id, lease_id, expires_at, now}
+         ) do
+      attempt = delivery["attempt"] || delivery[:attempt]
+      maybe_redelivery(stream, group, event_id, attempt)
+
+      %Lease{
+        lease_id: lease_id,
+        stream: stream,
+        group: group,
+        event_id: event_id,
+        event: Codec.event_from_doc(event_doc),
+        consumer_id: consumer_id,
+        attempt: attempt,
+        leased_at: now,
+        expires_at: expires_at,
+        receipt: lease_id
+      }
+    end
+
+    defp dead_letter_missing(topo, stream, group, event_id) do
+      Logger.warning(
+        "Rheo fetch skipped missing event stream=#{stream} group=#{group} event_id=#{event_id}"
+      )
+
+      update = %{
+        "$set" => %{
+          "status" => "rejected",
+          "dead_lettered_at" => Clock.utc_now(),
+          "reason" => encode_reason({:event_missing, event_id}),
+          "lease_id" => nil,
+          "expires_at" => nil
+        }
+      }
+
+      _ =
+        client().find_one_and_update(
+          topo,
+          @deliveries,
+          %{"stream" => stream, "group" => group, "event_id" => event_id},
+          update,
+          []
+        )
+
+      Telemetry.execute([:rheo, :dead_letter], %{count: 1}, %{
+        stream: stream,
+        group: group,
+        event_id: event_id
+      })
+
+      :ok
     end
 
     defp maybe_redelivery(_stream, _group, _event_id, attempt) when attempt <= 1, do: :ok
@@ -1282,6 +1423,7 @@ if Code.ensure_loaded?(Mongo) do
 
     defp fetch_stream(topo, stream) do
       case client().find_one(topo, @streams, %{"name" => stream}) do
+        {:error, reason} -> {:error, map_backend_error(reason)}
         nil -> {:error, :stream_not_found}
         doc -> {:ok, doc}
       end
@@ -1289,6 +1431,7 @@ if Code.ensure_loaded?(Mongo) do
 
     defp fetch_group(topo, stream, group) do
       case client().find_one(topo, @groups, %{"stream" => stream, "name" => group}) do
+        {:error, reason} -> {:error, map_backend_error(reason)}
         nil -> {:error, :group_not_found}
         doc -> {:ok, doc}
       end
@@ -1384,11 +1527,7 @@ if Code.ensure_loaded?(Mongo) do
       |> then(fn acc ->
         if query.to, do: put_in_range(acc, "timestamp", "$lte", query.to), else: acc
       end)
-      |> then(fn acc ->
-        if query.after_sequence,
-          do: put_in_range(acc, "sequence", "$gt", query.after_sequence),
-          else: acc
-      end)
+      |> then(fn acc -> apply_sequence_bounds(acc, query) end)
       |> then(fn acc ->
         if query.until_sequence,
           do: put_in_range(acc, "sequence", "$lte", query.until_sequence),
@@ -1396,11 +1535,26 @@ if Code.ensure_loaded?(Mongo) do
       end)
     end
 
+    defp apply_sequence_bounds(acc, %Query{after_sequences: seqs})
+         when is_map(seqs) and map_size(seqs) > 0 do
+      partitions = Map.keys(seqs)
+
+      clauses =
+        Enum.map(seqs, fn {partition, seq} ->
+          %{"partition" => partition, "sequence" => %{"$gt" => seq}}
+        end) ++ [%{"partition" => %{"$nin" => partitions}}]
+
+      Map.update(acc, "$and", [%{"$or" => clauses}], &[%{"$or" => clauses} | &1])
+    end
+
+    defp apply_sequence_bounds(acc, %Query{after_sequence: after_seq}) when is_integer(after_seq),
+      do: put_in_range(acc, "sequence", "$gt", after_seq)
+
+    defp apply_sequence_bounds(acc, _query), do: acc
+
     defp apply_where_opt({:type, type}, acc), do: Map.put(acc, "type", type)
     defp apply_where_opt({:key, key}, acc), do: Map.put(acc, "key", key)
     defp apply_where_opt({:partition, p}, acc), do: Map.put(acc, "partition", p)
-    defp apply_where_opt({:currency, c}, acc), do: Map.put(acc, "payload.currency", c)
-    defp apply_where_opt({:curve, c}, acc), do: Map.put(acc, "payload.curve", c)
 
     defp apply_where_opt({:correlation_id, id}, acc),
       do: Map.put(acc, "metadata.correlation_id", id)
@@ -1418,7 +1572,7 @@ if Code.ensure_loaded?(Mongo) do
     defp apply_where_opt({field, value}, acc) when is_atom(field),
       do: Map.put(acc, "payload.#{field}", value)
 
-    defp apply_where_opt(_, acc), do: acc
+    defp apply_where_opt(_, acc), do: Map.put(acc, "_id", %{"$in" => []})
 
     defp order_to_sort([]) do
       %{"sequence" => 1}
@@ -1436,11 +1590,16 @@ if Code.ensure_loaded?(Mongo) do
       Map.put(acc, field, Map.put(existing, op, value))
     end
 
+    defp map_backend_error(%DBConnection.ConnectionError{reason: :timeout}),
+      do: {:ambiguous, :timeout}
+
     defp map_backend_error(%DBConnection.ConnectionError{}), do: :backend_unavailable
 
     defp map_backend_error(%Mongo.Error{code: code}) when code in [6, 7, 89],
       do: :backend_unavailable
 
+    defp map_backend_error(:timeout), do: {:ambiguous, :timeout}
+    defp map_backend_error({:ambiguous, _} = reason), do: reason
     defp map_backend_error(reason) when is_atom(reason), do: reason
     defp map_backend_error(reason), do: {:failed, reason}
 
@@ -1454,9 +1613,12 @@ if Code.ensure_loaded?(Mongo) do
       case client().create_indexes(topo, coll, [index]) do
         :ok -> :ok
         {:ok, _} -> :ok
-        {:error, reason} -> {:error, reason}
+        {:error, reason} -> {:error, map_backend_error(reason)}
       end
     end
+
+    defp mongo_enum({:error, reason}), do: {:error, map_backend_error(reason)}
+    defp mongo_enum(docs), do: {:ok, Enum.to_list(docs)}
 
     defp client, do: Client.current()
 

@@ -55,9 +55,14 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
       """
     end
 
-    defp fetch_health(_params, _node) do
-      rows = health_rows(rheo_name())
-      {rows, length(rows)}
+    @doc false
+    def fetch_health(params, _node) do
+      rows =
+        rheo_name()
+        |> health_rows()
+        |> sort_rows(params)
+
+      {Enum.take(rows, row_limit(params, length(rows))), length(rows)}
     end
 
     defp health_rows(rheo) do
@@ -86,9 +91,33 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
           }
 
         _ ->
-          %{stream: stream, group: group, lag: 0, inflight: 0, dead_letters: 0}
+          %{stream: stream, group: group, lag: :error, inflight: :error, dead_letters: :error}
       end
     end
+
+    defp sort_rows(rows, params) do
+      field = param(params, :sort_by, :stream)
+      dir = param(params, :sort_dir, :asc)
+
+      Enum.sort_by(rows, &Map.get(&1, field, &1.stream), sort_sorter(dir))
+    end
+
+    defp row_limit(params, default) do
+      case param(params, :limit, default) do
+        n when is_integer(n) and n > 0 -> n
+        _ -> default
+      end
+    end
+
+    defp param(params, key, default) when is_map(params) do
+      Map.get(params, key) || Map.get(params, Atom.to_string(key), default)
+    end
+
+    defp param(_params, _key, default), do: default
+
+    defp sort_sorter(:desc), do: :desc
+    defp sort_sorter("desc"), do: :desc
+    defp sort_sorter(_), do: :asc
 
     defp rheo_name do
       Application.get_env(:rheo, Rheo.LiveDashboard, [])

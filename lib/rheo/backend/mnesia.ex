@@ -6,6 +6,9 @@ defmodule Rheo.Backend.Mnesia do
   process restart when the Mnesia directory is preserved (`durable: true`).
   Not multi-node in v0.11 (`distributed: false`).
 
+  `dirty_write` to `disc_copies` is not crash-durable the way
+  `:mnesia.sync_transaction` is (`atomic_compare_and_set: false`).
+
   ## Supervision example
 
       children = [
@@ -21,16 +24,27 @@ defmodule Rheo.Backend.Mnesia do
   @behaviour Rheo.Backend
   use GenServer
 
+  alias Rheo.Backend.TableEngine
   alias Rheo.{Clock, DeadLetter, Event, GroupInfo, Id, Lag, Lease, Partition, Query, Telemetry}
 
-  defstruct [:name, :streams, :events, :groups, :deliveries]
+  defstruct [
+    :name,
+    :store,
+    :streams,
+    :events,
+    :groups,
+    :deliveries,
+    :event_ids,
+    :delivery_by_seq,
+    :open_deliveries
+  ]
 
   @impl true
   def capabilities do
     Rheo.Backend.Capabilities.new(%{
       durable: true,
       distributed: false,
-      atomic_compare_and_set: true,
+      atomic_compare_and_set: false,
       notifications: false,
       change_feed: false,
       secondary_indexes: false,
@@ -185,32 +199,56 @@ defmodule Rheo.Backend.Mnesia do
     events = table_atom(prefix, "events")
     groups = table_atom(prefix, "groups")
     deliveries = table_atom(prefix, "deliveries")
+    event_ids = table_atom(prefix, "event_ids")
+    delivery_by_seq = table_atom(prefix, "delivery_by_seq")
+    open_deliveries = table_atom(prefix, "open_deliveries")
 
     :ok = ensure_table(streams, :set)
     :ok = ensure_table(events, :ordered_set)
     :ok = ensure_table(groups, :set)
     :ok = ensure_table(deliveries, :set)
+    :ok = ensure_table(event_ids, :set)
+    :ok = ensure_table(delivery_by_seq, :set)
+    :ok = ensure_table(open_deliveries, :ordered_set)
 
-    case store().wait_for_tables([streams, events, groups, deliveries], 10_000) do
+    tables = [
+      streams,
+      events,
+      groups,
+      deliveries,
+      event_ids,
+      delivery_by_seq,
+      open_deliveries
+    ]
+
+    case store().wait_for_tables(tables, 10_000) do
       :ok -> :ok
       {:timeout, missing} -> raise "Mnesia tables not ready: #{inspect(missing)}"
     end
 
     state = %__MODULE__{
       name: name,
+      store: Rheo.Backend.Table.Mnesia,
       streams: streams,
       events: events,
       groups: groups,
-      deliveries: deliveries
+      deliveries: deliveries,
+      event_ids: event_ids,
+      delivery_by_seq: delivery_by_seq,
+      open_deliveries: open_deliveries
     }
 
+    rebuild_indexes(state)
     {:ok, state}
   end
 
   @impl true
   def handle_call(:ping, _from, state), do: {:reply, :ok, state}
 
-  def handle_call(:ensure_indexes, _from, state), do: {:reply, :ok, state}
+  def handle_call(:ensure_indexes, _from, state) do
+    rebuild_indexes(state)
+    {:reply, :ok, state}
+  end
 
   def handle_call({:create_stream, stream, opts}, _from, state) do
     reply =
@@ -287,7 +325,7 @@ defmodule Rheo.Backend.Mnesia do
                    now
                  ) do
             Enum.each(events, fn event ->
-              insert(state.events, {{stream, event.partition, event.sequence}, event})
+              TableEngine.insert_event(state, event)
             end)
 
             insert(state.streams, {stream, Map.put(rec, :next_sequences, updated_sequences)})
@@ -303,41 +341,23 @@ defmodule Rheo.Backend.Mnesia do
     limit = Keyword.get(opts, :limit, 100)
     partition = Keyword.get(opts, :partition, 0)
 
-    events =
-      state.events
-      |> tab2list()
-      |> Enum.filter(fn {{s, p, seq}, _} ->
-        s == stream and p == partition and seq > after_seq
-      end)
-      |> Enum.sort_by(fn {{_, _, seq}, _} -> seq end)
-      |> Enum.take(limit)
-      |> Enum.map(fn {_, event} -> event end)
+    events = TableEngine.read_partition(state, stream, partition, after_seq, limit)
 
     {:reply, {:ok, events}, state}
   end
 
   def handle_call({:query, %Query{} = query}, _from, state) do
-    query = Query.apply_cursor(query)
-
-    events =
-      state.events
-      |> tab2list()
-      |> Enum.map(fn {_, event} -> event end)
-      |> Enum.filter(&match_query?(&1, query))
-      |> sort_events(query.order_by)
-      |> Enum.take(query.limit)
-
-    {:reply, {:ok, events}, state}
+    {:reply, {:ok, TableEngine.query_events(state, query)}, state}
   end
 
   def handle_call({:fetch, stream, group, opts}, _from, state) do
     reply =
       case {lookup(state.streams, stream), lookup(state.groups, {stream, group})} do
-        {_, []} ->
-          {:error, :group_not_found}
-
         {[], _} ->
           {:error, :stream_not_found}
+
+        {_, []} ->
+          {:error, :group_not_found}
 
         {[{^stream, stream_rec}], [{{^stream, ^group}, group_rec}]} ->
           limit = Keyword.get(opts, :limit, Application.get_env(:rheo, :default_max_demand, 10))
@@ -460,11 +480,11 @@ defmodule Rheo.Backend.Mnesia do
   def handle_call({:replay, stream, group, opts}, _from, state) do
     reply =
       case {lookup(state.streams, stream), lookup(state.groups, {stream, group})} do
-        {_, []} ->
-          {:error, :group_not_found}
-
         {[], _} ->
           {:error, :stream_not_found}
+
+        {_, []} ->
+          {:error, :group_not_found}
 
         {[{^stream, stream_rec}], [{key, group_rec}]} ->
           with {:ok, partitions} <- resolve_assignment(opts, stream_rec.partition_count) do
@@ -512,11 +532,11 @@ defmodule Rheo.Backend.Mnesia do
   def handle_call({:reset_group, stream, group, opts}, _from, state) do
     reply =
       case {lookup(state.streams, stream), lookup(state.groups, {stream, group})} do
-        {_, []} ->
-          {:error, :group_not_found}
-
         {[], _} ->
           {:error, :stream_not_found}
+
+        {_, []} ->
+          {:error, :group_not_found}
 
         {[{^stream, stream_rec}], [{key, group_rec}]} ->
           with {:ok, partitions} <- resolve_assignment(opts, stream_rec.partition_count),
@@ -545,11 +565,11 @@ defmodule Rheo.Backend.Mnesia do
   def handle_call({:lag, stream, group, opts}, _from, state) do
     reply =
       case {lookup(state.streams, stream), lookup(state.groups, {stream, group})} do
-        {_, []} ->
-          {:error, :group_not_found}
-
         {[], _} ->
           {:error, :stream_not_found}
+
+        {_, []} ->
+          {:error, :group_not_found}
 
         {[{^stream, stream_rec}], [{_, group_rec}]} ->
           with {:ok, partitions} <- resolve_assignment(opts, stream_rec.partition_count) do
@@ -608,19 +628,18 @@ defmodule Rheo.Backend.Mnesia do
           after_id = Keyword.get(opts, :after)
 
           rows =
-            state.deliveries
-            |> tab2list()
-            |> Enum.filter(fn {{s, g, _}, d} ->
-              s == stream and g == group and d.status == :rejected
-            end)
-            |> Enum.map(fn {_, d} -> delivery_to_dead_letter(state, d) end)
+            state
+            |> TableEngine.group_deliveries(stream, group)
+            |> Enum.filter(&(&1.status == :rejected))
+            |> Enum.map(&delivery_to_dead_letter(state, &1))
             |> Enum.sort_by(fn %DeadLetter{sequence: seq, dead_lettered_at: at} ->
               {seq || 0, at || ~U[1970-01-01 00:00:00Z]}
             end)
-            |> drop_after(after_id)
-            |> Enum.take(limit)
 
-          {:ok, rows}
+          case TableEngine.drop_after(rows, after_id) do
+            {:ok, rows} -> {:ok, Enum.take(rows, limit)}
+            error -> error
+          end
       end
 
     {:reply, reply, state}
@@ -629,11 +648,11 @@ defmodule Rheo.Backend.Mnesia do
   def handle_call({:group_info, stream, group, opts}, _from, state) do
     reply =
       case {lookup(state.streams, stream), lookup(state.groups, {stream, group})} do
-        {_, []} ->
-          {:error, :group_not_found}
-
         {[], _} ->
           {:error, :stream_not_found}
+
+        {_, []} ->
+          {:error, :group_not_found}
 
         {[{^stream, stream_rec}], [{_, group_rec}]} ->
           with {:ok, partitions} <- resolve_assignment(opts, stream_rec.partition_count) do
@@ -663,20 +682,14 @@ defmodule Rheo.Backend.Mnesia do
   end
 
   defp count_group_statuses(state, stream, group) do
-    state.deliveries
-    |> tab2list()
-    |> Enum.reduce({0, 0}, &tally_group_status(&1, stream, group, &2))
+    state
+    |> TableEngine.group_deliveries(stream, group)
+    |> Enum.reduce({0, 0}, fn
+      %{status: :leased}, {inf, dl} -> {inf + 1, dl}
+      %{status: :rejected}, {inf, dl} -> {inf, dl + 1}
+      _, acc -> acc
+    end)
   end
-
-  defp tally_group_status({{s, g, _}, %{status: :leased}}, stream, group, {inf, dl})
-       when s == stream and g == group,
-       do: {inf + 1, dl}
-
-  defp tally_group_status({{s, g, _}, %{status: :rejected}}, stream, group, {inf, dl})
-       when s == stream and g == group,
-       do: {inf, dl + 1}
-
-  defp tally_group_status(_entry, _stream, _group, acc), do: acc
 
   defp delivery_to_dead_letter(state, delivery) do
     event =
@@ -698,15 +711,6 @@ defmodule Rheo.Backend.Mnesia do
       dead_lettered_at: Map.get(delivery, :dead_lettered_at),
       event: event
     }
-  end
-
-  defp drop_after(rows, nil), do: rows
-
-  defp drop_after(rows, after_id) when is_binary(after_id) do
-    case Enum.find_index(rows, &(&1.event_id == after_id)) do
-      nil -> rows
-      idx -> Enum.drop(rows, idx + 1)
-    end
   end
 
   defp do_reject(state, lease, delivery, reason) do
@@ -736,15 +740,7 @@ defmodule Rheo.Backend.Mnesia do
       Enum.reduce(partitions, group_cursors(group_rec), fn partition, cursors ->
         next_sequence = Partition.map_get(cursors, partition, 1)
 
-        events =
-          state.events
-          |> tab2list()
-          |> Enum.filter(fn {{s, p, sequence}, _} ->
-            s == stream and p == partition and sequence >= next_sequence
-          end)
-          |> Enum.sort_by(fn {{_, _, sequence}, _} -> sequence end)
-          |> Enum.take(limit)
-          |> Enum.map(fn {_, event} -> event end)
+        events = TableEngine.events_from_sequence(state, stream, partition, next_sequence, limit)
 
         Enum.each(events, &materialize_event(state, stream, group, &1))
 
@@ -767,23 +763,19 @@ defmodule Rheo.Backend.Mnesia do
 
     case lookup(state.deliveries, key) do
       [] ->
-        insert(
-          state.deliveries,
-          {key,
-           %{
-             stream: stream,
-             group: group,
-             event_id: event.id,
-             partition: event.partition,
-             sequence: event.sequence,
-             status: :available,
-             attempt: 0,
-             lease_id: nil,
-             consumer_id: nil,
-             expires_at: nil,
-             created_at: Clock.utc_now()
-           }}
-        )
+        TableEngine.put_delivery(state, %{
+          stream: stream,
+          group: group,
+          event_id: event.id,
+          partition: event.partition,
+          sequence: event.sequence,
+          status: :available,
+          attempt: 0,
+          lease_id: nil,
+          consumer_id: nil,
+          expires_at: nil,
+          created_at: Clock.utc_now()
+        })
 
       _ ->
         :ok
@@ -827,62 +819,8 @@ defmodule Rheo.Backend.Mnesia do
   end
 
   defp claim_one(state, stream, group, partitions, consumer_id, lease_ms, now) do
-    partition_set = MapSet.new(partitions)
-
-    candidates =
-      state.deliveries
-      |> tab2list()
-      |> Enum.filter(fn {{s, g, _}, d} ->
-        s == stream and g == group and MapSet.member?(partition_set, d.partition) and
-          claimable?(d, now)
-      end)
-      |> Enum.sort_by(fn {_, d} -> {d.partition, d.sequence} end)
-
-    case candidates do
-      [] ->
-        nil
-
-      [{_key, delivery} | _] ->
-        lease_id = Id.generate()
-        expires_at = DateTime.add(now, lease_ms, :millisecond)
-        attempt = delivery.attempt + 1
-
-        updated =
-          Map.merge(delivery, %{
-            status: :leased,
-            lease_id: lease_id,
-            consumer_id: consumer_id,
-            attempt: attempt,
-            leased_at: now,
-            expires_at: expires_at
-          })
-
-        put_delivery(state, updated)
-        maybe_redelivery(stream, group, delivery.event_id, attempt)
-        event = event_by_id!(state, delivery.event_id)
-
-        %Lease{
-          lease_id: lease_id,
-          stream: stream,
-          group: group,
-          event_id: delivery.event_id,
-          event: event,
-          consumer_id: consumer_id,
-          attempt: attempt,
-          leased_at: now,
-          expires_at: expires_at,
-          receipt: lease_id
-        }
-    end
+    TableEngine.claim_one(state, stream, group, partitions, consumer_id, lease_ms, now)
   end
-
-  defp claimable?(%{status: :available}, _now), do: true
-
-  defp claimable?(%{status: :leased, expires_at: expires_at}, now)
-       when not is_nil(expires_at),
-       do: DateTime.compare(expires_at, now) != :gt
-
-  defp claimable?(_, _), do: false
 
   defp fetch_active_delivery(state, lease) do
     key = {lease.stream, lease.group, lease.event_id}
@@ -896,10 +834,7 @@ defmodule Rheo.Backend.Mnesia do
     end
   end
 
-  defp put_delivery(state, delivery) do
-    key = {delivery.stream, delivery.group, delivery.event_id}
-    insert(state.deliveries, {key, delivery})
-  end
+  defp put_delivery(state, delivery), do: TableEngine.put_delivery(state, delivery)
 
   defp advance_frontier(state, delivery) do
     key = {delivery.stream, delivery.group}
@@ -922,8 +857,7 @@ defmodule Rheo.Backend.Mnesia do
             %{
               stream: delivery.stream,
               group: delivery.group,
-              partition: delivery.partition,
-              frontier: frontier
+              partition: delivery.partition
             }
           )
         end
@@ -934,118 +868,7 @@ defmodule Rheo.Backend.Mnesia do
   end
 
   defp walk_frontier(state, stream, group, partition, frontier) do
-    next = frontier + 1
-
-    terminal? =
-      state.deliveries
-      |> tab2list()
-      |> Enum.any?(fn
-        {{^stream, ^group, _}, %{partition: ^partition, sequence: ^next, status: status}}
-        when status in [:acked, :rejected] ->
-          true
-
-        _ ->
-          false
-      end)
-
-    if terminal?, do: walk_frontier(state, stream, group, partition, next), else: frontier
-  end
-
-  defp event_by_id!(state, event_id) do
-    state.events
-    |> tab2list()
-    |> Enum.find_value(fn
-      {_, %Event{id: ^event_id} = event} -> event
-      _ -> nil
-    end) || raise "missing event #{event_id}"
-  end
-
-  defp maybe_redelivery(_stream, _group, _event_id, attempt) when attempt <= 1, do: :ok
-
-  defp maybe_redelivery(stream, group, event_id, _attempt) do
-    Telemetry.execute([:rheo, :redelivery], %{count: 1}, %{
-      stream: stream,
-      group: group,
-      event_id: event_id
-    })
-  end
-
-  defp match_query?(%Event{} = event, %Query{} = query) do
-    event.stream == query.stream and
-      Enum.all?(query.where, &match_where?(event, &1)) and
-      in_time_range?(event, query.from, query.to) and
-      in_sequence_range?(event, query.after_sequence, query.until_sequence)
-  end
-
-  defp match_where?(event, {:type, type}), do: event.type == type
-  defp match_where?(event, {:key, key}), do: event.key == key
-  defp match_where?(event, {:partition, p}), do: event.partition == p
-
-  defp match_where?(event, {:currency, c}),
-    do: Map.get(event.payload, "currency") == c or Map.get(event.payload, :currency) == c
-
-  defp match_where?(event, {:curve, c}),
-    do: Map.get(event.payload, "curve") == c or Map.get(event.payload, :curve) == c
-
-  defp match_where?(event, {:correlation_id, id}),
-    do:
-      Map.get(event.metadata, "correlation_id") == id or
-        Map.get(event.metadata, :correlation_id) == id
-
-  defp match_where?(event, {:causation_id, id}),
-    do:
-      Map.get(event.metadata, "causation_id") == id or
-        Map.get(event.metadata, :causation_id) == id
-
-  defp match_where?(event, {:producer, p}),
-    do: Map.get(event.metadata, "producer") == p or Map.get(event.metadata, :producer) == p
-
-  defp match_where?(event, {:schema, s}),
-    do: Map.get(event.metadata, "schema") == s or Map.get(event.metadata, :schema) == s
-
-  defp match_where?(event, {field, value}) when is_atom(field) do
-    key = Atom.to_string(field)
-    Map.get(event.payload, key) == value or Map.get(event.payload, field) == value
-  end
-
-  defp match_where?(_, _), do: true
-
-  defp in_sequence_range?(_event, nil, nil), do: true
-
-  defp in_sequence_range?(event, after_seq, nil) when is_integer(after_seq),
-    do: event.sequence > after_seq
-
-  defp in_sequence_range?(event, nil, until_seq) when is_integer(until_seq),
-    do: event.sequence <= until_seq
-
-  defp in_sequence_range?(event, after_seq, until_seq),
-    do: in_sequence_range?(event, after_seq, nil) and in_sequence_range?(event, nil, until_seq)
-
-  defp in_time_range?(_event, nil, nil), do: true
-
-  defp in_time_range?(event, from, nil) when not is_nil(from),
-    do: DateTime.compare(event.timestamp, from) != :lt
-
-  defp in_time_range?(event, nil, to) when not is_nil(to),
-    do: DateTime.compare(event.timestamp, to) != :gt
-
-  defp in_time_range?(event, from, to),
-    do: in_time_range?(event, from, nil) and in_time_range?(event, nil, to)
-
-  defp sort_events(events, order_by) when is_list(order_by) do
-    Enum.reduce(Enum.reverse(order_by), events, fn {field, dir}, acc ->
-      sorter = fn a, b ->
-        va = Map.get(a, field)
-        vb = Map.get(b, field)
-
-        case dir do
-          :desc -> vb <= va
-          _ -> va <= vb
-        end
-      end
-
-      Enum.sort(acc, sorter)
-    end)
+    TableEngine.walk_frontier(state, stream, group, partition, frontier)
   end
 
   defp stream_rec(stream, opts) do
@@ -1110,27 +933,23 @@ defmodule Rheo.Backend.Mnesia do
   defp reopen_ets_from_sequence(state, stream, group, next_sequence, partitions) do
     partition_set = MapSet.new(partitions)
 
-    state.deliveries
-    |> tab2list()
-    |> Enum.each(fn
-      {{^stream, ^group, _}, delivery} ->
-        if MapSet.member?(partition_set, delivery.partition) and
-             delivery.sequence >= next_sequence do
-          put_delivery(
-            state,
-            Map.merge(delivery, %{
-              status: :available,
-              lease_id: nil,
-              consumer_id: nil,
-              expires_at: nil,
-              reason: :replay,
-              retried_at: Clock.utc_now()
-            })
-          )
-        end
-
-      _ ->
-        :ok
+    state
+    |> TableEngine.group_deliveries(stream, group)
+    |> Enum.each(fn delivery ->
+      if MapSet.member?(partition_set, delivery.partition) and
+           delivery.sequence >= next_sequence do
+        put_delivery(
+          state,
+          Map.merge(delivery, %{
+            status: :available,
+            lease_id: nil,
+            consumer_id: nil,
+            expires_at: nil,
+            reason: :replay,
+            retried_at: Clock.utc_now()
+          })
+        )
+      end
     end)
   end
 
@@ -1138,31 +957,27 @@ defmodule Rheo.Backend.Mnesia do
     id_set = MapSet.new(event_ids)
     partition_set = MapSet.new(partitions)
 
-    state.deliveries
-    |> tab2list()
-    |> Enum.reduce([], fn
-      {{^stream, ^group, event_id}, delivery}, acc ->
-        if MapSet.member?(id_set, event_id) and
-             MapSet.member?(partition_set, delivery.partition) do
-          put_delivery(
-            state,
-            Map.merge(delivery, %{
-              status: :available,
-              lease_id: nil,
-              consumer_id: nil,
-              expires_at: nil,
-              reason: :replay,
-              retried_at: Clock.utc_now()
-            })
-          )
+    state
+    |> TableEngine.group_deliveries(stream, group)
+    |> Enum.reduce([], fn delivery, acc ->
+      if MapSet.member?(id_set, delivery.event_id) and
+           MapSet.member?(partition_set, delivery.partition) do
+        put_delivery(
+          state,
+          Map.merge(delivery, %{
+            status: :available,
+            lease_id: nil,
+            consumer_id: nil,
+            expires_at: nil,
+            reason: :replay,
+            retried_at: Clock.utc_now()
+          })
+        )
 
-          [delivery | acc]
-        else
-          acc
-        end
-
-      _, acc ->
+        [delivery | acc]
+      else
         acc
+      end
     end)
   end
 
@@ -1245,32 +1060,9 @@ defmodule Rheo.Backend.Mnesia do
     Partition.normalize_assignment(assignment, partition_count)
   end
 
-  defp stream_next_sequences(rec) do
-    case Map.get(rec, :next_sequences) do
-      map when is_map(map) ->
-        map
-
-      _ ->
-        %{0 => Map.get(rec, :next_sequence, 0)}
-    end
-  end
-
-  defp group_cursors(rec) do
-    case Map.get(rec, :cursors) do
-      map when is_map(map) ->
-        map
-
-      _ ->
-        %{0 => Map.get(rec, :next_sequence, 1)}
-    end
-  end
-
-  defp group_frontiers(rec) do
-    case Map.get(rec, :frontiers) do
-      map when is_map(map) -> map
-      _ -> %{}
-    end
-  end
+  defp stream_next_sequences(rec), do: TableEngine.stream_next_sequences(rec)
+  defp group_cursors(rec), do: TableEngine.group_cursors(rec)
+  defp group_frontiers(rec), do: TableEngine.group_frontiers(rec)
 
   defp put_partitions(map, partitions, value) do
     Enum.reduce(partitions, map, &Map.put(&2, &1, value))
@@ -1287,21 +1079,13 @@ defmodule Rheo.Backend.Mnesia do
   defp delete_partition_deliveries(state, stream, group, partitions) do
     partition_set = MapSet.new(partitions)
 
-    state.deliveries
-    |> tab2list()
-    |> Enum.each(fn
-      {{^stream, ^group, _} = delivery_key, delivery} ->
-        maybe_delete_delivery(state.deliveries, delivery_key, delivery, partition_set)
-
-      _ ->
-        :ok
+    state
+    |> TableEngine.group_deliveries(stream, group)
+    |> Enum.each(fn delivery ->
+      if MapSet.member?(partition_set, delivery.partition) do
+        TableEngine.delete_delivery(state, delivery)
+      end
     end)
-  end
-
-  defp maybe_delete_delivery(table, delivery_key, delivery, partition_set) do
-    if MapSet.member?(partition_set, delivery.partition) do
-      delete_key(table, delivery_key)
-    end
   end
 
   defp apply_start_at_cursors(
@@ -1349,14 +1133,9 @@ defmodule Rheo.Backend.Mnesia do
   end
 
   defp first_sequence_at(state, stream, partition, datetime, default) do
-    state.events
-    |> tab2list()
-    |> Enum.map(fn {_, event} -> event end)
-    |> Enum.filter(fn event ->
-      event.stream == stream and event.partition == partition and
-        DateTime.compare(event.timestamp, datetime) != :lt
-    end)
-    |> Enum.min_by(& &1.sequence, fn -> nil end)
+    state
+    |> TableEngine.events_from_sequence(stream, partition, 1, 1_000_000)
+    |> Enum.find(fn event -> DateTime.compare(event.timestamp, datetime) != :lt end)
     |> case do
       nil -> default
       event -> event.sequence
@@ -1507,6 +1286,18 @@ defmodule Rheo.Backend.Mnesia do
 
   defp table_atom(prefix, suffix), do: String.to_atom("#{prefix}.#{suffix}")
 
+  defp rebuild_indexes(state) do
+    Enum.each(tab2list(state.events), fn
+      {key, %Event{id: id}} -> insert(state.event_ids, {id, key})
+      _ -> :ok
+    end)
+
+    Enum.each(tab2list(state.deliveries), fn
+      {_key, delivery} when is_map(delivery) -> TableEngine.put_delivery(state, delivery)
+      _ -> :ok
+    end)
+  end
+
   defp ensure_table(name, type) when type in [:set, :ordered_set] do
     case store().create_table(name,
            attributes: [:key, :value],
@@ -1529,10 +1320,6 @@ defmodule Rheo.Backend.Mnesia do
 
   defp insert(table, {key, value}) do
     :ok = store().dirty_write({table, key, value})
-  end
-
-  defp delete_key(table, key) do
-    :ok = store().dirty_delete(table, key)
   end
 
   defp tab2list(table) do

@@ -350,9 +350,9 @@ if Code.ensure_loaded?(GenStage) do
     end
 
     defp settle(producer, lease, settle_fun) do
-      result = settle_fun.()
+      settle_fun.()
+    after
       :ok = confirm(producer, lease.lease_id)
-      result
     end
 
     defp validate_on_failure(on_failure) when on_failure in [:nack, :reject], do: on_failure

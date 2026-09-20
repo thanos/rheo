@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Rheo.Streams do
   @impl true
   def run(args) do
     Mix.Task.run("app.start")
-    opts = Mix.Tasks.Rheo.InspectOpts.parse(args)
+    {opts, []} = Mix.Tasks.Rheo.InspectOpts.parse!(args, 0, @moduledoc)
 
     case Rheo.list_streams(opts) do
       {:ok, streams} ->
