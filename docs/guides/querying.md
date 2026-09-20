@@ -29,10 +29,12 @@ flags describe what each backend indexes well; fencing semantics stay the same.
 
 ## Pagination
 
-`query_page/2` returns an opaque cursor (no SQL `OFFSET`):
+`query_page/2` returns a composite cursor (`%{partition => after_sequence}`) so
+a page never splits a sequence across partitions:
 
 ```elixir
 {:ok, page1} = Rheo.query_page("market-events", type: "curve_update", limit: 100)
+# page1.next_cursor => %{0 => 12, 1 => 11, ...}
 
 {:ok, page2} =
   Rheo.query_page("market-events",

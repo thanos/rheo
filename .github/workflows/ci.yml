@@ -5,6 +5,10 @@ on:
     branches: [main, master]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: "OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }}"
@@ -96,7 +100,7 @@ jobs:
         run: mix core.check
 
   quality:
-    name: Quality (format, credo, dialyzer, coveralls)
+    name: Quality (format, credo, dialyzer, docs, coveralls)
     runs-on: ubuntu-latest
 
     services:
@@ -172,6 +176,9 @@ jobs:
       - run: mix compile --warnings-as-errors
       - run: mix credo --strict
       - run: mix dialyzer --format github
+      - run: mix docs --warnings-as-errors
+        env:
+          MIX_ENV: dev
       - name: Test with coverage
         run: mix coveralls.github
         env:

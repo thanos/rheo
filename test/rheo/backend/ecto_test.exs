@@ -182,7 +182,7 @@ defmodule Rheo.Backend.EctoTest do
     test "missing stream and group surface as errors", %{handle: handle} do
       assert {:error, :stream_not_found} = Backend.create_group(handle, "nope", "g")
       assert {:error, :stream_not_found} = Backend.append(handle, "nope", %{type: "x"})
-      assert {:error, :group_not_found} = Backend.fetch(handle, "nope", "g")
+      assert {:error, :stream_not_found} = Backend.fetch(handle, "nope", "g")
       assert {:error, :group_not_found} = Backend.lag(handle, "nope", "g")
     end
 
@@ -398,11 +398,11 @@ defmodule Rheo.Backend.EctoTest do
       assert length(fallback) == 2
     end
 
-    test "non-atom filter keys are ignored", %{handle: handle, stream: stream} do
+    test "non-atom filter keys match nothing", %{handle: handle, stream: stream} do
       assert {:ok, both} =
                Backend.query(handle, %Query{stream: stream, where: [{1, :ignored}], limit: 10})
 
-      assert length(both) == 2
+      assert both == []
     end
 
     test "cursor is applied", %{handle: handle, stream: stream, usd: usd} do

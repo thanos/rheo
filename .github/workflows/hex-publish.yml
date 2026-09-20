@@ -19,8 +19,50 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.confirm == 'publish'
 
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      postgres:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rheo_test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      RHEO_MONGO_URL: mongodb://localhost:27017/rheo_test
+      RHEO_POSTGRES_URL: ecto://postgres:postgres@localhost:5432/rheo_test
+      RHEO_REDIS_URL: redis://localhost:6379
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
 
       - uses: erlef/setup-beam@v1
         with:
@@ -40,11 +82,17 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
-      # Package contents come from mix.exs; prod compile is a sanity check only.
-      - name: Compile
-        run: mix compile --warnings-as-errors
-        env:
-          MIX_ENV: prod
+      - name: Assert tag matches mix.exs version
+        run: |
+          VERSION=$(mix run -e 'IO.puts(Mix.Project.config()[:version])')
+          TAG=$(git describe --tags --exact-match)
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "Tag $TAG does not match mix.exs version v$VERSION"
+            exit 1
+          fi
+
+      - name: Verify
+        run: mix ci
 
       # ex_doc is only: :dev — hex.publish builds docs and needs the default (dev) env.
       - name: Publish to Hex

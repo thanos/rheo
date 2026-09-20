@@ -35,6 +35,7 @@ defmodule Rheo.Group do
     :consumer_id,
     :context,
     :renew_timer,
+    :poll_timer,
     :partitions,
     :drain_from,
     :drain_timer,
@@ -42,6 +43,12 @@ defmodule Rheo.Group do
     draining: false,
     backoff_ms: 0
   ]
+
+  @doc """
+  Milliseconds the supervisor should wait for `terminate/2` to drain inflight work.
+  """
+  @spec shutdown_ms() :: pos_integer()
+  def shutdown_ms, do: @drain_timeout_ms + 1_000
 
   @doc false
   def child_spec(opts) do
@@ -54,7 +61,7 @@ defmodule Rheo.Group do
       start: {__MODULE__, :start_link, [Keyword.delete(opts, :id)]},
       restart: :permanent,
       type: :worker,
-      shutdown: @drain_timeout_ms + 1_000
+      shutdown: shutdown_ms()
     }
   end
 
@@ -69,10 +76,11 @@ defmodule Rheo.Group do
   @doc """
   Stops fetching and waits until inflight work settles or `timeout` elapses.
 
-  Returns `:ok` when nothing is inflight, `:timeout` otherwise. The group keeps
+  Returns `:ok` when nothing is inflight, `:timeout` otherwise, or
+  `{:error, :already_draining}` if a drain is already pending. The group keeps
   serving renewals and worker results while a drain is pending.
   """
-  @spec drain(GenServer.server(), timeout()) :: :ok | :timeout
+  @spec drain(GenServer.server(), timeout()) :: :ok | :timeout | {:error, :already_draining}
   def drain(server, timeout \\ @drain_timeout_ms) do
     GenServer.call(server, {:drain, timeout}, timeout + 1_000)
   end
@@ -124,11 +132,11 @@ defmodule Rheo.Group do
   @impl true
   def handle_continue(:schedule, state) do
     maybe_start_wakeup(state)
-    schedule_fetch(state)
+    {:noreply, schedule_poll(state, state.backoff_ms)}
   end
 
   @impl true
-  def handle_info(:fetch, state), do: do_fetch(state)
+  def handle_info(:fetch, state), do: do_fetch(%{state | poll_timer: nil})
 
   def handle_info(:renew, state), do: {:noreply, do_renew(state)}
 
@@ -150,8 +158,12 @@ defmodule Rheo.Group do
   def handle_info(_other, state), do: {:noreply, state}
 
   @impl true
+  def handle_call({:drain, _timeout}, _from, %{drain_from: from} = state) when not is_nil(from) do
+    {:reply, {:error, :already_draining}, state}
+  end
+
   def handle_call({:drain, timeout}, from, state) do
-    state = %{state | draining: true}
+    state = stop_fetching(state)
 
     if Inflight.size(state.inflight) == 0 do
       {:reply, :ok, state}
@@ -164,7 +176,7 @@ defmodule Rheo.Group do
   @impl true
   def terminate(reason, state) do
     _ = cancel_timer(state.renew_timer)
-    state = %{state | draining: true}
+    state = stop_fetching(state)
 
     # Best-effort wait; the child spec's shutdown budget is the hard limit.
     _ = await_inflight(state, @drain_timeout_ms)
@@ -241,12 +253,21 @@ defmodule Rheo.Group do
     :ok
   end
 
-  defp schedule_fetch(%{draining: true} = state), do: {:noreply, state}
+  defp schedule_poll(%{draining: true} = state, _delay), do: state
 
-  defp schedule_fetch(state) do
-    Process.send_after(self(), :fetch, state.backoff_ms)
-    {:noreply, state}
+  defp schedule_poll(state, delay) do
+    state = cancel_poll(state)
+    %{state | poll_timer: Process.send_after(self(), :fetch, delay)}
   end
+
+  defp cancel_poll(%{poll_timer: nil} = state), do: state
+
+  defp cancel_poll(%{poll_timer: ref} = state) do
+    _ = Process.cancel_timer(ref)
+    %{state | poll_timer: nil}
+  end
+
+  defp stop_fetching(state), do: %{cancel_poll(state) | draining: true}
 
   defp do_fetch(%{draining: true} = state), do: {:noreply, state}
 
@@ -254,8 +275,7 @@ defmodule Rheo.Group do
     slots = available_slots(state)
 
     if slots <= 0 do
-      Process.send_after(self(), :fetch, state.poll_ms)
-      {:noreply, state}
+      {:noreply, schedule_poll(state, state.poll_ms)}
     else
       fetch_and_spawn(state, slots)
     end
@@ -279,13 +299,11 @@ defmodule Rheo.Group do
 
     case Rheo.fetch(state.stream, state.group, fetch_opts) do
       {:ok, []} ->
-        Process.send_after(self(), :fetch, state.poll_ms)
-        {:noreply, %{state | backoff_ms: 0}}
+        {:noreply, schedule_poll(%{state | backoff_ms: 0}, state.poll_ms)}
 
       {:ok, leases} ->
         state = Enum.reduce(leases, state, &spawn_worker/2)
-        send(self(), :fetch)
-        {:noreply, %{state | backoff_ms: 0}}
+        {:noreply, schedule_poll(%{state | backoff_ms: 0}, 0)}
 
       {:error, reason} ->
         reason = Settle.classify(reason)
@@ -297,8 +315,7 @@ defmodule Rheo.Group do
             "reason=#{inspect(reason)} backoff_ms=#{backoff}"
         )
 
-        Process.send_after(self(), :fetch, backoff)
-        {:noreply, %{state | backoff_ms: backoff}}
+        {:noreply, schedule_poll(%{state | backoff_ms: backoff}, backoff)}
     end
   end
 
@@ -425,10 +442,7 @@ defmodule Rheo.Group do
 
   defp after_worker(%{draining: true} = state), do: maybe_finish_drain(state)
 
-  defp after_worker(state) do
-    send(self(), :fetch)
-    state
-  end
+  defp after_worker(state), do: schedule_poll(state, 0)
 
   defp maybe_finish_drain(%{drain_from: nil} = state), do: state
 

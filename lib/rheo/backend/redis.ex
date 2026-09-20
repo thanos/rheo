@@ -390,9 +390,9 @@ if Code.ensure_loaded?(Redix) do
     end
 
     defp scan_partitions(handle, %Query{} = query, partitions) do
-      min_sequence = (query.after_sequence || 0) + 1
-
       Enum.reduce_while(partitions, {:ok, []}, fn partition, {:ok, acc} ->
+        min_sequence = (Query.after_sequence_for(query, partition) || 0) + 1
+
         case load_range(
                handle,
                query.stream,
@@ -454,8 +454,8 @@ if Code.ensure_loaded?(Redix) do
     end
 
     defp do_fetch(handle, stream, group, opts) do
-      with {:ok, _gmeta} <- group_meta(handle, stream, group),
-           {:ok, count} <- partition_count(handle, stream),
+      with {:ok, count} <- partition_count(handle, stream),
+           {:ok, _gmeta} <- group_meta(handle, stream, group),
            {:ok, partitions} <- resolve_assignment(opts, count) do
         ctx = fetch_context(handle, stream, group, opts)
 
@@ -1160,12 +1160,12 @@ if Code.ensure_loaded?(Redix) do
         case command(handle, ["XRANGE", key, "-", "+", "COUNT", to_str(max(limit * 4, 100))]) do
           {:ok, entries} when is_list(entries) ->
             rows =
-              entries
-              |> Enum.map(fn [_id, fields] -> redis_dead_letter(stream, group, fields) end)
-              |> drop_after_dead(after_id)
-              |> Enum.take(limit)
+              Enum.map(entries, fn [_id, fields] -> redis_dead_letter(stream, group, fields) end)
 
-            {:ok, rows}
+            case drop_after_dead(rows, after_id) do
+              {:ok, rows} -> {:ok, Enum.take(rows, limit)}
+              error -> error
+            end
 
           {:ok, nil} ->
             {:ok, []}
@@ -1229,12 +1229,12 @@ if Code.ensure_loaded?(Redix) do
       }
     end
 
-    defp drop_after_dead(rows, nil), do: rows
+    defp drop_after_dead(rows, nil), do: {:ok, rows}
 
     defp drop_after_dead(rows, after_id) when is_binary(after_id) do
       case Enum.find_index(rows, &(&1.event_id == after_id)) do
-        nil -> rows
-        idx -> Enum.drop(rows, idx + 1)
+        nil -> {:error, :cursor_not_found}
+        idx -> {:ok, Enum.drop(rows, idx + 1)}
       end
     end
 
@@ -1573,7 +1573,7 @@ if Code.ensure_loaded?(Redix) do
     defp matches?(%Event{} = event, %Query{} = query) do
       Enum.all?(query.where, &where_match?(event, &1)) and
         in_time_range?(event, query) and
-        (is_nil(query.after_sequence) or event.sequence > query.after_sequence) and
+        Query.past_after?(event, query) and
         (is_nil(query.until_sequence) or event.sequence <= query.until_sequence)
     end
 
@@ -1625,6 +1625,7 @@ if Code.ensure_loaded?(Redix) do
         {:error, reason} -> {:error, map_error(reason)}
       end
     catch
+      :exit, {:timeout, _} -> {:error, {:ambiguous, :timeout}}
       :exit, _reason -> {:error, :backend_unavailable}
     end
 
@@ -1652,6 +1653,7 @@ if Code.ensure_loaded?(Redix) do
           {:error, map_error(reason)}
       end
     catch
+      :exit, {:timeout, _} -> {:error, {:ambiguous, :timeout}}
       :exit, _reason -> {:error, :backend_unavailable}
     end
 
@@ -1663,6 +1665,7 @@ if Code.ensure_loaded?(Redix) do
         {:error, reason} -> {:error, map_error(reason)}
       end
     catch
+      :exit, {:timeout, _} -> {:error, {:ambiguous, :timeout}}
       :exit, _reason -> {:error, :backend_unavailable}
     end
 
@@ -1675,7 +1678,8 @@ if Code.ensure_loaded?(Redix) do
 
     defp map_error(%Redix.ConnectionError{}), do: :backend_unavailable
     defp map_error(%Redix.Error{message: message}), do: {:failed, message}
-    defp map_error(reason) when reason in [:closed, :timeout], do: :backend_unavailable
+    defp map_error(:closed), do: :backend_unavailable
+    defp map_error(:timeout), do: {:ambiguous, :timeout}
     defp map_error(reason) when is_atom(reason), do: reason
     defp map_error(reason), do: {:failed, reason}
 

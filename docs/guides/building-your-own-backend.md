@@ -38,7 +38,9 @@ end
 ```
 
 Guarantees gate conformance cases; mechanisms describe how you implement
-delivery. `at_least_once` and `lease_fencing` cannot be declared `false`.
+delivery. Declare yes to **`:distributed`** when several BEAM nodes may fetch
+the same group through a shared store. `at_least_once` and `lease_fencing`
+cannot be declared `false`.
 
 ## Invariants
 
@@ -83,7 +85,7 @@ fetch the same group (`capabilities.guarantees.distributed`).
 | **Redis** | Yes (`distributed: true`) | Shared Redis; native PEL / reclaim |
 | **Ecto PostgreSQL** | Yes (`distributed: true`) | Shared DB; `FOR UPDATE SKIP LOCKED` |
 | **Ecto SQLite** | No (`distributed: false`) | Single-writer |
-| **Mongo** | Cap `distributed: false` today | Shared Mongo can back multiple nodes in practice; capability stays conservative |
+| **Mongo** | Yes (`distributed: true`) | Shared Mongo; compare-and-set claims |
 | **ETS** | No | Tables die with the node |
 | **Mnesia** | No in v0.11 (`distributed: false`) | Single-node `disc_copies`; multi-node table copies later — still not a Rheo control plane |
 

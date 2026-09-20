@@ -5,6 +5,7 @@
   },
   "skip_files": [
     "test/",
+    "deps/",
     "lib/rheo/application.ex"
   ]
 }

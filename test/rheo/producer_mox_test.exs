@@ -82,7 +82,26 @@ defmodule Rheo.ProducerMoxTest do
     wait_until(fn -> Producer.inflight_count(producer) == 0 end)
   end
 
-  test "fetch errors back off with telemetry", ctx do
+  test "settle still releases inflight when ack exits", ctx do
+    lease = MoxBackend.sample_lease(stream: "s", group: "g")
+
+    expect(Mock, :fetch, fn _h, "s", "g", _opts -> {:ok, [lease]} end)
+    stub(Mock, :fetch, fn _h, "s", "g", _opts -> {:ok, []} end)
+
+    expect(Mock, :ack, fn _h, ^lease ->
+      exit({:timeout, {GenServer, :call, [Rheo.Instance, :get, 5000]}})
+    end)
+
+    producer = start_producer!(ctx)
+    start_sink!(producer)
+    assert_receive {:lease, %Lease{}}, 2_000
+    assert Producer.inflight_count(producer) == 1
+
+    assert {:timeout, _} = catch_exit(Producer.ack(producer, lease, rheo: ctx.rheo))
+    wait_until(fn -> Producer.inflight_count(producer) == 0 end)
+  end
+
+  test "emits fetch error telemetry on backend_unavailable", ctx do
     parent = self()
 
     :telemetry.attach(

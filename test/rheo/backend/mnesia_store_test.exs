@@ -87,7 +87,9 @@ defmodule Rheo.Backend.Mnesia.StoreTest do
       Agent.start_link(fn -> %{running?: true, disc?: false} end, name: __MODULE__.DiscFlag)
 
     on_exit(fn ->
-      if Process.whereis(__MODULE__.DiscFlag), do: Agent.stop(__MODULE__.DiscFlag)
+      if pid = Process.whereis(__MODULE__.DiscFlag) do
+        Process.exit(pid, :kill)
+      end
     end)
 
     stub(StoreMock, :running?, fn ->

@@ -29,6 +29,8 @@ table name prefixes** derived from `:name`.
 ```elixir
 Rheo.Backend.Mnesia.capabilities()
 # guarantees: durable: true, distributed: false, partitions: true, …
+# mechanisms: atomic_compare_and_set: false — dirty_write to disc_copies is not
+# crash-durable the way :mnesia.sync_transaction is.
 ```
 
 Data survives GenServer restart when `:dir` is preserved. v0.11 is **not**

@@ -16,19 +16,24 @@ defmodule Rheo.Application do
   @doc false
   @impl true
   def start(_type, _args) do
-    children =
-      case rheo_opts() do
-        nil -> []
-        opts -> [{Rheo, opts}]
-      end
+    children = [{Registry, keys: :unique, name: Rheo.Registry} | instance_children()]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Rheo.AppSupervisor)
   end
 
+  defp instance_children do
+    case rheo_opts() do
+      nil -> []
+      opts -> [{Rheo, opts}]
+    end
+  end
+
   defp rheo_opts do
     if Application.get_env(:rheo, :start_on_application, false) do
-      backend_opts() &&
-        Keyword.put(backend_opts(), :name, Application.get_env(:rheo, :name, Rheo))
+      case backend_opts() do
+        nil -> nil
+        opts -> Keyword.put(opts, :name, Application.get_env(:rheo, :name, Rheo))
+      end
     end
   end
 

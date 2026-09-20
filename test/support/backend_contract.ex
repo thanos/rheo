@@ -65,8 +65,13 @@ defmodule Rheo.BackendContract do
         end
 
         test "group requires an existing stream", %{rheo: rheo} do
-          assert {:error, :stream_not_found} = Rheo.create_group(stream(), "g", ropts(rheo))
-          assert {:error, :group_not_found} = Rheo.fetch(stream(), "g", ropts(rheo))
+          missing = stream()
+          assert {:error, :stream_not_found} = Rheo.create_group(missing, "g", ropts(rheo))
+          assert {:error, :stream_not_found} = Rheo.fetch(missing, "g", ropts(rheo))
+
+          s = stream()
+          assert :ok = Rheo.create_stream(s, ropts(rheo))
+          assert {:error, :group_not_found} = Rheo.fetch(s, "missing", ropts(rheo))
         end
       end
 
@@ -139,6 +144,21 @@ defmodule Rheo.BackendContract do
 
           paged = s |> Rheo.stream_query([limit: 3] ++ ropts(rheo)) |> Enum.map(& &1.id)
           assert paged == Enum.map(written, & &1.id)
+        end
+
+        test "paging across partitions never skips events", %{rheo: rheo} do
+          s = stream()
+          assert :ok = Rheo.create_stream(s, [partition_count: 4] ++ ropts(rheo))
+
+          assert {:ok, written} =
+                   Rheo.append_batch(s, for(i <- 1..40, do: %{n: i}), ropts(rheo))
+
+          paged = s |> Rheo.stream_query([limit: 10] ++ ropts(rheo)) |> Enum.to_list()
+          direct = elem(Rheo.query(s, [limit: 1000] ++ ropts(rheo)), 1)
+
+          assert length(paged) == 40
+          assert length(direct) == 40
+          assert Enum.map(paged, & &1.id) == Enum.map(written, & &1.id)
         end
       end
 
@@ -312,6 +332,9 @@ defmodule Rheo.BackendContract do
 
           assert dead.event_id == event.id
           assert dead.reason == :bad or is_binary(dead.reason)
+
+          assert {:error, :cursor_not_found} =
+                   Rheo.dead_letters(s, "g", [after: "missing-cursor"] ++ ropts(rheo))
 
           assert {:ok, %Rheo.GroupInfo{} = info} = Rheo.group_info(s, "g", ropts(rheo))
           assert info.dead_letter_count >= 1

@@ -32,7 +32,7 @@ per-instance tables. Callers never pass table refs or Mongo URLs through
 |---|---|---|
 | `durable` | true | false |
 | `secondary_indexes` | true | false |
-| `atomic_compare_and_set` | true | true |
+| `atomic_compare_and_set` | true | false |
 
 Capabilities gate **optional** future suites (replay, partitions). They must not
 make lease fencing optional. Both backends must refuse a stale ACK.

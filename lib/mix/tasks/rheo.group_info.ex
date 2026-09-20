@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Rheo.GroupInfo do
   @impl true
   def run(args) do
     Mix.Task.run("app.start")
-    {opts, [stream, group], _} = Mix.Tasks.Rheo.InspectOpts.parse_with_argv(args)
+    {opts, [stream, group]} = Mix.Tasks.Rheo.InspectOpts.parse!(args, 2, @moduledoc)
 
     case Rheo.group_info(stream, group, opts) do
       {:ok, info} ->

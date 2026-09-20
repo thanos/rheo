@@ -38,7 +38,10 @@ defmodule Rheo.Instance do
   """
   @spec fetch!(atom()) :: t()
   def fetch!(rheo) when is_atom(rheo) do
-    GenServer.call(Rheo.Names.instance(rheo), :get)
+    :persistent_term.get({__MODULE__, rheo})
+  rescue
+    ArgumentError ->
+      GenServer.call(Rheo.Names.instance(rheo), :get)
   end
 
   @impl true
@@ -49,9 +52,16 @@ defmodule Rheo.Instance do
       handle: Keyword.fetch!(opts, :handle)
     }
 
+    :persistent_term.put({__MODULE__, state.name}, state)
     {:ok, state}
   end
 
   @impl true
   def handle_call(:get, _from, state), do: {:reply, state, state}
+
+  @impl true
+  def terminate(_reason, state) do
+    :persistent_term.erase({__MODULE__, state.name})
+    :ok
+  end
 end

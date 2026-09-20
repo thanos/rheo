@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.11.0**. Mnesia backend over the v0.10 ops surface.
+Current release: **v0.11.1**. Correctness patch on the v0.11 Mnesia backend.
 
 ## Done in 0.1.0
 
@@ -112,6 +112,12 @@ Current release: **v0.11.0**. Mnesia backend over the v0.10 ops surface.
 - Multi-node backend comparison documented (Redis / Postgres yes; ETS / SQLite /
   Mnesia v0.11 no)
 - [0.10 → 0.11 migration](https://hexdocs.pm/rheo/0-10-to-0-11.html)
+
+## Done in 0.11.1
+
+- Composite `query_page` cursors, single Group poll timer, Registry group names
+- Shared ETS/Mnesia table engine with indexes; stream-first fetch errors
+- [0.11 → 0.11.1 migration](https://hexdocs.pm/rheo/0-11-to-0-11-1.html)
 
 ## Next (0.12+)
 

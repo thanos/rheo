@@ -3,8 +3,8 @@ defmodule Rheo.Lease do
   A temporary claim on an event for one consumer group.
 
   Fetching work creates a lease with a unique `lease_id` (fencing token). Only
-  the holder of the **current** lease may `Rheo.ack/1`, `Rheo.nack/2`, or
-  `Rheo.reject/2`. After expiry, another consumer may obtain a new lease
+  the holder of the **current** lease may `Rheo.ack/2`, `Rheo.nack/3`, or
+  `Rheo.reject/3`. After expiry, another consumer may obtain a new lease
   (at-least-once redelivery).
 
   ## Fields
@@ -76,7 +76,7 @@ defmodule Rheo.Lease do
   @typedoc """
   A fenced lease on a single event for a consumer group.
 
-  Pass this struct to `Rheo.ack/1`, `Rheo.nack/2`, or `Rheo.reject/2`.
+  Pass this struct to `Rheo.ack/2`, `Rheo.nack/3`, or `Rheo.reject/3`.
 
   `receipt` is an opaque backend-native settle token (ADR 021). Database
   backends typically mirror `lease_id`; native-stream backends may store a

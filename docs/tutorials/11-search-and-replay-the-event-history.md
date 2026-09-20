@@ -22,7 +22,7 @@ Pagination without SQL `OFFSET`:
 
 ```elixir
 {:ok, page} = Rheo.query_page("market-events", type: "curve_update", limit: 100)
-# page.next_cursor => %{after_sequence: ...}
+# page.next_cursor => %{0 => ..., 1 => ...}
 
 {:ok, page2} =
   Rheo.query_page("market-events", type: "curve_update", limit: 100, cursor: page.next_cursor)

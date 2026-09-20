@@ -30,9 +30,15 @@ defmodule Rheo.Clock.Frozen do
   def utc_now do
     ensure_table()
 
-    case :ets.lookup(@table, :now) do
-      [{:now, %DateTime{} = dt}] -> dt
-      [] -> DateTime.utc_now() |> DateTime.truncate(:millisecond)
+    try do
+      case :ets.lookup(@table, :now) do
+        [{:now, %DateTime{} = dt}] -> dt
+        [] -> DateTime.utc_now() |> DateTime.truncate(:millisecond)
+      end
+    rescue
+      ArgumentError ->
+        ensure_table()
+        DateTime.utc_now() |> DateTime.truncate(:millisecond)
     end
   end
 
@@ -57,8 +63,16 @@ defmodule Rheo.Clock.Frozen do
   @spec set(DateTime.t()) :: :ok
   def set(%DateTime{} = dt) do
     ensure_table()
-    :ets.insert(@table, {:now, DateTime.truncate(dt, :millisecond)})
-    :ok
+
+    try do
+      :ets.insert(@table, {:now, DateTime.truncate(dt, :millisecond)})
+      :ok
+    rescue
+      ArgumentError ->
+        ensure_table()
+        :ets.insert(@table, {:now, DateTime.truncate(dt, :millisecond)})
+        :ok
+    end
   end
 
   @doc """

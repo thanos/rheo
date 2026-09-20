@@ -55,7 +55,8 @@ defmodule Rheo.Telemetry do
 
   ## Errors / raises
 
-  Re-raises any exception from `fun` after emitting an `:exception` event.
+  Re-raises any exception, throw, or exit from `fun` after emitting an
+  `:exception` event.
   """
   @spec span(list(atom()), map(), (-> result)) :: result when result: term()
   def span(event, metadata, fun) when is_function(fun, 0) do
@@ -78,6 +79,17 @@ defmodule Rheo.Telemetry do
         )
 
         reraise error, __STACKTRACE__
+    catch
+      kind, reason ->
+        duration = System.monotonic_time() - start
+
+        :telemetry.execute(
+          event ++ [:exception],
+          %{duration: duration},
+          Map.merge(metadata, %{kind: kind, reason: reason, stacktrace: __STACKTRACE__})
+        )
+
+        :erlang.raise(kind, reason, __STACKTRACE__)
     end
   end
 

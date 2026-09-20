@@ -28,7 +28,7 @@ defmodule Rheo.SearchReplayTest do
 
     assert {:ok, page} = Rheo.query_page(stream, limit: 2, rheo: rheo)
     assert length(page.events) == 2
-    assert page.next_cursor == %{after_sequence: 2}
+    assert page.next_cursor == %{0 => 2}
 
     assert {:ok, page2} =
              Rheo.query_page(stream, limit: 2, cursor: page.next_cursor, rheo: rheo)
@@ -91,5 +91,44 @@ defmodule Rheo.SearchReplayTest do
     assert {:ok, event} = Rheo.append(stream, %{type: "x", metadata: meta}, rheo: rheo)
     assert Lineage.get(event, :correlation_id) == "c1"
     assert Lineage.get(event, :causation_id) == "cause"
+  end
+
+  test "replay query pages when matches exceed page size", %{rheo: rheo, stream: stream} do
+    assert :ok = Rheo.create_group(stream, "g", rheo: rheo)
+    assert {:ok, _} = Rheo.append_batch(stream, for(_ <- 1..12, do: %{type: "t"}), rheo: rheo)
+    assert {:ok, leases} = Rheo.fetch(stream, "g", limit: 12, rheo: rheo)
+    Enum.each(leases, &Rheo.ack(&1, rheo: rheo))
+
+    parent = self()
+    handler = "replay-pages-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:rheo, :query, :stop],
+        fn _e, _m, _meta, _ -> send(parent, :query) end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    assert :ok = Rheo.replay(stream, "g", query: [limit: 5], rheo: rheo)
+
+    count =
+      Enum.reduce_while(1..10, 0, fn _, acc ->
+        receive do
+          :query -> {:cont, acc + 1}
+        after
+          50 -> {:halt, acc}
+        end
+      end)
+
+    assert count >= 3
+  end
+
+  test "invalid order_by direction raises ArgumentError" do
+    assert_raise ArgumentError, ~r/invalid order_by direction :sideways/, fn ->
+      Rheo.Query.new("s", order_by: [sequence: :sideways])
+    end
   end
 end

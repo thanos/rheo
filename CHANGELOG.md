@@ -5,6 +5,44 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-09-20
+
+Correctness patch on v0.11.0: composite page cursors, a single Group poll
+timer, Registry-based group names, ETS/Mnesia indexing via a shared table
+engine, and ops/CI follow-through.
+
+See [0.11 → 0.11.1 migration](https://hexdocs.pm/rheo/0-11-to-0-11-1.html).
+
+### Changed
+
+- `query_page/2` `next_cursor` is `%{partition => after_sequence}` (legacy
+  `%{after_sequence: n}` still accepted on apply)
+- `fetch/3` of a missing stream returns `:stream_not_found` (group lookup no
+  longer wins)
+- ETS and Mnesia declare `atomic_compare_and_set: false`
+- Mongo declares `distributed: true`
+- Groups register in an application-level `Rheo.Registry` via tuple
+- In-flight write timeouts map to `{:ambiguous, :timeout}` on Mongo/Redis/Ecto
+
+### Fixed
+
+- Group poll timer multiplication; missing events dead-letter instead of failing
+  the fetch; Mongo client exits no longer crash the Group
+- ETS/Mnesia claim/query/frontier scans; Mix inspect tasks when no instance is
+  running; `mix test.unit` without Mongo/Redis
+- ETS/Mnesia range reads walk the `ordered_set` key range instead of filtering
+  a full-table `select`, so `read`, `materialize`, and `fetch` cost O(range)
+  rather than O(events in the stream). Consume throughput is now flat to at
+  least 24k events (was degrading ~4x between 1k and 12k)
+- `fetch/3` claims a batch in one ordered pass. Restarting the scan per lease
+  re-walked the already-leased prefix, making a single fetch quadratic in
+  `:limit`; `fetch(limit: 4000)` used to exceed the ETS call timeout and return
+  `:backend_unavailable`
+- `Rheo.Producer.drain/2` returns `{:error, :already_draining}` instead of
+  overwriting a pending drain's caller, matching `Rheo.Group.drain/2`
+- `Rheo.LiveDashboard.Page` caches its stream/group/info walk for 2s, so
+  re-sorting or re-paging the table does not replay N+1 backend calls
+
 ## [0.11.0] - 2026-09-19
 
 Mnesia backend: durable ETS-shaped OTP `:mnesia` store (single-node

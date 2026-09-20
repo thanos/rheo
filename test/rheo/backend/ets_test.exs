@@ -17,23 +17,6 @@ defmodule Rheo.Backend.ETSTest do
     end)
   end
 
-  defp mutate_stream(handle, stream, fun) do
-    :sys.replace_state(handle, fn state ->
-      [{^stream, rec}] = :ets.lookup(state.streams, stream)
-      true = :ets.insert(state.streams, {stream, fun.(rec)})
-      state
-    end)
-  end
-
-  defp mutate_group(handle, stream, group, fun) do
-    :sys.replace_state(handle, fn state ->
-      key = {stream, group}
-      [{^key, rec}] = :ets.lookup(state.groups, key)
-      true = :ets.insert(state.groups, {key, fun.(rec)})
-      state
-    end)
-  end
-
   test "starts without Mongo and survives basic consume loop" do
     name = :"ets_smoke_#{System.unique_integer([:positive])}"
     assert {:ok, _} = start_supervised({Rheo, name: name, backend: Rheo.Backend.ETS}, id: name)
@@ -234,29 +217,6 @@ defmodule Rheo.Backend.ETSTest do
       assert Enum.map(replayed, & &1.event_id) == [e1.id]
     end
 
-    test "legacy next_sequence / next_sequences fallbacks", %{handle: handle} do
-      assert :ok = ETS.create_stream(handle, "s")
-      assert :ok = ETS.create_group(handle, "s", "g")
-      assert {:ok, _} = ETS.append(handle, "s", %{type: "a"})
-
-      mutate_stream(handle, "s", fn rec ->
-        rec
-        |> Map.delete(:next_sequences)
-        |> Map.put(:next_sequence, 4)
-      end)
-
-      mutate_group(handle, "s", "g", fn rec ->
-        rec
-        |> Map.delete(:cursors)
-        |> Map.delete(:frontiers)
-        |> Map.put(:next_sequence, 2)
-      end)
-
-      assert {:ok, lag} = ETS.lag(handle, "s", "g")
-      assert lag.partitions[0].high_watermark == 4
-      assert lag.partitions[0].frontier == 0
-    end
-
     test "nested payload and string metadata key", %{handle: handle} do
       assert :ok = ETS.create_stream(handle, "s")
 
@@ -287,21 +247,10 @@ defmodule Rheo.Backend.ETSTest do
       assert still.id == e2.id
     end
 
-    test "lag group_not_found and legacy group cursors on fetch", %{handle: handle} do
+    test "lag group_not_found", %{handle: handle} do
       assert :ok = ETS.create_stream(handle, "s")
       assert :ok = ETS.create_group(handle, "s", "g")
-      assert {:ok, _} = ETS.append(handle, "s", %{type: "a"})
-
       assert {:error, :group_not_found} = ETS.lag(handle, "s", "missing")
-
-      mutate_group(handle, "s", "g", fn rec ->
-        rec
-        |> Map.delete(:cursors)
-        |> Map.delete(:frontiers)
-        |> Map.put(:next_sequence, 1)
-      end)
-
-      assert {:ok, [_lease]} = ETS.fetch(handle, "s", "g", limit: 1)
     end
 
     test "replay walks other streams' delivery rows", %{handle: handle} do
@@ -453,7 +402,7 @@ defmodule Rheo.Backend.ETSTest do
                  limit: 10
                })
 
-      # Non-atom where field hits the catch-all matcher.
+      # Non-atom where field matches nothing.
       assert {:ok, both} =
                ETS.query(handle, %Query{
                  stream: "s",
@@ -461,7 +410,7 @@ defmodule Rheo.Backend.ETSTest do
                  limit: 10
                })
 
-      assert length(both) == 2
+      assert both == []
     end
   end
 
@@ -516,8 +465,8 @@ defmodule Rheo.Backend.ETSTest do
   end
 
   describe "reset_group" do
-    test "group_not_found when lookup empty", %{handle: handle} do
-      assert {:error, :group_not_found} = ETS.reset_group(handle, "s", "missing")
+    test "stream_not_found when lookup empty", %{handle: handle} do
+      assert {:error, :stream_not_found} = ETS.reset_group(handle, "s", "missing")
     end
 
     test "clears deliveries and keeps events", %{handle: handle} do

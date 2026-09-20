@@ -40,7 +40,8 @@ for mod <- absent, Code.ensure_loaded?(mod), do: raise("#{inspect(mod)} compiled
 {:ok, ["g"]} = Rheo.list_groups("s", rheo: CoreRheo)
 {:ok, %Rheo.GroupInfo{}} = Rheo.group_info("s", "g", rheo: CoreRheo)
 
-dir = System.tmp_dir!() <> "/rheo_core_mnesia"
+dir = Path.expand("mnesia")
+File.mkdir_p!(dir)
 {:ok, _} = Rheo.start_link(name: CoreMnesia, backend: {Rheo.Backend.Mnesia, dir: dir})
 :ok = Rheo.create_stream("m", rheo: CoreMnesia)
 {:ok, _} = Rheo.append("m", %{type: "e"}, rheo: CoreMnesia)

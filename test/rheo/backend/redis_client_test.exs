@@ -47,6 +47,11 @@ defmodule Rheo.Backend.Redis.ClientTest do
     assert {:error, :backend_unavailable} = RedisBackend.ping(@handle)
   end
 
+  test "ping maps in-flight timeouts to ambiguous" do
+    expect(ClientMock, :command, fn @handle, ["PING"], _opts -> {:error, :timeout} end)
+    assert {:error, {:ambiguous, :timeout}} = RedisBackend.ping(@handle)
+  end
+
   test "ping succeeds" do
     expect(ClientMock, :command, fn @handle, ["PING"], _opts -> {:ok, "PONG"} end)
     assert :ok = RedisBackend.ping(@handle)

@@ -12,6 +12,8 @@ defmodule Rheo.Query do
     * `:where` — keyword filters (type, key, partition, payload/metadata fields)
     * `:from` / `:to` — optional `DateTime` bounds on `timestamp`
     * `:after_sequence` — exclusive lower bound on `sequence` (like `Rheo.read/2` `:after`)
+    * `:after_sequences` — per-partition exclusive lower bounds (`%{partition => seq}`),
+      used by page cursors on multi-partition streams
     * `:until_sequence` — inclusive upper bound on `sequence`
     * `:order_by` — `[{field, :asc | :desc}]` (default `[sequence: :asc]`);
       `1` / `-1` are accepted and normalized
@@ -80,13 +82,17 @@ defmodule Rheo.Query do
   `Rheo.query_page/2` returns `%Rheo.Page{next_cursor: …}`. Pass that map back as
   `:cursor` (usually with ascending sequence order):
 
-      iex> q = Rheo.Query.new("s", limit: 100, cursor: %{after_sequence: 50})
+      iex> q = Rheo.Query.new("s", limit: 100, cursor: %{0 => 50})
       iex> q.cursor
-      %{after_sequence: 50}
+      %{0 => 50}
 
       iex> q = Rheo.Query.apply_cursor(Rheo.Query.new("s", after_sequence: 10, cursor: %{after_sequence: 50}))
       iex> {q.after_sequence, q.cursor}
       {50, nil}
+
+      iex> q = Rheo.Query.apply_cursor(Rheo.Query.new("s", cursor: %{0 => 3, 1 => 2}))
+      iex> {q.after_sequences, q.cursor}
+      {%{0 => 3, 1 => 2}, nil}
 
   ## Running queries (facade)
 
@@ -124,18 +130,21 @@ defmodule Rheo.Query do
             from: nil,
             to: nil,
             after_sequence: nil,
+            after_sequences: nil,
             until_sequence: nil,
             order_by: [sequence: :asc],
             limit: 100,
             cursor: nil
 
   @type order_dir :: :asc | :desc
+  @type partition_cursors :: %{optional(non_neg_integer()) => non_neg_integer()}
   @type t :: %__MODULE__{
           stream: String.t(),
           where: keyword(),
           from: DateTime.t() | nil,
           to: DateTime.t() | nil,
           after_sequence: non_neg_integer() | nil,
+          after_sequences: partition_cursors() | nil,
           until_sequence: pos_integer() | nil,
           order_by: [{atom(), order_dir()}],
           limit: pos_integer(),
@@ -146,10 +155,10 @@ defmodule Rheo.Query do
   Builds a query from a stream name and keyword options.
 
   Recognized options: `:where`, `:from`, `:to`, `:after_sequence`,
-  `:until_sequence`, `:order_by`, `:limit`, `:cursor`, plus flat filters
-  (`:type`, `:key`, `:currency`, `:correlation_id`, …) merged into `:where`.
-  Options `:rheo` and `:sort` are ignored (use `:order_by`; pass `:rheo` to
-  `Rheo.query/2` instead).
+  `:after_sequences`, `:until_sequence`, `:order_by`, `:limit`, `:cursor`, plus
+  flat filters (`:type`, `:key`, `:currency`, `:correlation_id`, …) merged into
+  `:where`. Options `:rheo` and `:sort` are ignored (use `:order_by`; pass
+  `:rheo` to `Rheo.query/2` instead).
 
   ## Examples
 
@@ -176,6 +185,7 @@ defmodule Rheo.Query do
         :from,
         :to,
         :after_sequence,
+        :after_sequences,
         :until_sequence,
         :order_by,
         :limit,
@@ -192,6 +202,7 @@ defmodule Rheo.Query do
       from: Keyword.get(known, :from),
       to: Keyword.get(known, :to),
       after_sequence: Keyword.get(known, :after_sequence),
+      after_sequences: Keyword.get(known, :after_sequences),
       until_sequence: Keyword.get(known, :until_sequence),
       order_by: normalize_order_by(Keyword.get(known, :order_by, sequence: :asc)),
       limit: Keyword.get(known, :limit, 100),
@@ -201,13 +212,23 @@ defmodule Rheo.Query do
 
   defp normalize_order_by(order_by) when is_list(order_by) do
     Enum.map(order_by, fn
-      {field, dir} when dir in [:asc, 1] -> {field, :asc}
-      {field, dir} when dir in [:desc, -1] -> {field, :desc}
+      {field, dir} when dir in [:asc, 1] ->
+        {field, :asc}
+
+      {field, dir} when dir in [:desc, -1] ->
+        {field, :desc}
+
+      {field, dir} ->
+        raise ArgumentError, "invalid order_by direction #{inspect(dir)} for #{inspect(field)}"
     end)
   end
 
   @doc """
-  Applies an opaque page `:cursor` onto `:after_sequence` and clears `:cursor`.
+  Applies an opaque page `:cursor` and clears `:cursor`.
+
+  Composite cursors (`%{partition => after_sequence}`) populate
+  `:after_sequences`. The legacy `%{after_sequence: n}` shape still sets a
+  global `:after_sequence` lower bound.
 
   Used by backends and `Rheo.query_page/2`. Prefer passing `cursor:` into
   `Rheo.Query.new/2` or `Rheo.query_page/2` rather than calling this directly.
@@ -219,6 +240,10 @@ defmodule Rheo.Query do
       iex> {applied.after_sequence, applied.cursor}
       {50, nil}
 
+      iex> q = Rheo.Query.apply_cursor(Rheo.Query.new("s", cursor: %{0 => 3, "1" => 2}))
+      iex> q.after_sequences
+      %{0 => 3, 1 => 2}
+
       iex> Rheo.Query.apply_cursor(Rheo.Query.new("s")).cursor
       nil
   """
@@ -226,6 +251,17 @@ defmodule Rheo.Query do
   def apply_cursor(%__MODULE__{cursor: nil} = query), do: query
 
   def apply_cursor(%__MODULE__{cursor: cursor} = query) when is_map(cursor) do
+    sequences = partition_cursors(cursor)
+
+    if sequences != %{} do
+      merged = Map.merge(query.after_sequences || %{}, sequences, fn _k, a, b -> max(a, b) end)
+      %{query | after_sequences: merged, cursor: nil}
+    else
+      apply_legacy_cursor(query, cursor)
+    end
+  end
+
+  defp apply_legacy_cursor(query, cursor) do
     after_seq = cursor[:after_sequence] || cursor["after_sequence"]
 
     if is_integer(after_seq) do
@@ -235,4 +271,63 @@ defmodule Rheo.Query do
       %{query | cursor: nil}
     end
   end
+
+  @doc """
+  Exclusive sequence lower bound for one partition.
+
+  Prefers `:after_sequences` when present, otherwise `:after_sequence`.
+  """
+  @spec after_sequence_for(t(), non_neg_integer()) :: non_neg_integer() | nil
+  def after_sequence_for(%__MODULE__{after_sequences: seqs} = query, partition)
+      when is_map(seqs) do
+    Map.get(seqs, partition, query.after_sequence)
+  end
+
+  def after_sequence_for(%__MODULE__{} = query, _partition), do: query.after_sequence
+
+  @doc """
+  Whether `event` is strictly after the query's exclusive sequence cursor.
+  """
+  @spec past_after?(map(), t()) :: boolean()
+  def past_after?(%{partition: partition, sequence: sequence}, %__MODULE__{} = query)
+      when is_integer(partition) and is_integer(sequence) do
+    case after_sequence_for(query, partition) do
+      nil -> true
+      bound -> sequence > bound
+    end
+  end
+
+  @doc false
+  @spec next_cursor([Rheo.Event.t()], t()) :: partition_cursors() | nil
+  def next_cursor(events, %__MODULE__{} = query) do
+    if length(events) >= query.limit and events != [] do
+      Enum.reduce(events, query.after_sequences || %{}, fn event, acc ->
+        Map.update(acc, event.partition, event.sequence, &max(&1, event.sequence))
+      end)
+    end
+  end
+
+  defp partition_cursors(cursor) when is_map(cursor) do
+    Enum.reduce(cursor, %{}, fn
+      {key, value}, acc when is_integer(value) ->
+        case partition_key(key) do
+          {:ok, partition} -> Map.put(acc, partition, value)
+          :error -> acc
+        end
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp partition_key(key) when is_integer(key) and key >= 0, do: {:ok, key}
+
+  defp partition_key(key) when is_binary(key) do
+    case Integer.parse(key) do
+      {n, ""} when n >= 0 -> {:ok, n}
+      _ -> :error
+    end
+  end
+
+  defp partition_key(_), do: :error
 end

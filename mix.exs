@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.11.0"
+  @version "0.11.1"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -58,6 +58,7 @@ defmodule Rheo.MixProject do
           "docs/upgrading.md",
           "docs/migrations/0.9-to-0.10.md",
           "docs/migrations/0.10-to-0.11.md",
+          "docs/migrations/0.11-to-0.11.1.md",
           "docs/architecture.md",
           "docs/diagrams.md",
           "docs/roadmap.md",
@@ -115,7 +116,8 @@ defmodule Rheo.MixProject do
           Upgrading: [
             "docs/upgrading.md",
             "docs/migrations/0.9-to-0.10.md",
-            "docs/migrations/0.10-to-0.11.md"
+            "docs/migrations/0.10-to-0.11.md",
+            "docs/migrations/0.11-to-0.11.1.md"
           ],
           Design: [
             "docs/architecture.md",
@@ -154,7 +156,9 @@ defmodule Rheo.MixProject do
         "coveralls.json": :test,
         credo: :test,
         dialyzer: :dev,
-        "rheo.demo": :dev
+        "rheo.demo": :dev,
+        "test.unit": :test,
+        "test.integration": :test
       ]
     ]
   end
@@ -202,16 +206,8 @@ defmodule Rheo.MixProject do
   defp aliases do
     [
       "rheo.demo": ["run priv/demo/demo.exs"],
-      "test.unit": [
-        "test",
-        "--exclude",
-        "mongo",
-        "--exclude",
-        "redis",
-        "--exclude",
-        "integration"
-      ],
-      "test.integration": ["test", "--include", "integration"],
+      "test.unit": "test --exclude mongo --exclude redis --exclude integration",
+      "test.integration": "test --include integration",
       "core.check": &core_check/1,
       ci: &verify/1
     ]

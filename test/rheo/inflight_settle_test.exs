@@ -40,11 +40,15 @@ defmodule Rheo.InflightTest do
     assert :error = Inflight.fetch_lease(inflight, "missing")
     assert :error = Inflight.pop(inflight, "missing")
 
-    assert {:ok, %{task: :t, lease: %Lease{lease_id: "l1"}}, inflight} =
+    assert {:ok, %{task: :t, lease: %Lease{lease_id: "l1"}}, popped} =
              Inflight.pop(inflight, "l1")
 
-    assert Inflight.size(inflight) == 0
-    assert Inflight.delete(inflight, "l1") == inflight
+    assert Inflight.size(popped) == 0
+    assert Inflight.delete(popped, "l1") == popped
+
+    present = Inflight.put(Inflight.new(), "l1", lease(), %{task: :t})
+    assert Inflight.size(Inflight.delete(present, "l1")) == 0
+    assert Inflight.delete(Inflight.new(), "missing") == Inflight.new()
   end
 
   test "update_lease, leases, drop" do

@@ -191,7 +191,7 @@ defmodule Rheo.FailureInjectionTest do
       # Depending on how fast the supervisor restarts the backend, fetch sees
       # either the dead process or the empty store that replaced it.
       assert_receive {:fetch_error, %{reason: reason}}, 2_000
-      assert reason in [:backend_unavailable, :group_not_found]
+      assert reason in [:backend_unavailable, :group_not_found, :stream_not_found]
       assert Process.alive?(group)
       assert :ok = wait_until(fn -> Rheo.ping(rheo: rheo) == :ok end)
 

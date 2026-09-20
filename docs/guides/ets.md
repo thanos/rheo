@@ -22,7 +22,7 @@ Or:
 Rheo.Backend.ETS.capabilities()
 # %Rheo.Backend.Capabilities{
 #   guarantees: %{durable: false, distributed: false, partitions: true, …},
-#   mechanisms: %{atomic_compare_and_set: true, secondary_indexes: false, …}
+#   mechanisms: %{atomic_compare_and_set: false, secondary_indexes: false, …}
 # }
 ```
 
