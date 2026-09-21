@@ -8,7 +8,7 @@ stream, and consume them with a durable consumer group. Delivery is
 
 ```elixir
 def deps do
-  [{:rheo, "~> 0.8.0"}]
+  [{:rheo, "~> 1.0"}]
 end
 ```
 

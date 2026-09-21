@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-09-20
+
+Stable SemVer baseline for the surface frozen in 0.12.0. No Consumer / Event /
+Query / Backend-callback meaning changes. Optional ops remain non-SemVer-core.
+
+See [0.12 → 1.0 migration](https://hexdocs.pm/rheo/0-12-to-1-0.html) and
+[ADR 030](https://hexdocs.pm/rheo/030-semver-1-0.html).
+
+### Added
+
+- ADR 030 (SemVer 1.0): major / minor / patch policy for the frozen inventory
+- [0.12 → 1.0 migration](https://hexdocs.pm/rheo/0-12-to-1-0.html)
+
+### Changed
+
+- Public API guide and host docs describe **1.0 SemVer** (not a freeze
+  candidate)
+- Roadmap: 1.0 done; multi-node Mnesia and Flow package remain deferred
+
+### Kept (compatibility)
+
+- Legacy `%{after_sequence: n}` page cursor
+- `{Rheo, url: …}` Mongo shorthand when `mongodb_driver` is present
+
 ## [0.12.0] - 2026-09-20
 
 API freeze candidate before 1.0. No Consumer / Event / Query / Backend-callback

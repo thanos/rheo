@@ -64,8 +64,8 @@ defmodule Rheo do
 
   See `Rheo.Consumer` for the OTP handler API, `Rheo.Producer` and
   `Rheo.Broadway` for the GenStage/Broadway surface, and `Rheo.Backend` for
-  adapters. v0.12 freezes this surface before 1.0 — see the
-  [public API guide](public-api.html) and [ADR 029](029-api-freeze-candidate.html).
+  adapters. From 1.0 this surface follows SemVer — see the
+  [public API guide](public-api.html) and [ADR 030](030-semver-1-0.html).
 
   ## Ops (v0.10+)
 

@@ -1,7 +1,7 @@
 defmodule Rheo.MixProject do
   use Mix.Project
 
-  @version "0.12.0"
+  @version "1.0.0"
   @source_url "https://github.com/thanos/rheo"
 
   def project do
@@ -119,6 +119,7 @@ defmodule Rheo.MixProject do
           "docs/migrations/0.10-to-0.11.md",
           "docs/migrations/0.11-to-0.11.1.md",
           "docs/migrations/0.11.1-to-0.12.md",
+          "docs/migrations/0.12-to-1.0.md",
           "docs/architecture.md",
           "docs/diagrams.md",
           "docs/roadmap.md",
@@ -134,6 +135,7 @@ defmodule Rheo.MixProject do
           "docs/adr/027-ops-surface.md",
           "docs/adr/028-mnesia-backend.md",
           "docs/adr/029-api-freeze-candidate.md",
+          "docs/adr/030-semver-1-0.md",
           "docs/tutorials.md"
         ],
         groups_for_extras: [
@@ -180,7 +182,8 @@ defmodule Rheo.MixProject do
             "docs/migrations/0.9-to-0.10.md",
             "docs/migrations/0.10-to-0.11.md",
             "docs/migrations/0.11-to-0.11.1.md",
-            "docs/migrations/0.11.1-to-0.12.md"
+            "docs/migrations/0.11.1-to-0.12.md",
+            "docs/migrations/0.12-to-1.0.md"
           ],
           Design: [
             "docs/architecture.md",
@@ -198,6 +201,7 @@ defmodule Rheo.MixProject do
             "docs/adr/027-ops-surface.md",
             "docs/adr/028-mnesia-backend.md",
             "docs/adr/029-api-freeze-candidate.md",
+            "docs/adr/030-semver-1-0.md",
             "docs/tutorials.md"
           ]
         ],
@@ -241,7 +245,7 @@ defmodule Rheo.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
-  # HexDocs publishes only the freeze surface (ADR 029). Mix tasks, table
+  # HexDocs publishes the SemVer surface (ADR 029 / ADR 030). Mix tasks, table
   # engine, and driver/client modules stay out of the module list.
   @internal_modules [
     Rheo.Names,

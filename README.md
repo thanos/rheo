@@ -6,7 +6,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/thanos/rheo/badge.svg?branch=main)](https://coveralls.io/github/thanos/rheo?branch=main)
 [![License](https://img.shields.io/hexpm/l/rheo.svg)](https://github.com/thanos/rheo/blob/main/LICENSE)
 
-**v0.11.1** — Durable consumer-group semantics over searchable stores.
+**v1.0.0** — Durable consumer-group semantics over searchable stores.
 Backends: **Mnesia** (single-node `disc_copies`), **Redis Streams**, **MongoDB**,
 **PostgreSQL / SQLite** (host-owned `Ecto.Repo`), and **ETS** (ephemeral). Rheo
 is an Elixir/OTP library you embed in your supervision tree, not a standalone
@@ -17,9 +17,10 @@ with `Rheo.Producer`.
 use stable event IDs for idempotency. Ordering is guaranteed **within a
 partition** only (not globally across partitions).
 
-Rheo is pre-1.0 and under active architectural development. Breaking changes
-between minor releases may occur while the backend and consumer-group
-contracts are refined; each one ships with a migration guide.
+From **1.0**, the public surface (`Rheo` / `Rheo.Consumer` / `Rheo.Backend` and
+the HexDocs freeze inventory) follows [Semantic Versioning](https://semver.org/).
+Breaking changes to that surface require a new major version; each release
+ships with a migration guide when behaviour changes.
 
 ## When to use
 
@@ -64,7 +65,7 @@ Add Rheo to your `mix.exs` dependencies:
 ```elixir
 def deps do
   [
-    {:rheo, "~> 0.12.0"}
+    {:rheo, "~> 1.0"}
   ]
 end
 ```
@@ -460,10 +461,10 @@ Pass `rheo: MyRheo` (or `rheo: MyRheoAudit`) on APIs and consumers.
 | **0.10.0** | Ops surface: dead-letter (DLQ) inspect, inventory, group health, optional LiveDashboard, Mix tasks |
 | **0.11.0** | Mnesia backend: durable ETS-shaped single-node `disc_copies` |
 | **0.11.1** | Correctness: composite cursors, Registry groups, table-engine indexes |
-| **0.12.0** (current) | API freeze candidate |
-| **1.0.0** | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
+| **0.12.0** | API freeze candidate |
+| **1.0.0** (current) | Stable public API (SemVer for `Rheo` / `Rheo.Consumer` / `Rheo.Backend`) |
 
-Still out of scope through 1.0 unless demand forces it: standalone Rheo server,
+Still out of scope unless demand forces it: standalone Rheo server,
 exactly-once claims, K8s operator, auth frameworks, multi-tenancy. Details in
 the [roadmap](https://hexdocs.pm/rheo/roadmap.html).
 

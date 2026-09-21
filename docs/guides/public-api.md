@@ -1,7 +1,12 @@
-# Public API (v0.12)
+# Public API (v1.0)
 
-v0.12 freezes the host- and adapter-facing surface before 1.0 (ADR 029). This
-page is the short map; HexDocs module groups are authoritative.
+v1.0 is the SemVer baseline for the host- and adapter-facing surface frozen in
+v0.12 (ADR 029 / ADR 030). This page is the short map; HexDocs module groups
+are authoritative.
+
+Breaking changes to modules listed under **Facade / Consume / Values /
+Backend / Runtime** require a new major version. Optional ops may still evolve
+in 1.x minors.
 
 ## Facade
 
@@ -44,7 +49,7 @@ See [Building your own backend](building-your-own-backend.html).
 ## Optional ops (not SemVer-core)
 
 Mix inspect tasks, `Rheo.LiveDashboard.Page`, `Rheo.Telemetry.Metrics`. These
-may evolve in 0.12.x without a Consumer / Event / Query break.
+may evolve in 1.x minors without a Consumer / Event / Query break.
 
 ## Error atoms
 

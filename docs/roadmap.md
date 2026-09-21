@@ -1,6 +1,6 @@
 # Roadmap
 
-Current release: **v0.12.0**. API freeze candidate before 1.0 SemVer.
+Current release: **v1.0.0**. Stable SemVer for the public API frozen in 0.12.
 
 ## Done in 0.1.0
 
@@ -126,9 +126,14 @@ Current release: **v0.12.0**. API freeze candidate before 1.0 SemVer.
 - Public API guide; unavailable-handle contract case; Metrics coverage
 - [0.11.1 → 0.12 migration](https://hexdocs.pm/rheo/0-11-1-to-0-12.html)
 
-## Next (1.0+)
+## Done in 1.0.0
 
-- Stable public API under SemVer (`Rheo` / `Rheo.Consumer` / `Rheo.Backend`)
+- SemVer baseline for the frozen surface (ADR 030)
+- [0.12 → 1.0 migration](https://hexdocs.pm/rheo/0-12-to-1-0.html) — no intended
+  breaks from 0.12.0
+
+## Next (post-1.0)
+
 - Multi-node Mnesia table copies (backend arbitration only — not a Rheo cluster)
 - Article candidate: Rheo + Flow settlement narrative
 

@@ -7,7 +7,7 @@ native consumer groups for delivery (ADR 026). Rheo still owns portable
 Requires Redis **6.2+** and:
 
 ```elixir
-{:rheo, "~> 0.9.0"},
+{:rheo, "~> 1.0"},
 {:redix, "~> 1.5"}
 ```
 

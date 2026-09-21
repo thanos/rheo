@@ -1,6 +1,6 @@
 # ADRs
 
-Architectural decision records. HexDocs publishes **019–029** (post v0.8 reset).
+Architectural decision records. HexDocs publishes **019–030** (post v0.8 reset).
 Earlier ADRs remain in the repo on GitHub.
 
 ## Current (HexDocs)
@@ -16,6 +16,7 @@ Earlier ADRs remain in the repo on GitHub.
 27. [Ops surface for an embedded Rheo](https://hexdocs.pm/rheo/027-ops-surface.html)
 28. [Mnesia backend](https://hexdocs.pm/rheo/028-mnesia-backend.html)
 29. [API freeze candidate](https://hexdocs.pm/rheo/029-api-freeze-candidate.html)
+30. [SemVer 1.0](https://hexdocs.pm/rheo/030-semver-1-0.html)
 
 ## Archive (GitHub)
 
