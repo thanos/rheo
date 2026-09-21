@@ -10,14 +10,15 @@ path that matches what you care about.
 
 ## How to run
 
-Open this folder from a **clone of the repo** so each notebook's
-`Mix.install([{:rheo, path: ...}])` resolves. Evaluate cells **top to bottom**.
+Open this folder from a **clone of the repo** so notebooks can use the path
+dependency (`{:rheo, path: ...}`). Hex `{:rheo, "~> 1.0"}` works for
+standalone Livebook. Evaluate cells **top to bottom**.
 
 ```bash
 livebook server notebooks/
 # or jump straight in:
 livebook server notebooks/quickstart.livemd
-# ops surface (v0.10+):
+# ops surface:
 livebook server notebooks/ops.livemd
 # real LiveDashboard page via Phoenix Playground:
 livebook server notebooks/live_dashboard.livemd

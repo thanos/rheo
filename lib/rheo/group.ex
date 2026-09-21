@@ -11,6 +11,14 @@ defmodule Rheo.Group do
   `{rheo, stream, group}` may run on a node; a second start returns
   `{:error, {:already_started, pid}}`.
 
+      Application Supervision Tree
+              |
+              +-- Rheo (named instance)
+              |     +-- Backend / Instance / Task.Supervisor / GroupSupervisor
+              |
+              +-- RiskConsumer = Rheo.Group (host-owned)
+                    +-- handler Tasks
+
   Optional `:partitions` (`:all` or a list of ids) scopes fetch to a static
   assignment. Automatic rebalancing is not implemented (ADR 016).
   """
@@ -46,6 +54,18 @@ defmodule Rheo.Group do
 
   @doc """
   Milliseconds the supervisor should wait for `terminate/2` to drain inflight work.
+
+  Equals the default drain budget (`#{@drain_timeout_ms}` ms) plus a 1s cushion
+  so `terminate/2` can finish answering in-flight `drain/2` calls.
+
+  ## Example
+
+      # Prefer this over a hard-coded shutdown when writing child specs:
+      %{
+        id: MyApp.RiskConsumer,
+        start: {MyApp.RiskConsumer, :start_link, [[]]},
+        shutdown: Rheo.Group.shutdown_ms()
+      }
   """
   @spec shutdown_ms() :: pos_integer()
   def shutdown_ms, do: @drain_timeout_ms + 1_000
@@ -76,9 +96,28 @@ defmodule Rheo.Group do
   @doc """
   Stops fetching and waits until inflight work settles or `timeout` elapses.
 
-  Returns `:ok` when nothing is inflight, `:timeout` otherwise, or
-  `{:error, :already_draining}` if a drain is already pending. The group keeps
-  serving renewals and worker results while a drain is pending.
+  The group keeps serving renewals and worker results while a drain is pending.
+  A second concurrent drain returns `{:error, :already_draining}`.
+
+  ## Arguments
+
+    * `server` — Group pid or via-tuple name
+    * `timeout` — max wait in milliseconds (default `#{@drain_timeout_ms}`)
+
+  ## Returns
+
+    * `:ok` — nothing inflight (immediately or after workers finish)
+    * `:timeout` — inflight work remained after `timeout`
+    * `{:error, :already_draining}` — a drain is already pending
+
+  ## Example
+
+      # Graceful pause before a deploy or supervisor stop:
+      case Rheo.Group.drain(group_pid, 5_000) do
+        :ok -> :ready
+        :timeout -> :still_working
+        {:error, :already_draining} -> :drain_in_progress
+      end
   """
   @spec drain(GenServer.server(), timeout()) :: :ok | :timeout | {:error, :already_draining}
   def drain(server, timeout \\ @drain_timeout_ms) do

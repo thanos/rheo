@@ -1,16 +1,52 @@
 defmodule Rheo.Partition do
   @moduledoc """
-  Partition routing helpers for multi-partition streams (v0.5+).
+  Partition routing helpers for multi-partition streams.
 
   Routing uses `:erlang.phash2/2` (stable on the BEAM; not portable to other
   runtimes). Prefer an explicit `:partition` when you need a fixed assignment.
+
+  ```
+  append(payload, key: "EUR")
+           |
+           v
+     :erlang.phash2(key, N)  -->  partition in 0..N-1
+           |
+           v
+     per-partition sequence ++ immutable event
+  ```
   """
 
   @doc """
   Resolves the target partition for an append.
 
-  Precedence: explicit `:partition` in `opts`, else `:key` in opts or payload,
-  else `0`. Returns `{:error, :invalid_partition}` when out of range.
+  Precedence: explicit `:partition` in `opts`, else `:key` in opts or payload
+  (`:key` / `"key"`), else `0`.
+
+  ## Arguments
+
+    * `payload` — event body map (may contain `:key` / `"key"`)
+    * `opts` — keyword list; recognized keys `:partition`, `:key`
+    * `partition_count` — stream partition count (`>= 1`)
+
+  ## Returns
+
+    * `{:ok, partition}` when in `0..partition_count-1`
+    * `{:error, :invalid_partition}` when `:partition` is out of range
+
+  ## Examples
+
+      iex> Rheo.Partition.resolve(%{}, [], 4)
+      {:ok, 0}
+
+      iex> Rheo.Partition.resolve(%{}, [partition: 2], 4)
+      {:ok, 2}
+
+      iex> Rheo.Partition.resolve(%{}, [partition: 9], 4)
+      {:error, :invalid_partition}
+
+      iex> {:ok, p} = Rheo.Partition.resolve(%{"key" => "EUR"}, [], 4)
+      iex> p in 0..3
+      true
   """
   @spec resolve(map(), keyword(), pos_integer()) ::
           {:ok, non_neg_integer()} | {:error, :invalid_partition}
@@ -30,7 +66,17 @@ defmodule Rheo.Partition do
     end
   end
 
-  @doc "Returns `{:ok, p}` when `p` is in `0..partition_count-1`."
+  @doc """
+  Returns `{:ok, p}` when `p` is in `0..partition_count-1`.
+
+  ## Examples
+
+      iex> Rheo.Partition.validate(0, 4)
+      {:ok, 0}
+
+      iex> Rheo.Partition.validate(4, 4)
+      {:error, :invalid_partition}
+  """
   @spec validate(term(), pos_integer()) ::
           {:ok, non_neg_integer()} | {:error, :invalid_partition}
   def validate(partition, partition_count)
@@ -40,7 +86,25 @@ defmodule Rheo.Partition do
 
   def validate(_, _), do: {:error, :invalid_partition}
 
-  @doc "Normalizes `:partition` / `:partitions` / `:all` into a sorted unique list."
+  @doc """
+  Normalizes `:partition` / `:partitions` / `:all` into a sorted unique list.
+
+  Used by Group/Producer assignment opts.
+
+  ## Examples
+
+      iex> Rheo.Partition.normalize_assignment(:all, 3)
+      {:ok, [0, 1, 2]}
+
+      iex> Rheo.Partition.normalize_assignment([2, 0, 2], 4)
+      {:ok, [0, 2]}
+
+      iex> Rheo.Partition.normalize_assignment(1, 4)
+      {:ok, [1]}
+
+      iex> Rheo.Partition.normalize_assignment([9], 4)
+      {:error, :invalid_partition}
+  """
   @spec normalize_assignment(term(), pos_integer()) ::
           {:ok, [non_neg_integer()]} | {:error, :invalid_partition}
   def normalize_assignment(:all, partition_count) when partition_count >= 1 do
@@ -69,12 +133,32 @@ defmodule Rheo.Partition do
 
   def normalize_assignment(_, _), do: {:error, :invalid_partition}
 
-  @doc ~S|String key for maps stored in Mongo ("0", "1", …).|
+  @doc """
+  String key for maps stored in Mongo (`"0"`, `"1"`, …).
+
+  ## Examples
+
+      iex> Rheo.Partition.key(0)
+      "0"
+  """
   @spec key(non_neg_integer()) :: String.t()
   def key(partition) when is_integer(partition) and partition >= 0,
     do: Integer.to_string(partition)
 
-  @doc "Reads an integer from a string-or-atom keyed map (Mongo/ETS)."
+  @doc """
+  Reads an integer from a string- or integer-keyed map (Mongo/ETS frontiers).
+
+  ## Examples
+
+      iex> Rheo.Partition.map_get(%{"0" => 5}, 0, 0)
+      5
+
+      iex> Rheo.Partition.map_get(%{0 => 3}, 0, 0)
+      3
+
+      iex> Rheo.Partition.map_get(%{}, 1, 0)
+      0
+  """
   @spec map_get(map(), non_neg_integer(), non_neg_integer()) :: non_neg_integer()
   def map_get(map, partition, default \\ 0) when is_map(map) do
     k = key(partition)

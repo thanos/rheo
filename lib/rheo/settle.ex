@@ -35,6 +35,12 @@ defmodule Rheo.Settle do
       false
   """
 
+  @typedoc """
+  Portable settle / renew / fetch failure reason.
+
+  See the module documentation for the full table. Domain atoms such as
+  `:stream_not_found` pass through `classify/1` unchanged.
+  """
   @type reason ::
           :stale_lease
           | :receipt_mismatch

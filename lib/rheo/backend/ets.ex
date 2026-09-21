@@ -2,9 +2,41 @@ defmodule Rheo.Backend.ETS do
   @moduledoc """
   In-memory ETS implementation of `Rheo.Backend`.
 
-  Intended for tests, Livebook, and ephemeral apps. Data lives in per-instance
-  ETS tables owned by this GenServer and **does not survive** owner or node
-  restart (`durable: false`).
+  Always available (no optional dependency). Prefer for tests, Livebook, local
+  demos, and ephemeral apps. Prefer Mongo, Ecto, Redis, or Mnesia when events
+  must survive process or node restart.
+
+  Prefer the `Rheo` facade for application code. The opaque handle is this
+  process's registered name (default `Rheo.ETS`), started via `child_spec/1`.
+
+  ## When to use
+
+    * Unit and contract tests that need a real backend without external services
+    * Livebook / Notebook prototypes
+    * Single-node apps where loss on restart is acceptable
+
+  Do **not** use when durability or multi-node lease arbitration is required
+  (`durable: false`, `distributed: false`).
+
+  ## Capabilities
+
+    * `durable: false` — tables die with the owner GenServer / node
+    * `distributed: false` — not shared across BEAM nodes
+    * `batch_writes: true`, `ordered_range_scan: true`
+    * `replay: true`, `partitions: true`, `contiguous_frontier: true`
+    * `secondary_indexes: false` — `query/2` filters in-process
+    * `notifications: false`, `atomic_compare_and_set: false`
+
+  ## Tables
+
+  Per-instance protected ETS tables owned by this GenServer:
+
+      streams / events / groups / deliveries
+      event_ids / delivery_by_seq / open_deliveries
+
+  ## Options
+
+    * `:name` — handle / process name (default `default_handle/0`)
 
   ## Supervision example
 
@@ -12,7 +44,13 @@ defmodule Rheo.Backend.ETS do
         {Rheo, name: MyRheo, backend: Rheo.Backend.ETS}
       ]
 
-  The opaque handle is this process's registered name.
+  Named handle:
+
+      children = [
+        {Rheo, name: MyRheo, backend: {Rheo.Backend.ETS, name: MyRheo.ETS}}
+      ]
+
+  Callback semantics are documented on `Rheo.Backend`.
   """
 
   @behaviour Rheo.Backend
@@ -50,7 +88,26 @@ defmodule Rheo.Backend.ETS do
     })
   end
 
+  @doc """
+  Child spec for the ETS GenServer (backend handle).
+
+  ## Arguments
+
+    * `opts` — keyword options:
+      * `:name` — handle / process name (default `default_handle/0`)
+
+  ## Examples
+
+      iex> spec = Rheo.Backend.ETS.child_spec(name: :demo_ets)
+      iex> {spec.id, elem(spec.start, 0), spec.type}
+      {{Rheo.Backend.ETS, :demo_ets}, Rheo.Backend.ETS, :worker}
+
+  ## Returns
+
+  A supervisor child spec map.
+  """
   @impl true
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
     name = Keyword.get(opts, :name, default_handle())
 
@@ -68,7 +125,18 @@ defmodule Rheo.Backend.ETS do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
-  @doc "Default ETS handle name for the `Rheo` instance."
+  @doc """
+  Default ETS handle name for the `Rheo` instance.
+
+  ## Examples
+
+      iex> Rheo.Backend.ETS.default_handle()
+      Rheo.ETS
+
+  ## Returns
+
+  A process name atom (`Rheo.ETS`).
+  """
   @spec default_handle() :: atom()
   def default_handle, do: Rheo.ETS
 

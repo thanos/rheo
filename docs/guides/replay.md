@@ -53,5 +53,6 @@ group's delivery state is wiped / repositioned. Other groups are unaffected.
 | Re-drive same group | `replay/3` |
 | Wipe group progress | `reset_group(..., confirm: true)` |
 
-Design details: [ADR 015](015-replay-semantics.html) and the tutorial
+Design details: [ADR 015](https://github.com/thanos/rheo/blob/main/docs/adr/015-replay-semantics.md)
+and the tutorial
 [Search and replay](11-search-and-replay-the-event-history.html).

@@ -3,9 +3,9 @@
 ```elixir
 Mix.install(
   [
-    # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 1.0"},
-    # {:rheo, path: Path.join(__DIR__, "..")},
+    # From this repo (path). For HexDocs / standalone Livebook use {:rheo, "~> 1.0"} instead:
+    {:rheo, path: Path.join(__DIR__, "..")},
+    # {:rheo, "~> 1.0"},
     {:kino, "~> 0.14"}
   ],
   config: [
@@ -21,7 +21,7 @@ Mix.install(
 
 ## Intro
 
-v0.10 adds a **library-first ops surface** (ADR 027): inspect APIs that answer
+Rheo ships a **library-first ops surface** (ADR 027): inspect APIs that answer
 the day-two questions without a Rheo control plane or a second settle path.
 
 **DLQ** = **dead-letter queue**: poison or exhausted deliveries parked for a

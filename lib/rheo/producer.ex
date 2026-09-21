@@ -15,6 +15,22 @@ if Code.ensure_loaded?(GenStage) do
     `transformer: {Rheo.Broadway, :transform, []}` and the lease is wrapped into a
     `%Broadway.Message{}` whose acknowledger settles it (see `Rheo.Broadway`).
 
+    ```
+    Broadway / GenStage demand
+              |
+              v
+         Rheo.Producer  --fetch/renew-->  Backend
+              |
+              | %Rheo.Lease{}
+              v
+         processors / batchers
+              |
+              v
+         Acknowledger --> Producer.ack | nack | reject
+              |
+              +--> release inflight (stops renew, frees demand)
+    ```
+
     ## Options
 
       * `:stream` — required stream name
@@ -235,6 +251,11 @@ if Code.ensure_loaded?(GenStage) do
     Returns `nil` outside a producer process. Broadway invokes the transformer
     inside the producer, so `Rheo.Broadway.transform/2` uses this to pick up
     `:rheo` and `:on_failure` without repeating them in the transformer arguments.
+
+    ## Examples
+
+        iex> Rheo.Producer.config()
+        nil
     """
     @spec config() ::
             %{

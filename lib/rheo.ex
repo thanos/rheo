@@ -47,6 +47,15 @@ defmodule Rheo do
   Public APIs accept an optional `:rheo` option targeting a named instance
   (default `Rheo`).
 
+      Application Supervision Tree
+              |
+              +-- Rheo (named instance)
+              |     +-- Backend handle
+              |     +-- Rheo.Instance / Task.Supervisor / GroupSupervisor
+              |
+              +-- RiskConsumer         = Rheo.Group (host-owned)
+              +-- SurveillanceConsumer = Rheo.Group (host-owned)
+
   ## Typical low-level flow
 
       Rheo.create_stream("market-events", partition_count: 4)
@@ -67,7 +76,7 @@ defmodule Rheo do
   adapters. From 1.0 this surface follows SemVer — see the
   [public API guide](public-api.html) and [ADR 030](030-semver-1-0.html).
 
-  ## Ops (v0.10+)
+  ## Ops
 
   Inventory and health without a second settle path: `list_streams/1`,
   `list_groups/2`, `dead_letters/3` (DLQ = dead-letter queue), `group_info/3`,
@@ -174,7 +183,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-create-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-create-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> Rheo.create_stream(stream)
       :ok
       iex> Rheo.create_stream(stream)
@@ -212,7 +221,7 @@ defmodule Rheo do
         (default all)
   ## Examples
 
-      iex> stream = "doc-group-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-group-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> :ok = Rheo.create_stream(stream)
       iex> Rheo.create_group(stream, "risk")
       :ok
@@ -258,7 +267,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-append-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-append-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> :ok = Rheo.create_stream(stream)
       iex> {:ok, event} = Rheo.append(stream, %{
       ...>   type: "curve_update",
@@ -295,7 +304,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-batch-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-batch-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> :ok = Rheo.create_stream(stream)
       iex> {:ok, events} = Rheo.append_batch(stream, [
       ...>   %{type: "tick", n: 1},
@@ -333,7 +342,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-read-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-read-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> :ok = Rheo.create_stream(stream)
       iex> {:ok, _} = Rheo.append_batch(stream, [%{type: "a"}, %{type: "b"}, %{type: "c"}])
       iex> {:ok, [first, second]} = Rheo.read(stream, after: 0, limit: 2)
@@ -367,7 +376,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-query-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-query-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> :ok = Rheo.create_stream(stream)
       iex> {:ok, _} = Rheo.append(stream, %{
       ...>   type: "curve_update",
@@ -410,6 +419,33 @@ defmodule Rheo do
   call (or embed on `%Rheo.Query{}`). Cursor pagination is defined for
   ascending sequence order. The legacy `%{after_sequence: n}` cursor is still
   accepted as a global lower bound.
+
+  ## Arguments
+
+    * `query_or_stream` — `%Rheo.Query{}` or stream name
+    * `opts` — when the first argument is a stream, filter options (see
+      `Rheo.Query`); always accepts `:rheo` (instance name, default `Rheo`)
+
+  ## Examples
+
+      iex> stream = "doc-query-page-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> {:ok, _} = Rheo.append_batch(stream, [
+      ...>   %{type: "a"}, %{type: "b"}, %{type: "c"}
+      ...> ])
+      iex> {:ok, page} = Rheo.query_page(stream, limit: 2)
+      iex> Enum.map(page.events, & &1.sequence)
+      [1, 2]
+      iex> page.next_cursor
+      %{0 => 2}
+      iex> {:ok, page2} = Rheo.query_page(stream, limit: 2, cursor: page.next_cursor)
+      iex> {Enum.map(page2.events, & &1.sequence), page2.next_cursor}
+      {[3], nil}
+
+  ## Returns
+
+    * `{:ok, %Rheo.Page{}}` — `events` may be empty; `next_cursor` is `nil` when done
+    * `{:error, reason}` on backend failure
   """
   @spec query_page(Query.t() | stream(), keyword()) :: {:ok, Rheo.Page.t()} | {:error, term()}
   def query_page(query_or_stream, opts \\ [])
@@ -437,7 +473,35 @@ defmodule Rheo do
   @doc """
   Lazily streams query results page by page.
 
-  Each element is a `%Rheo.Event{}`. Uses `query_page/2` internally.
+  Each element is a `%Rheo.Event{}`. Uses `query_page/2` internally. On a
+  `query_page/2` error this **raises**
+  `RuntimeError` with message `"Rheo.stream_query failed: …"` rather than
+  returning `{:error, reason}`.
+
+  ## Arguments
+
+    * `query_or_stream` — `%Rheo.Query{}` or stream name
+    * `opts` — when the first argument is a stream, filter options (see
+      `Rheo.Query`); always accepts `:rheo` (instance name, default `Rheo`)
+
+  ## Examples
+
+      iex> stream = "doc-stream-query-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> {:ok, _} = Rheo.append_batch(stream, [
+      ...>   %{type: "a"}, %{type: "b"}, %{type: "c"}, %{type: "d"}
+      ...> ])
+      iex> stream |> Rheo.stream_query(limit: 2) |> Enum.map(& &1.sequence)
+      [1, 2, 3, 4]
+
+  ## Returns
+
+    * an `Enumerable` of `%Rheo.Event{}` (possibly empty)
+
+  ## Errors
+
+  Raises `RuntimeError` when an underlying `query_page/2` returns
+  `{:error, reason}` (`raise "Rheo.stream_query failed: \#{inspect(reason)}"`).
   """
   @spec stream_query(Query.t() | stream(), keyword()) :: Enumerable.t()
   def stream_query(query_or_stream, opts \\ []) do
@@ -477,16 +541,49 @@ defmodule Rheo do
   @doc """
   Replays history for a consumer group without copying events.
 
-  Options (one of):
+  Prefer a new group with `:start_after` / `:start_at` when isolating
+  replay from production consumers. Design details:
+  [ADR 015](https://github.com/thanos/rheo/blob/main/docs/adr/015-replay-semantics.md).
 
-    * `:from_sequence` — exclusive lower bound; deliveries from the next sequence
-      become available again
-    * `:from` — `DateTime`; resolved to a sequence then same as `:from_sequence`
-    * `:query` — `%Rheo.Query{}` or keyword filters on the stream; matching
-      events are re-opened for this group
+  ## Arguments
 
-  See ADR 015. Prefer a new group with `:start_after` / `:start_at` when isolating
-  replay from production consumers.
+    * `stream` — stream name
+    * `group` — consumer group name
+    * `opts` — optional keyword list (exactly one of the replay selectors below,
+      plus optional scope / instance keys):
+      * `:rheo` — instance name (default `Rheo`)
+      * `:from_sequence` — exclusive lower bound; deliveries from the next
+        sequence become available again
+      * `:from` — `DateTime`; resolved to a sequence then same as `:from_sequence`
+      * `:query` — `%Rheo.Query{}` or keyword filters on the stream; matching
+        events are re-opened for this group
+      * `:partition` / `:partitions` — limit replay scope
+
+  ## Examples
+
+      iex> stream = "doc-replay-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> :ok = Rheo.create_group(stream, "risk")
+      iex> {:ok, event} = Rheo.append(stream, %{type: "once"})
+      iex> {:ok, [lease]} = Rheo.fetch(stream, "risk", limit: 1, consumer_id: "c1")
+      iex> :ok = Rheo.ack(lease)
+      iex> Rheo.fetch(stream, "risk", limit: 1, consumer_id: "c2")
+      {:ok, []}
+      iex> Rheo.replay(stream, "risk", from_sequence: 0)
+      :ok
+      iex> {:ok, [again]} = Rheo.fetch(stream, "risk", limit: 1, consumer_id: "c3")
+      iex> again.event_id == event.id
+      true
+      iex> Rheo.replay(stream, "risk")
+      {:error, :invalid_replay_opts}
+
+  ## Returns
+
+    * `:ok`
+    * `{:error, :invalid_replay_opts}` when no replay selector is given
+    * `{:error, :group_not_found}` / `{:error, :stream_not_found}`
+    * `{:error, :no_events_in_range}` when `:from` finds no matching event
+    * `{:error, reason}` on backend failure
   """
   @spec replay(stream(), group(), keyword()) :: :ok | {:error, term()}
   def replay(stream, group, opts \\ []) when is_binary(stream) and is_binary(group) do
@@ -533,6 +630,42 @@ defmodule Rheo do
   Requires `confirm: true`. Never deletes immutable events. Other groups are
   unaffected. Optional `:start_after` sets the post-reset materialization cursor
   (exclusive), default `0` (replay from the beginning).
+
+  ## Arguments
+
+    * `stream` — stream name
+    * `group` — consumer group name
+    * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
+      * `:confirm` — must be `true` or the call returns `{:error, :confirm_required}`
+      * `:start_after` — exclusive materialization cursor after reset (default `0`)
+      * `:partition` / `:partitions` — limit reset scope when supported
+
+  ## Examples
+
+      iex> stream = "doc-reset-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> :ok = Rheo.create_group(stream, "risk")
+      iex> {:ok, event} = Rheo.append(stream, %{type: "keep"})
+      iex> {:ok, [lease]} = Rheo.fetch(stream, "risk", limit: 1, consumer_id: "c1")
+      iex> :ok = Rheo.ack(lease)
+      iex> Rheo.reset_group(stream, "risk")
+      {:error, :confirm_required}
+      iex> Rheo.reset_group(stream, "risk", confirm: true)
+      :ok
+      iex> {:ok, [still]} = Rheo.read(stream, after: 0, limit: 1)
+      iex> still.id == event.id
+      true
+      iex> {:ok, [again]} = Rheo.fetch(stream, "risk", limit: 1, consumer_id: "c2")
+      iex> again.event_id == event.id
+      true
+
+  ## Returns
+
+    * `:ok`
+    * `{:error, :confirm_required}` when `confirm: true` is missing
+    * `{:error, :group_not_found}` / `{:error, :stream_not_found}`
+    * `{:error, reason}` on backend failure
   """
   @spec reset_group(stream(), group(), keyword()) :: :ok | {:error, term()}
   def reset_group(stream, group, opts \\ []) when is_binary(stream) and is_binary(group) do
@@ -557,6 +690,31 @@ defmodule Rheo do
 
   Per-partition lag is `max(high_watermark - frontier, 0)`. Aggregate `lag` is
   the sum across partitions. See `Rheo.Lag` and ADR 016.
+
+  ## Arguments
+
+    * `stream` — stream name
+    * `group` — consumer group name
+    * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
+
+  ## Examples
+
+      iex> stream = "doc-lag-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> :ok = Rheo.create_group(stream, "risk")
+      iex> {:ok, _} = Rheo.append(stream, %{type: "tick"})
+      iex> {:ok, lag} = Rheo.lag(stream, "risk")
+      iex> {lag.lag, lag.partitions[0].high_watermark}
+      {1, 1}
+      iex> Rheo.lag(stream, "missing")
+      {:error, :group_not_found}
+
+  ## Returns
+
+    * `{:ok, %Rheo.Lag{}}`
+    * `{:error, :group_not_found}` / `{:error, :stream_not_found}`
+    * `{:error, reason}` on backend failure
   """
   @spec lag(stream(), group(), keyword()) :: {:ok, Rheo.Lag.t()} | {:error, term()}
   def lag(stream, group, opts \\ []) when is_binary(stream) and is_binary(group) do
@@ -567,8 +725,24 @@ defmodule Rheo do
   @doc """
   Lists registered stream names (ops inspect, v0.10+ / ADR 027).
 
-  Returns `{:error, :unsupported}` when the backend does not implement
-  `list_streams/2`.
+  ## Arguments
+
+    * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
+
+  ## Examples
+
+      iex> stream = "doc-list-streams-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> {:ok, names} = Rheo.list_streams()
+      iex> stream in names
+      true
+
+  ## Returns
+
+    * `{:ok, [stream_name]}`
+    * `{:error, :unsupported}` when the backend does not implement `list_streams/2`
+    * `{:error, reason}` on backend failure
   """
   @spec list_streams(keyword()) :: {:ok, [stream()]} | {:error, term()}
   def list_streams(opts \\ []) when is_list(opts) do
@@ -579,8 +753,25 @@ defmodule Rheo do
   @doc """
   Lists consumer group names for a stream (ops inspect, v0.10+ / ADR 027).
 
-  Returns `{:error, :unsupported}` when the backend does not implement
-  `list_groups/3`.
+  ## Arguments
+
+    * `stream` — stream name
+    * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
+
+  ## Examples
+
+      iex> stream = "doc-list-groups-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> :ok = Rheo.create_group(stream, "risk")
+      iex> Rheo.list_groups(stream)
+      {:ok, ["risk"]}
+
+  ## Returns
+
+    * `{:ok, [group_name]}` — empty list when the stream has no groups
+    * `{:error, :unsupported}` when the backend does not implement `list_groups/3`
+    * `{:error, reason}` on backend failure
   """
   @spec list_groups(stream(), keyword()) :: {:ok, [group()]} | {:error, term()}
   def list_groups(stream, opts \\ []) when is_binary(stream) and is_list(opts) do
@@ -596,14 +787,34 @@ defmodule Rheo do
   until `replay` / `reset_group` — typically after `reject/3` or max nack
   attempts. See `Rheo.DeadLetter` and the [ops guide](ops.html).
 
-  Options:
+  ## Arguments
 
-    * `:limit` — max rows (default 100)
-    * `:after` — skip until after this `event_id` (cursor)
-    * `:rheo` — instance name
+    * `stream` — stream name
+    * `group` — consumer group name
+    * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
+      * `:limit` — max rows (default 100)
+      * `:after` — skip until after this `event_id` (cursor)
 
-  Returns `{:error, :unsupported}` when the backend does not implement
-  `dead_letters/4`.
+  ## Examples
+
+      iex> stream = "doc-dlq-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> :ok = Rheo.create_group(stream, "risk")
+      iex> {:ok, _} = Rheo.append(stream, %{type: "poison"})
+      iex> {:ok, [lease]} = Rheo.fetch(stream, "risk", limit: 1, consumer_id: "c1")
+      iex> :ok = Rheo.reject(lease, :invalid_schema)
+      iex> {:ok, [dl]} = Rheo.dead_letters(stream, "risk")
+      iex> dl.event_id == lease.event_id
+      true
+      iex> Rheo.fetch(stream, "risk", limit: 1, consumer_id: "c2")
+      {:ok, []}
+
+  ## Returns
+
+    * `{:ok, [%Rheo.DeadLetter{}]}` — empty when none
+    * `{:error, :unsupported}` when the backend does not implement `dead_letters/4`
+    * `{:error, reason}` on backend failure
   """
   @spec dead_letters(stream(), group(), keyword()) ::
           {:ok, [Rheo.DeadLetter.t()]} | {:error, term()}
@@ -616,8 +827,29 @@ defmodule Rheo do
   @doc """
   Returns group health: lag plus inflight and dead-letter counts (v0.10+ / ADR 027).
 
-  Returns `{:error, :unsupported}` when the backend does not implement
-  `group_info/4`.
+  ## Arguments
+
+    * `stream` — stream name
+    * `group` — consumer group name
+    * `opts` — optional keyword list:
+      * `:rheo` — instance name (default `Rheo`)
+
+  ## Examples
+
+      iex> stream = "doc-group-info-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> :ok = Rheo.create_group(stream, "risk")
+      iex> {:ok, _} = Rheo.append(stream, %{type: "tick"})
+      iex> {:ok, info} = Rheo.group_info(stream, "risk")
+      iex> {info.lag.lag, info.inflight_count, info.dead_letter_count}
+      {1, 0, 0}
+
+  ## Returns
+
+    * `{:ok, %Rheo.GroupInfo{}}`
+    * `{:error, :unsupported}` when the backend does not implement `group_info/4`
+    * `{:error, :group_not_found}` / `{:error, :stream_not_found}`
+    * `{:error, reason}` on backend failure
   """
   @spec group_info(stream(), group(), keyword()) ::
           {:ok, Rheo.GroupInfo.t()} | {:error, term()}
@@ -706,7 +938,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-fetch-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-fetch-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> :ok = Rheo.create_stream(stream)
       iex> :ok = Rheo.create_group(stream, "risk")
       iex> {:ok, _} = Rheo.append(stream, %{type: "order", id: 1})
@@ -738,6 +970,20 @@ defmodule Rheo do
       * `:rheo` — instance name (default `Rheo`)
       * `:lease_ms` — new TTL from now (default from config)
 
+  ## Examples
+
+      iex> stream = "doc-renew-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      iex> :ok = Rheo.create_stream(stream)
+      iex> :ok = Rheo.create_group(stream, "risk")
+      iex> {:ok, _} = Rheo.append(stream, %{type: "hold"})
+      iex> {:ok, [lease]} = Rheo.fetch(stream, "risk", limit: 1, consumer_id: "c1")
+      iex> {:ok, renewed} = Rheo.renew(lease, lease_ms: 60_000)
+      iex> renewed.lease_id == lease.lease_id
+      true
+      iex> :ok = Rheo.ack(lease)
+      iex> Rheo.renew(lease)
+      {:error, :stale_lease}
+
   ## Returns
 
     * `{:ok, %Rheo.Lease{}}` with updated `expires_at`
@@ -763,7 +1009,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-ack-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-ack-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> :ok = Rheo.create_stream(stream)
       iex> :ok = Rheo.create_group(stream, "risk")
       iex> {:ok, _} = Rheo.append(stream, %{type: "once"})
@@ -801,7 +1047,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-nack-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-nack-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> :ok = Rheo.create_stream(stream)
       iex> :ok = Rheo.create_group(stream, "risk", max_attempts: 5)
       iex> {:ok, _} = Rheo.append(stream, %{type: "tmp"})
@@ -839,7 +1085,7 @@ defmodule Rheo do
 
   ## Examples
 
-      iex> stream = "doc-reject-" <> Integer.to_string(System.unique_integer([:positive]))
+      iex> stream = "doc-reject-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
       iex> :ok = Rheo.create_stream(stream)
       iex> :ok = Rheo.create_group(stream, "risk")
       iex> {:ok, _} = Rheo.append(stream, %{type: "poison"})

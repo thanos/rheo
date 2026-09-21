@@ -50,4 +50,4 @@ partitions: [0, 1]
 
 Design: [ADR 016](016-partitions-and-ack-frontier.html),
 tutorial [ACKs are not a cursor](12-acks-are-not-a-cursor.html),
-diagrams under Design/Diagrams.
+and the partitions diagram in [Architecture](architecture.html).

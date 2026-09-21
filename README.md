@@ -275,7 +275,6 @@ Ops · LiveDashboard · Pipelines · Backends
 [0.9 → 0.10](https://hexdocs.pm/rheo/0-9-to-0-10.html)
 
 **Design** — [Architecture](https://hexdocs.pm/rheo/architecture.html) ·
-[Diagrams](https://hexdocs.pm/rheo/diagrams.html) ·
 [Roadmap](https://hexdocs.pm/rheo/roadmap.html) ·
 [ADRs](https://hexdocs.pm/rheo/adr.html) ·
 [Tutorials](https://hexdocs.pm/rheo/tutorials.html)

@@ -37,6 +37,9 @@ defmodule Rheo.Backend.Wakeup do
   @doc """
   Calls `c:wait/2` when `backend` implements it, otherwise returns `:ok`.
 
+  Backends that omit `c:wait/2` (for example `Rheo.Backend.ETS`) never block:
+  this function returns immediately so coordinators can keep a poll timer.
+
   ## Arguments
 
     * `backend` — backend module
@@ -49,9 +52,12 @@ defmodule Rheo.Backend.Wakeup do
       iex> Rheo.Backend.Wakeup.wait(Rheo.Backend.ETS, :no_such_handle)
       :ok
 
+      iex> Rheo.Backend.Wakeup.wait(Rheo.Backend.ETS, :no_such_handle, timeout: 50, stream: "orders")
+      :ok
+
   ## Returns
 
-  `:ok`, or `{:error, reason}` from the backend.
+  `:ok`, or `{:error, reason}` from the backend when `c:wait/2` is implemented.
   """
   @spec wait(module(), handle(), keyword()) :: :ok | {:error, term()}
   def wait(backend, handle, opts \\ []) when is_atom(backend) and is_list(opts) do

@@ -89,6 +89,7 @@ defmodule Rheo.Backend.Capabilities do
   @enforce_keys [:guarantees, :mechanisms]
   defstruct [:guarantees, :mechanisms]
 
+  @typedoc "Raw boolean map passed to `new/1` before defaults are filled."
   @type flags :: %{required(atom()) => boolean()}
 
   @typedoc "Declared guarantees and mechanisms; every known key is present."

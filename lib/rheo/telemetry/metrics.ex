@@ -8,12 +8,61 @@ if Code.ensure_loaded?(Telemetry.Metrics) do
     Wire into LiveDashboard, PromEx, or any reporter that accepts metric specs.
 
     These are counters / summaries over existing `[:rheo, …]` events — they do
-    not change settle semantics.
+    not change settle semantics. Alert thresholds stay in the host.
+
+    ## Host wiring
+
+    Append `metrics/0` to your app's metric list (Phoenix Telemetry module,
+    PromEx plugin, or a custom reporter):
+
+        defmodule MyAppWeb.Telemetry do
+          use Supervisor
+          import Telemetry.Metrics
+
+          def start_link(arg) do
+            Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+          end
+
+          @impl true
+          def init(_arg) do
+            children = [
+              {:telemetry_poller, measurements: [], period: 10_000}
+            ]
+
+            Supervisor.init(children, strategy: :one_for_one)
+          end
+
+          def metrics do
+            [
+              # … host metrics …
+            ] ++ Rheo.Telemetry.Metrics.metrics()
+          end
+        end
+
+    LiveDashboard (when the reporter uses that module):
+
+        live_dashboard "/dashboard",
+          metrics: MyAppWeb.Telemetry,
+          additional_pages: [rheo: Rheo.LiveDashboard.Page]
+
+    See `Rheo.Telemetry` for the underlying event names.
     """
 
     import Telemetry.Metrics
 
-    @doc "Canonical Rheo metric definitions for host reporters."
+    @doc """
+    Canonical Rheo metric definitions for host reporters.
+
+    ## Returns
+
+    A list of `Telemetry.Metrics` structs covering create / lease / dead-letter
+    counters and append / fetch / ack duration summaries.
+
+    ## Examples
+
+        iex> length(Rheo.Telemetry.Metrics.metrics()) > 0
+        true
+    """
     @spec metrics() :: [Telemetry.Metrics.t()]
     def metrics do
       [

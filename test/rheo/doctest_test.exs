@@ -3,17 +3,27 @@ defmodule Rheo.DoctestTest do
 
   doctest Rheo
   doctest Rheo.Event
+  doctest Rheo.Event.Lineage
   doctest Rheo.Lease
+  doctest Rheo.Page
+  doctest Rheo.Lag
+  doctest Rheo.DeadLetter
+  doctest Rheo.GroupInfo
+  doctest Rheo.Partition
   doctest Rheo.Id
   doctest Rheo.Query
   doctest Rheo.Clock
   doctest Rheo.Clock.System
   doctest Rheo.Clock.Frozen
+  doctest Rheo.Backend.Wakeup
+  doctest Rheo.Backend.ETS
+  doctest Rheo.Backend.Mnesia
   doctest Rheo.Backend.Mongo
   doctest Rheo.Backend.Mongo.Codec
   doctest Rheo.Backend.Ecto
   doctest Rheo.Backend.Ecto.Codec
   doctest Rheo.Telemetry
+  doctest Rheo.Telemetry.Metrics
   doctest Rheo.Broadway
   doctest Rheo.Producer
 end

@@ -2,12 +2,46 @@ defmodule Rheo.Backend.Mnesia do
   @moduledoc """
   Durable OTP `:mnesia` implementation of `Rheo.Backend`.
 
-  ETS-shaped tables on single-node `disc_copies` (v0.11+ / ADR 028). Survives
-  process restart when the Mnesia directory is preserved (`durable: true`).
-  Not multi-node in v0.11 (`distributed: false`).
+  Always available (OTP `:mnesia` is an included application). Prefer when you
+  want ETS-shaped tables that survive process restart on a single node without
+  Mongo, Postgres, or Redis. Prefer Redis / Ecto Postgres / Mongo when several
+  BEAM nodes must fetch the same group (`distributed: false` in v0.11).
 
-  `dirty_write` to `disc_copies` is not crash-durable the way
-  `:mnesia.sync_transaction` is (`atomic_compare_and_set: false`).
+  Prefer the `Rheo` facade for application code. The opaque handle is this
+  process's registered name (default `Rheo.Mnesia`), started via `child_spec/1`.
+
+  ## When to use
+
+    * Single-node hosts that need durability across GenServer restart
+    * Local / embedded deployments that already rely on OTP disk schema
+    * Bridging from ETS prototypes without introducing an external database
+
+  Do **not** use for multi-node lease arbitration in v0.11
+  (`distributed: false`). Multiple Rheo instances on one node share the Mnesia
+  schema but use unique table name prefixes.
+
+  ## Capabilities
+
+    * `durable: true` — survives process restart when the Mnesia directory is kept
+    * `distributed: false` — single-node `disc_copies` only (ADR 028)
+    * `batch_writes: true`, `ordered_range_scan: true`
+    * `replay: true`, `partitions: true`, `contiguous_frontier: true`
+    * `secondary_indexes: false` — `query/2` filters in-process
+    * `atomic_compare_and_set: false` — `dirty_write` is not
+      `:mnesia.sync_transaction` crash durability
+    * `notifications: false`
+
+  ## Tables
+
+  ETS-shaped `disc_copies` tables under a per-handle prefix:
+
+      <prefix>.streams / .events / .groups / .deliveries
+      <prefix>.event_ids / .delivery_by_seq / .open_deliveries
+
+  ## Options
+
+    * `:name` — handle / process name (default `default_handle/0`)
+    * `:dir` — Mnesia directory (default under `System.tmp_dir!/0`)
 
   ## Supervision example
 
@@ -15,10 +49,15 @@ defmodule Rheo.Backend.Mnesia do
         {Rheo, name: MyRheo, backend: {Rheo.Backend.Mnesia, dir: "/var/lib/rheo/mnesia"}}
       ]
 
-  Options: `:name` (default `Rheo.Mnesia`), `:dir` (Mnesia directory). Multiple
-  instances on one node share the schema but use unique table name prefixes.
+  Named handle:
 
-  The opaque handle is this process's registered name.
+      children = [
+        {Rheo,
+         name: MyRheo,
+         backend: {Rheo.Backend.Mnesia, name: MyRheo.Mnesia, dir: "/var/lib/rheo/mnesia"}}
+      ]
+
+  Callback semantics are documented on `Rheo.Backend`.
   """
 
   @behaviour Rheo.Backend
@@ -56,7 +95,28 @@ defmodule Rheo.Backend.Mnesia do
     })
   end
 
+  @doc """
+  Child spec for the Mnesia GenServer (backend handle).
+
+  ## Arguments
+
+    * `opts` — keyword options:
+      * `:name` — handle / process name (default `default_handle/0`)
+      * `:dir` — Mnesia directory (default under `System.tmp_dir!/0`)
+
+  ## Examples
+
+      iex> spec = Rheo.Backend.Mnesia.child_spec(name: :demo_mnesia, dir: "/tmp/rheo_mnesia_demo")
+      iex> {spec.id, elem(spec.start, 0), spec.type}
+      {{Rheo.Backend.Mnesia, :demo_mnesia}, Rheo.Backend.Mnesia, :worker}
+
+  ## Returns
+
+  A supervisor child spec map. The directory is created and the schema started
+  when the GenServer initializes.
+  """
   @impl true
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
     name = Keyword.get(opts, :name, default_handle())
 
@@ -74,7 +134,18 @@ defmodule Rheo.Backend.Mnesia do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
-  @doc "Default Mnesia handle name for the `Rheo` instance."
+  @doc """
+  Default Mnesia handle name for the `Rheo` instance.
+
+  ## Examples
+
+      iex> Rheo.Backend.Mnesia.default_handle()
+      Rheo.Mnesia
+
+  ## Returns
+
+  A process name atom (`Rheo.Mnesia`).
+  """
   @spec default_handle() :: atom()
   def default_handle, do: Rheo.Mnesia
 

@@ -9,6 +9,14 @@ defmodule Rheo.Consumer do
   Part of the SemVer-frozen surface (ADR 029 / ADR 030) — handler outcomes and
   read-only context will not change meaning without a major version.
 
+      Application Supervision Tree
+              |
+              +-- Rheo (named instance)
+              |     +-- Backend / Instance / Task.Supervisor / …
+              |
+              +-- MyApp.RiskConsumer = Rheo.Group (host-owned)
+                    +-- handler Tasks (up to :concurrency)
+
   ## Handler contract
 
   `handle_event/2` receives the event and a read-only context map built once by
@@ -87,8 +95,21 @@ defmodule Rheo.Consumer do
   Handles a single leased event.
 
   `context` is the read-only map returned by `c:setup/1` (or `%{}`). The Group
-  settles the lease according to the returned outcome; raising, throwing, or
-  returning anything else releases the lease for redelivery.
+  settles the lease according to the returned outcome.
+
+  ## Returns
+
+    * `:ack` — acknowledge successful processing
+    * `{:retry, reason}` — nack for redelivery (may dead-letter at max attempts)
+    * `{:reject, reason}` — permanently dead-letter for this group
+
+  ## Errors
+
+  Raising, throwing, exiting, or returning any other value is treated as a
+  handler failure: the Group logs, emits telemetry, and nacks the lease for
+  redelivery (`{:handler_error, …}` or `{:invalid_outcome, …}`). The callback
+  itself should not raise for expected business failures — return
+  `{:retry, reason}` or `{:reject, reason}` instead.
   """
   @callback handle_event(Rheo.Event.t(), context :: map()) ::
               :ack
@@ -98,8 +119,18 @@ defmodule Rheo.Consumer do
   @doc """
   Builds the read-only handler context when the Group starts.
 
-  Receives every option given to the child spec. Return `{:stop, reason}` to
-  refuse to start.
+  Receives every option given to the child spec (`:stream`, `:group`, `:rheo`,
+  plus any application-specific keys). The returned map is passed unchanged to
+  every `c:handle_event/2` invocation.
+
+  ## Returns
+
+    * `{:ok, context}` — `context` must be a map
+    * `{:stop, reason}` — refuse to start; the Group stops with that reason
+
+  Returning `{:ok, other}` where `other` is not a map stops the Group with
+  `{:invalid_context, other}`. When `setup/1` is not implemented, the Group
+  uses `%{}`.
   """
   @callback setup(keyword()) :: {:ok, map()} | {:stop, term()}
 

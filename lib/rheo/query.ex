@@ -126,7 +126,8 @@ defmodule Rheo.Query do
   ## Non-goals
 
   Query never ACKs, leases, or deletes events. Consumer progress is
-  `Rheo.fetch/3` / replay — see `Rheo.replay/3` and ADR 015.
+  `Rheo.fetch/3` / replay — see `Rheo.replay/3` and
+  [ADR 015](https://github.com/thanos/rheo/blob/main/docs/adr/015-replay-semantics.md).
   """
 
   @enforce_keys [:stream]
@@ -141,8 +142,17 @@ defmodule Rheo.Query do
             limit: 100,
             cursor: nil
 
+  @typedoc "Sort direction for `order_by`."
   @type order_dir :: :asc | :desc
+
+  @typedoc "Per-partition exclusive lower bounds (`%{partition => after_sequence}`)."
   @type partition_cursors :: %{optional(non_neg_integer()) => non_neg_integer()}
+
+  @typedoc """
+  Portable query against a stream.
+
+  See the module documentation for field meanings and examples.
+  """
   @type t :: %__MODULE__{
           stream: String.t(),
           where: keyword(),

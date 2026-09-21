@@ -24,8 +24,13 @@ defmodule Rheo.Inflight do
 
   alias Rheo.{Lease, Settle}
 
+  @typedoc "Opaque key for an inflight entry (usually a monitor reference)."
   @type key :: term()
+
+  @typedoc "Metadata stored with an inflight lease (must include `:lease`)."
   @type meta :: %{required(:lease) => Lease.t(), optional(atom()) => term()}
+
+  @typedoc "Map of inflight keys to lease metadata."
   @type t :: %{optional(key()) => meta()}
 
   @typedoc "Outcome of renewing one tracked lease."

@@ -3,9 +3,9 @@
 ```elixir
 Mix.install(
   [
-    # From this repo: prefer the path dep. From HexDocs / standalone Livebook:
-    {:rheo, "~> 1.0"},
-    # {:rheo, path: Path.join(__DIR__, "..")},
+    # From this repo (path). For HexDocs / standalone Livebook use {:rheo, "~> 1.0"} instead:
+    {:rheo, path: Path.join(__DIR__, "..")},
+    # {:rheo, "~> 1.0"},
     {:kino, "~> 0.14"},
     {:broadway, "~> 1.3"},
     {:flow, "~> 1.2"}
